@@ -1,0 +1,16 @@
+../Core/Src/w25q_controller.c:15:13:w25q_spi_transmit	1
+../Core/Src/w25q_controller.c:20:13:w25q_spi_receive	1
+../Core/Src/w25q_controller.c:36:6:w25q_write_enable	1
+../Core/Src/w25q_controller.c:45:6:w25q_write_disable	1
+../Core/Src/w25q_controller.c:54:6:w25q_read_status_reg1	1
+../Core/Src/w25q_controller.c:64:6:w25q_read_status_reg2	1
+../Core/Src/w25q_controller.c:74:6:w25q_check_busy	3
+../Core/Src/w25q_controller.c:85:6:w25q_check_busy_nontimeout	2
+../Core/Src/w25q_controller.c:95:10:w25q_read_id	1
+../Core/Src/w25q_controller.c:107:6:w25q_init	2
+../Core/Src/w25q_controller.c:114:6:w25q_erase_sector	1
+../Core/Src/w25q_controller.c:129:6:w25q_erase_chip	1
+../Core/Src/w25q_controller.c:139:6:w25q_page_program	2
+../Core/Src/w25q_controller.c:156:6:w25q_write_data	2
+../Core/Src/w25q_controller.c:174:6:w25q_read_data	1
+../Core/Src/w25q_controller.c:187:6:w25q_fast_read_data	1

@@ -1,0 +1,4 @@
+../Core/Src/at24c_controller.c:14:6:at24c_write_byte	32	static
+../Core/Src/at24c_controller.c:20:6:at24c_read_byte	32	static
+../Core/Src/at24c_controller.c:25:6:at24c_write_buffer	40	static
+../Core/Src/at24c_controller.c:64:6:at24c_read_buffer	32	static
