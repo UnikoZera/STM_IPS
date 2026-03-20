@@ -1,0 +1,173 @@
+﻿using Godot;
+using System;
+using System.IO.Ports;
+using System.Collections.Concurrent;
+
+public partial class ComButton : OptionButton
+{
+	// Called when the node enters the scene tree for the first time.
+	public partial class ComPortInfo
+	{
+		public SerialPort _serialPort;
+		public static string[] ports = Array.Empty<string>();
+		public int baudRate = 9600;
+	}
+	private readonly ConcurrentQueue<string> _rxQueue = new();
+
+
+
+	public override void _Ready()
+	{
+		PopulateComPorts();
+	}
+
+	private void PopulateComPorts()
+	{
+		while (GetItemCount() > 0)
+			RemoveItem(0);
+
+		try
+		{
+			ComPortInfo.ports = SerialPort.GetPortNames();
+		}
+		catch (Exception ex)
+		{
+			GD.Print("Error: " + ex.Message);
+			ComPortInfo.ports = Array.Empty<string>();
+		}
+
+		if (ComPortInfo.ports.Length == 0)
+		{
+			AddItem("NO PORTS");
+			Disabled = true;
+		}
+		else
+		{
+			Disabled = false;
+			foreach (string port in ComPortInfo.ports)
+			{
+				AddItem(port);
+			}
+			Select(-1);
+		}
+	}
+
+	private void _on_connect_button_pressed()
+	{
+		OpenCom();
+	}
+
+	private void _on_refresh_button_pressed()
+	{
+		PopulateComPorts();
+	}
+
+	private void _on_disconnect_button_pressed()
+	{
+		CloseCom();
+	}
+
+	private void OpenCom()
+	{
+		try
+		{
+			CloseCom();
+
+			int sel = GetSelected();
+			string portName = GetItemText(sel);
+
+			_serialPort = new SerialPort(portName, ComPortInfo.baudRate, Parity.None, 8, StopBits.One)
+			{
+				ReadTimeout = 500,
+				WriteTimeout = 500,
+			};
+
+			_serialPort.DataReceived += SerialPort_DataReceived;
+			_serialPort.Open();
+
+			GD.Print("Connected to " + portName);
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr("OpenCom error: " + ex.Message);
+			// 保证在失败时清理状态
+			CloseCom();
+		}
+	}
+
+	private void CloseCom()
+	{
+		if (ComPortInfo._serialPort != null && ComPortInfo._serialPort.IsOpen)
+		{
+			ComPortInfo._serialPort.Close();
+			ComPortInfo._serialPort.Dispose();
+		}
+	}
+
+	private void _on_bau_button_item_selected(int index)
+	{
+		if (index == 0)
+			baudRate = 9600;
+		else if (index == 1)
+			baudRate = 14400;
+		else if (index == 2)
+			baudRate = 19200;
+		else if (index == 3)
+			baudRate = 28800;
+		else if (index == 4)
+			baudRate = 38400;
+		else if (index == 5)
+			baudRate = 57600;
+		else if (index == 6)
+			baudRate = 115200;
+		else if (index == 7)
+			baudRate = 230400;
+		else if (index == 8)
+			baudRate = 250000;
+		else if (index == 9)
+			baudRate = 460800;
+		else if (index == 10)
+			baudRate = 500000;
+		else if (index == 11)
+			baudRate = 921600;
+		else if (index == 12)
+			baudRate = 1000000;
+		else if (index == 13)
+			baudRate = 3000000;
+		else if (index == 14)
+			baudRate = 7500000;
+		else if (index == 15)
+			baudRate = 10000000;
+	}
+
+
+	private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
+	{
+		try
+		{
+			var sp = (SerialPort)sender;
+			// 非阻塞读取所有可用数据并入队到主线程处理
+			string s = sp.ReadExisting();
+			if (!string.IsNullOrEmpty(s))
+				_rxQueue.Enqueue(s);
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr("DataReceived error: " + ex.Message);
+		}
+	}
+
+
+	// Called every frame. 'delta' is the elapsed time since the previous frame.
+	public override void _Process(double delta)
+	{
+		while (_rxQueue.TryDequeue(out var msg))
+		{
+			// 处理接收的数据（示例：按行拆分并打印）
+			foreach (var line in msg.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+				GD.Print(line.Trim());
+		}
+
+
+	}
+}

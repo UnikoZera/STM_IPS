@@ -109,12 +109,13 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    lcd_calculate_fps();
-
-    lcd_draw_string(10, 10, WHITE, BLACK, 8, "Hello, World!");
-    lcd_draw_string(10, 30, YELLOW, BLACK, 16, "STM32 IPS");
-
-    lcd_screen_update_dma();
+//    lcd_calculate_fps();
+//
+//    lcd_draw_string(10, 10, WHITE, BLACK, 8, "Hello, World!");
+//    lcd_draw_string(10, 30, YELLOW, BLACK, 16, "STM32 IPS");
+//
+//    lcd_screen_update_dma();
+	  usb_transmit("Hello, USB!", 11);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
