@@ -27,6 +27,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "lcd_driver.h"
 
 /* USER CODE END Includes */
 
@@ -48,6 +49,9 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+static lcd_rect_t g_rect = {0, 24, 28, 20, RED};
+static lcd_circle_t g_circle = {20, 58, 10, YELLOW};
+static lcd_label_t g_label = {6, 4, WHITE, BLACK, 8, "DMA ANIM"};
 
 /* USER CODE END PV */
 
@@ -86,7 +90,6 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-  uint8_t str[32];
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -102,20 +105,51 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   lcd_init();
-  lcd_fill_screen(WHITE);
+
+    lcd_anim_manager_init();
+    lcd_anim_manager_set_bg(BLACK);
+
+    lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
+    lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
+    lcd_anim_manager_add_layer(&g_circle, lcd_draw_circle_layer);
+
+    lcd_anim_config_t rect_anim_x = {
+      .target = &g_rect.x,
+      .start_value = 0,
+      .end_value = LCD_W - g_rect.w,
+      .duration_ms = 1300,
+      .delay_ms = 0,
+      .repeat = true,
+      .yoyo = true,
+      .exec_cb = lcd_anim_exec_set_i16,
+      .done_cb = NULL,
+      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_QUAD),
+    };
+    lcd_anim_start(&rect_anim_x);
+
+    lcd_anim_config_t circle_anim_y = {
+      .target = &g_circle.y,
+      .start_value = 20,
+      .end_value = LCD_H - 20,
+      .duration_ms = 900,
+      .delay_ms = 0,
+      .repeat = true,
+      .yoyo = true,
+      .exec_cb = lcd_anim_exec_set_i16,
+      .done_cb = NULL,
+      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_OUT_QUAD),
+    };
+    lcd_anim_start(&circle_anim_y);
+
+    lcd_anim_manager_render();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-//    lcd_calculate_fps();
-//
-//    lcd_draw_string(10, 10, WHITE, BLACK, 8, "Hello, World!");
-//    lcd_draw_string(10, 30, YELLOW, BLACK, 16, "STM32 IPS");
-//
-//    lcd_screen_update_dma();
-	  usb_transmit("Hello, USB!", 11);
+    lcd_anim_manager_task();
+    lcd_anim_manager_render();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

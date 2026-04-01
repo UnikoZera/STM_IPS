@@ -7,20 +7,13 @@
 
 #include "lcd.h"
 
-bool dma_busy = false;
+volatile bool dma_busy = false;
 
-uint16_t lcd_send_buf[LCD_W * LCD_H];
+uint16_t lcd_front_buf[LCD_W * LCD_H];
 uint16_t lcd_back_buf[LCD_W * LCD_H];
+uint16_t *lcd_frame_ptr = lcd_front_buf;
+uint16_t *lcd_write_ptr = lcd_back_buf;
 uint16_t lcd_fps = 0;
-
-void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
-{
-	if (hspi == &hspi1)
-	{
-		LCD_CS_Set();
-		dma_busy = false;
-	}
-}
 
 static void lcd_write_cmd(uint8_t cmd) // not using dma
 {
@@ -291,28 +284,61 @@ void lcd_draw_circle(uint16_t x0, uint16_t y0, uint8_t r, uint16_t color)
 
 #pragma endregion
 
+#pragma region dma drawing functions
 
-// ! 注意，在每次改变显示图像时候都要调用 lcd_screen_update_dma() 来更新屏幕，否则屏幕不会刷新
+/*
+ * @brief 在DMA模式下绘制一个点（颜色已交换）
+ * @param x: 点的X坐标
+ * @param y: 点的Y坐标
+ * @attention 这里的x和y是相对于屏幕坐标的，范围是0到LCD_W-1和0到LCD_H-1，超出范围的点会被忽略
+ * @param swapped_color: 交换后的颜色值
+ */
+void lcd_draw_point_dma_swapped(int16_t x, int16_t y, uint16_t swapped_color)
+{
+	if (x < 0 || y < 0 || x >= LCD_W || y >= LCD_H)
+	{
+		return;
+	}
+	
+	lcd_write_ptr[(uint32_t)y * LCD_W + (uint32_t)x] = swapped_color;
+}
+
+void lcd_draw_point_dma(int16_t x, int16_t y, uint16_t color)
+{
+	lcd_draw_point_dma_swapped(x, y, swap_uint16_builtin(color));
+}
+
+// ! 注意，在每次改变显示图像时候都要调用 lcd_screen_update_dma() 来更新屏幕，否则屏幕不会刷新(最后调用!)
 void lcd_screen_update_dma()
 {
 	if (dma_busy)
-		return; // DMA忙，直接返回
+		return;
 
-	memcpy(lcd_send_buf, lcd_back_buf, LCD_W * LCD_H * 2);
+	uint16_t *frame_buf = lcd_write_ptr;
+	uint16_t *next_write_buf = (frame_buf == lcd_front_buf) ? lcd_back_buf : lcd_front_buf;
+
 	lcd_set_address(0, 0, LCD_W - 1, LCD_H - 1);
 	LCD_DC_Set();
 	LCD_CS_Clr();
-	HAL_SPI_Transmit_DMA(&hspi1, (uint8_t *)lcd_send_buf, LCD_W * LCD_H * 2); 
-	memset(lcd_back_buf, 0x00, LCD_W * LCD_H * 2);
+	if (HAL_SPI_Transmit_DMA(&hspi1, (uint8_t *)frame_buf, LCD_W * LCD_H * 2) != HAL_OK)
+	{
+		LCD_CS_Set();
+		return;
+	}
+	memset(next_write_buf, 0, LCD_W * LCD_H * 2);
+
+	lcd_frame_ptr = frame_buf;
+	lcd_write_ptr = next_write_buf;
 	dma_busy = true;
 }
 
 void lcd_fill_screen_dma(uint16_t color)
 {
 	uint16_t swapped_color = swap_uint16_builtin(color);
+	uint16_t *draw_buf = lcd_write_ptr;
 	for (uint32_t i = 0; i < LCD_W * LCD_H; i++)
 	{
-		lcd_back_buf[i] = swapped_color;
+		draw_buf[i] = swapped_color;
 	}
 }
 
@@ -338,6 +364,7 @@ void lcd_draw_char(int16_t x, int16_t y, uint16_t fc, uint16_t bc, uint8_t sizey
     
     uint16_t swapped_fc = swap_uint16_builtin(fc);
     uint16_t swapped_bc = swap_uint16_builtin(bc);
+	uint16_t *draw_buf = lcd_write_ptr;
     
     if (sizey == 8)
     {
@@ -353,11 +380,11 @@ void lcd_draw_char(int16_t x, int16_t y, uint16_t fc, uint16_t bc, uint8_t sizey
                 {
                     if (temp & 0x01)
                     {
-                        lcd_back_buf[draw_y * LCD_W + draw_x] = swapped_fc;
+	                        draw_buf[draw_y * LCD_W + draw_x] = swapped_fc;
                     }
                     else
                     {
-                        lcd_back_buf[draw_y * LCD_W + draw_x] = swapped_bc;
+	                        draw_buf[draw_y * LCD_W + draw_x] = swapped_bc;
                     }
                 }
                 temp >>= 1;
@@ -383,11 +410,11 @@ void lcd_draw_char(int16_t x, int16_t y, uint16_t fc, uint16_t bc, uint8_t sizey
                     {
                         if (temp & 0x01)
                         {
-                            lcd_back_buf[draw_y * LCD_W + draw_x] = swapped_fc;
+	                            draw_buf[draw_y * LCD_W + draw_x] = swapped_fc;
                         }
                         else
                         {
-                            lcd_back_buf[draw_y * LCD_W + draw_x] = swapped_bc;
+	                            draw_buf[draw_y * LCD_W + draw_x] = swapped_bc;
                         }
                     }
                     temp >>= 1;
@@ -427,3 +454,92 @@ void lcd_calculate_fps()
 	}
 }
 
+void lcd_set_area_color(int16_t start_x, int16_t start_y, int16_t end_x, int16_t end_y, uint16_t color)
+{
+	if (start_x < 0) start_x = 0;
+	if (start_y < 0) start_y = 0;
+	if (end_x >= LCD_W) end_x = LCD_W - 1;
+	if (end_y >= LCD_H) end_y = LCD_H - 1;
+
+	uint16_t swapped_color = swap_uint16_builtin(color);
+	uint16_t *draw_buf = lcd_write_ptr;
+
+	for (int16_t y = start_y; y <= end_y; y++)
+	{
+		for (int16_t x = start_x; x <= end_x; x++)
+		{
+			draw_buf[y * LCD_W + x] = swapped_color;
+		}
+	}
+}
+
+void lcd_draw_line_dma(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t thickness, uint16_t color)
+{
+	if (thickness == 0)
+	{
+		thickness = 1;
+	}
+
+	uint16_t swapped_color = swap_uint16_builtin(color);
+	uint16_t *draw_buf = lcd_write_ptr;
+	int16_t half = (int16_t)(thickness / 2);
+
+	int16_t dx = (x2 >= x1) ? (x2 - x1) : (x1 - x2);
+	int16_t sx = (x1 < x2) ? 1 : -1;
+	int16_t dy = (y2 >= y1) ? (y1 - y2) : (y2 - y1);
+	int16_t sy = (y1 < y2) ? 1 : -1;
+	int16_t err = dx + dy;
+
+	while (1)
+	{
+		int16_t start_x = x1 - half;
+		int16_t start_y = y1 - half;
+		int16_t end_x = x1 + half;
+		int16_t end_y = y1 + half;
+
+		if (start_x < 0)
+		{
+			start_x = 0;
+		}
+		if (start_y < 0)
+		{
+			start_y = 0;
+		}
+		if (end_x >= LCD_W)
+		{
+			end_x = LCD_W - 1;
+		}
+		if (end_y >= LCD_H)
+		{
+			end_y = LCD_H - 1;
+		}
+
+		for (int16_t yy = start_y; yy <= end_y; yy++)
+		{
+			uint32_t index = (uint32_t)yy * LCD_W + (uint32_t)start_x;
+			for (int16_t xx = start_x; xx <= end_x; xx++)
+			{
+				draw_buf[index++] = swapped_color;
+			}
+		}
+
+		if (x1 == x2 && y1 == y2)
+		{
+			break;
+		}
+
+		int16_t e2 = (int16_t)(2 * err);
+		if (e2 >= dy)
+		{
+			err += dy;
+			x1 += sx;
+		}
+		if (e2 <= dx)
+		{
+			err += dx;
+			y1 += sy;
+		}
+	}
+}
+
+#pragma endregion

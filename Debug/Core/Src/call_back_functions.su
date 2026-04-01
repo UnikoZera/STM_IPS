@@ -1,0 +1,2 @@
+../Core/Src/call_back_functions.c:10:6:HAL_SPI_TxCpltCallback	16	static
+../Core/Src/call_back_functions.c:23:6:HAL_SPI_RxCpltCallback	16	static
