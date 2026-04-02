@@ -31,10 +31,7 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "w25q_controller.h"
-#include "at24c_controller.h"
-#include "lcd.h"
-#include "usb_controller.h"
+
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/

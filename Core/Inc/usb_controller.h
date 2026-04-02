@@ -9,6 +9,7 @@
 #define INC_USB_CONTROLLER_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 
 uint8_t usb_transmit(uint8_t* buf, uint16_t len);
 uint8_t usb_receive(uint8_t* buf, uint32_t len);

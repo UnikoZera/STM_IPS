@@ -12,11 +12,12 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 	if (hspi == &hspi1)
 	{
 		LCD_CS_Set();
-		dma_busy = false;
+		lcd_dma_busy = false;
 	}
     if (hspi == &hspi2)
     {
-        // w25q的dma传输完成回调，暂时不需要处理
+        W25Q_CS_HIGH();
+        w25q_tx_dma_busy = false;
     }
 }
 
@@ -24,6 +25,18 @@ void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi == &hspi2)
     {
-        // w25q的dma接收完成回调，暂时不需要处理
+        W25Q_CS_HIGH();
+        w25q_rx_dma_busy = false;
+    }
+}
+
+void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
+{
+    if (hspi == &hspi2)
+    {
+        W25Q_CS_HIGH();
+        w25q_tx_dma_busy = false;
+        w25q_rx_dma_busy = false;
+        w25q_on_spi_error_callback();
     }
 }

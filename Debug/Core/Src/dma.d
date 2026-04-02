@@ -31,11 +31,7 @@ Core/Src/dma.o: ../Core/Src/dma.c ../Core/Inc/dma.h ../Core/Inc/main.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_usb.h \
- ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd_ex.h \
- ../Core/Inc/w25q_controller.h ../Core/Inc/spi.h \
- ../Core/Inc/at24c_controller.h ../Core/Inc/i2c.h ../Core/Inc/lcd.h \
- ../Core/Inc/gpio.h ../Core/Inc/tim.h ../Core/Inc/lcd_font.h \
- ../Core/Inc/usb_controller.h
+ ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd_ex.h
 ../Core/Inc/dma.h:
 ../Core/Inc/main.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h:
@@ -71,12 +67,3 @@ Core/Src/dma.o: ../Core/Src/dma.c ../Core/Inc/dma.h ../Core/Inc/main.h \
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_usb.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd_ex.h:
-../Core/Inc/w25q_controller.h:
-../Core/Inc/spi.h:
-../Core/Inc/at24c_controller.h:
-../Core/Inc/i2c.h:
-../Core/Inc/lcd.h:
-../Core/Inc/gpio.h:
-../Core/Inc/tim.h:
-../Core/Inc/lcd_font.h:
-../Core/Inc/usb_controller.h:

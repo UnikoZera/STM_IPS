@@ -1,8 +1,15 @@
 #include "lcd_driver.h"
 
-#include <limits.h>
-#include <string.h>
-
+/**
+ * @brief 动画槽结构体
+ * @param used: 是否被占用
+ * @param started: 是否已经开始动画
+ * @param direction: 当前动画段的方向，1表示从start_value到end_value，-1表示反向
+ * @param created_tick: 动画创建的系统时钟tick值
+ * @param segment_tick: 当前动画段开始的系统时钟tick值
+ * @param completed_segments: 已完成的动画段数量，用于repeat和yoyo逻辑
+ * @param cfg: 动画配置
+ */
 typedef struct
 {
 	bool used;
@@ -14,6 +21,12 @@ typedef struct
 	lcd_anim_config_t cfg;
 } lcd_anim_slot_t;
 
+/**
+ * @brief 层槽结构体
+ * @param used: 是否被占用
+ * @param ctx: 上下文指针
+ * @param draw_cb: 绘制回调函数
+ */
 typedef struct
 {
 	bool used;
@@ -25,6 +38,7 @@ static lcd_anim_slot_t s_anim_slots[LCD_ANIM_MAX_COUNT];
 static lcd_layer_slot_t s_layer_slots[LCD_LAYER_MAX_COUNT];
 static uint16_t s_bg_color = BLACK;
 
+// 作用是将elapsed限制在duration范围内，避免动画路径函数计算出超出预期的值
 static inline uint32_t lcd_anim_clamp_elapsed(uint32_t elapsed, uint32_t duration)
 {
 	return (elapsed > duration) ? duration : elapsed;
@@ -40,6 +54,8 @@ static inline void lcd_dma_plot_point(int16_t x, int16_t y, uint16_t color)
 {
 	lcd_draw_point_dma(x, y, color);
 }
+
+#pragma region animation manager
 
 void lcd_anim_manager_init(void)
 {
@@ -124,11 +140,17 @@ void lcd_anim_manager_render(void)
 	lcd_screen_update_dma();
 }
 
+/**
+ * @brief 添加图层
+ * @param ctx: 上下文指针
+ * @param draw_cb: 绘制回调函数
+ * @return 图层ID，失败返回-1
+ */
 int8_t lcd_anim_manager_add_layer(void *ctx, lcd_layer_draw_cb_t draw_cb)
 {
 	if (draw_cb == NULL)
 	{
-		return -1;
+		return -1; // 画了个啥呀你
 	}
 
 	for (uint32_t i = 0; i < LCD_LAYER_MAX_COUNT; i++)
@@ -145,6 +167,11 @@ int8_t lcd_anim_manager_add_layer(void *ctx, lcd_layer_draw_cb_t draw_cb)
 	return -1;
 }
 
+/**
+ * @brief 移除图层
+ * @param layer_id: 图层ID
+ * @return true: 成功, false: 失败
+ */
 bool lcd_anim_manager_remove_layer(int8_t layer_id)
 {
 	if (layer_id < 0 || layer_id >= LCD_LAYER_MAX_COUNT)
@@ -158,11 +185,19 @@ bool lcd_anim_manager_remove_layer(int8_t layer_id)
 	return true;
 }
 
+/**
+ * @brief 清除所有图层
+ */
 void lcd_anim_manager_clear_layers(void)
 {
 	memset(s_layer_slots, 0, sizeof(s_layer_slots));
 }
 
+/**
+ * @brief 启动动画
+ * @param config: 动画配置
+ * @return 动画ID，失败返回-1
+ */
 int8_t lcd_anim_start(const lcd_anim_config_t *config)
 {
 	if (config == NULL || config->exec_cb == NULL || config->duration_ms == 0)
@@ -184,7 +219,7 @@ int8_t lcd_anim_start(const lcd_anim_config_t *config)
 
 			if (s_anim_slots[i].cfg.path_cb == NULL)
 			{
-				s_anim_slots[i].cfg.path_cb = lcd_anim_path_linear;
+				s_anim_slots[i].cfg.path_cb = lcd_anim_path_linear; // default.
 			}
 
 			return (int8_t)i;
@@ -194,6 +229,11 @@ int8_t lcd_anim_start(const lcd_anim_config_t *config)
 	return -1;
 }
 
+/**
+ * @brief 停止动画
+ * @param anim_id: 动画ID
+ * @return true: 成功, false: 失败
+ */
 bool lcd_anim_stop(int8_t anim_id)
 {
 	if (anim_id < 0 || anim_id >= LCD_ANIM_MAX_COUNT)
@@ -210,10 +250,17 @@ bool lcd_anim_stop(int8_t anim_id)
 	return true;
 }
 
+/**
+ * @brief 停止所有动画
+ */
 void lcd_anim_stop_all(void)
 {
 	memset(s_anim_slots, 0, sizeof(s_anim_slots));
 }
+
+#pragma endregion
+
+#pragma region path functions
 
 lcd_anim_path_cb_t lcd_anim_get_path(lcd_anim_ease_t ease)
 {
@@ -226,6 +273,29 @@ lcd_anim_path_cb_t lcd_anim_get_path(lcd_anim_ease_t ease)
 	case LCD_ANIM_EASE_IN_OUT_QUAD:
 		return lcd_anim_path_ease_in_out_quad;
 	case LCD_ANIM_EASE_LINEAR:
+		return lcd_anim_path_linear;
+	case LCD_ANIM_EASE_IN_OUT_SINE:
+		return lcd_anim_path_ease_in_out_sine;
+	case LCD_ANIM_EASE_IN_SINE:
+		return lcd_anim_path_ease_in_sine;
+	case LCD_ANIM_EASE_OUT_SINE:
+		return lcd_anim_path_ease_out_sine;
+	case LCD_ANIM_EASE_IN_OUT_EXPO:
+		return lcd_anim_path_ease_in_out_expo;
+	case LCD_ANIM_EASE_IN_EXPO:
+		return lcd_anim_path_ease_in_expo;
+	case LCD_ANIM_EASE_OUT_EXPO:
+		return lcd_anim_path_ease_out_expo;
+	case LCD_ANIM_EASE_IN_OUT_CIRC:
+		return lcd_anim_path_ease_in_out_circ;
+	case LCD_ANIM_EASE_IN_CIRC:
+		return lcd_anim_path_ease_in_circ;
+	case LCD_ANIM_EASE_OUT_CIRC:
+		return lcd_anim_path_ease_out_circ;
+	case LCD_ANIM_EASE_IN_OUT_BACK:
+		return lcd_anim_path_ease_in_out_back;
+	case LCD_ANIM_EASE_OUT_ELASTIC:
+		return lcd_anim_path_ease_out_elastic;
 	default:
 		return lcd_anim_path_linear;
 	}
@@ -293,6 +363,189 @@ int32_t lcd_anim_path_ease_in_out_quad(int32_t start, int32_t end, uint32_t elap
 	return lcd_anim_mix_q10(start, end, progress_q10);
 }
 
+int32_t lcd_anim_path_ease_in_out_sine(int32_t start, int32_t end, uint32_t elapsed, uint32_t duration)
+{
+	if (duration == 0)
+	{
+		return end;
+	}
+
+	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
+	double progress = (double)t / (double)duration;
+	double eased = 0.5 * (1 - cos(progress * M_PI));
+	return (int32_t)(start + (end - start) * eased);
+}
+
+int32_t lcd_anim_path_ease_in_sine(int32_t start, int32_t end, uint32_t elapsed, uint32_t duration)
+{
+	if (duration == 0)
+	{
+		return end;
+	}
+
+	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
+	double progress = (double)t / (double)duration;
+	double eased = 1 - cos((progress * M_PI) / 2);
+	return (int32_t)(start + (end - start) * eased);
+}
+
+int32_t lcd_anim_path_ease_out_sine(int32_t start, int32_t end, uint32_t elapsed, uint32_t duration)
+{
+	if (duration == 0)
+	{
+		return end;
+	}
+
+	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
+	double progress = (double)t / (double)duration;
+	double eased = sin((progress * M_PI) / 2);
+	return (int32_t)(start + (end - start) * eased);
+}
+
+int32_t lcd_anim_path_ease_in_out_expo(int32_t start, int32_t end, uint32_t elapsed, uint32_t duration)
+{
+	if (duration == 0)
+	{
+		return end;
+	}
+
+	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
+	double progress = (double)t / (double)duration;
+	double eased;
+
+	if (progress < 0.5)
+	{
+		eased = 0.5 * pow(2, 10 * (2 * progress - 1));
+	}
+	else
+	{
+		eased = 0.5 * (2 - pow(2, -10 * (2 * progress - 1)));
+	}
+
+	return (int32_t)(start + (end - start) * eased);
+}
+
+int32_t lcd_anim_path_ease_in_expo(int32_t start, int32_t end, uint32_t elapsed, uint32_t duration)
+{
+	if (duration == 0)
+	{
+		return end;
+	}
+
+	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
+	double progress = (double)t / (double)duration;
+	double eased = (progress == 0) ? 0 : pow(2, 10 * (progress - 1));
+	return (int32_t)(start + (end - start) * eased);
+}
+
+int32_t lcd_anim_path_ease_out_expo(int32_t start, int32_t end, uint32_t elapsed, uint32_t duration)
+{
+	if (duration == 0)
+	{
+		return end;
+	}
+
+	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
+	double progress = (double)t / (double)duration;
+	double eased = (progress == 1) ? 1 : 1 - pow(2, -10 * progress);
+	return (int32_t)(start + (end - start) * eased);
+}
+
+int32_t lcd_anim_path_ease_in_out_circ(int32_t start, int32_t end, uint32_t elapsed, uint32_t duration)
+{
+	if (duration == 0)
+	{
+		return end;
+	}
+
+	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
+	double progress = (double)t / (double)duration;
+	double eased;
+
+	if (progress < 0.5)
+	{
+		eased = 0.5 * (1 - sqrt(1 - 4 * progress * progress));
+	}
+	else
+	{
+		double inv = 2 * progress - 2;
+		eased = 0.5 * (sqrt(1 - inv * inv) + 1);
+	}
+
+	return (int32_t)(start + (end - start) * eased);
+}
+
+int32_t lcd_anim_path_ease_in_circ(int32_t start, int32_t end, uint32_t elapsed, uint32_t duration)
+{
+	if (duration == 0)
+	{
+		return end;
+	}
+
+	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
+	double progress = (double)t / (double)duration;
+	double eased = 1 - sqrt(1 - progress * progress);
+	return (int32_t)(start + (end - start) * eased);
+}
+
+int32_t lcd_anim_path_ease_out_circ(int32_t start, int32_t end, uint32_t elapsed, uint32_t duration)
+{
+	if (duration == 0)
+	{
+		return end;
+	}
+
+	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
+	double progress = (double)t / (double)duration;
+	double inv = progress - 1;
+	double eased = sqrt(1 - inv * inv);
+	return (int32_t)(start + (end - start) * eased);
+}
+
+int32_t lcd_anim_path_ease_in_out_back(int32_t start, int32_t end, uint32_t elapsed, uint32_t duration)
+{
+	if (duration == 0)
+	{
+		return end;
+	}
+
+	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
+	double progress = (double)t / (double)duration;
+	double eased;
+
+	const double c1 = 1.70158;
+	const double c2 = c1 * 1.525;
+
+	if (progress < 0.5)
+	{
+		eased = 0.5 * (pow(2 * progress, 2) * ((c2 + 1) * 2 * progress - c2));
+	}
+	else
+	{
+		double inv = 2 * progress - 2;
+		eased = 0.5 * (pow(inv, 2) * ((c2 + 1) * inv + c2) + 2);
+	}
+
+	return (int32_t)(start + (end - start) * eased);
+}
+
+int32_t lcd_anim_path_ease_out_elastic(int32_t start, int32_t end, uint32_t elapsed, uint32_t duration)
+{
+	if (duration == 0)
+	{
+		return end;
+	}
+
+	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
+	double progress = (double)t / (double)duration;
+	double eased = sin(-13 * M_PI_2 * (progress + 1)) * pow(2, -10 * progress) + 1;
+	return (int32_t)(start + (end - start) * eased);
+}
+
+#pragma endregion
+
+#pragma region draw functions
+
 void lcd_dma_draw_pixel(int16_t x, int16_t y, uint16_t color)
 {
 	lcd_dma_plot_point(x, y, color);
@@ -345,7 +598,6 @@ void lcd_dma_draw_circle(int16_t x0, int16_t y0, uint8_t r, uint16_t color)
 
 	while (x >= y)
 	{
-		// 圆周点较多，复用已交换颜色接口可减少重复 bswap 开销。
 		lcd_draw_point_dma_swapped(x0 + x, y0 + y, swapped_color);
 		lcd_draw_point_dma_swapped(x0 + y, y0 + x, swapped_color);
 		lcd_draw_point_dma_swapped(x0 - y, y0 + x, swapped_color);
@@ -406,6 +658,10 @@ void lcd_draw_label_layer(void *ctx)
 	lcd_dma_draw_label(label);
 }
 
+#pragma endregion
+
+#pragma region exec functions	
+
 void lcd_anim_exec_set_i16(void *target, int32_t value)
 {
 	if (target == NULL)
@@ -462,3 +718,5 @@ void lcd_anim_exec_set_u8(void *target, int32_t value)
 
 	*((uint8_t *)target) = (uint8_t)value;
 }
+
+#pragma endregion

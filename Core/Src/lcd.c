@@ -7,7 +7,7 @@
 
 #include "lcd.h"
 
-volatile bool dma_busy = false;
+volatile bool lcd_dma_busy = false;
 
 uint16_t lcd_front_buf[LCD_W * LCD_H];
 uint16_t lcd_back_buf[LCD_W * LCD_H];
@@ -284,6 +284,8 @@ void lcd_draw_circle(uint16_t x0, uint16_t y0, uint8_t r, uint16_t color)
 
 #pragma endregion
 
+
+
 #pragma region dma drawing functions
 
 /*
@@ -311,7 +313,7 @@ void lcd_draw_point_dma(int16_t x, int16_t y, uint16_t color)
 // ! 注意，在每次改变显示图像时候都要调用 lcd_screen_update_dma() 来更新屏幕，否则屏幕不会刷新(最后调用!)
 void lcd_screen_update_dma()
 {
-	if (dma_busy)
+	if (lcd_dma_busy)
 		return;
 
 	uint16_t *frame_buf = lcd_write_ptr;
@@ -329,7 +331,7 @@ void lcd_screen_update_dma()
 
 	lcd_frame_ptr = frame_buf;
 	lcd_write_ptr = next_write_buf;
-	dma_busy = true;
+	lcd_dma_busy = true;
 }
 
 void lcd_fill_screen_dma(uint16_t color)

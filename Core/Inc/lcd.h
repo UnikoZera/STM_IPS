@@ -86,7 +86,7 @@ void lcd_draw_char(int16_t x, int16_t y, uint16_t fc, uint16_t bc, uint8_t sizey
 void lcd_draw_string(int16_t x,int16_t y, uint16_t fc, uint16_t bc, uint8_t sizey, const char *p);
 void lcd_set_area_color(int16_t start_x, int16_t start_y, int16_t end_x, int16_t end_y, uint16_t color);
 
-extern volatile bool dma_busy;
+extern volatile bool lcd_dma_busy;
 // 可能不需要暴露这两个缓冲区指针，外部只需要调用 lcd_screen_update_dma() 来更新屏幕即可，直接操作指针可能会导致数据竞争和不一致问题
 // extern uint16_t lcd_front_buf[LCD_W * LCD_H];
 // extern uint16_t lcd_back_buf[LCD_W * LCD_H];
