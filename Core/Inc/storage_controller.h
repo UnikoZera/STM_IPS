@@ -11,4 +11,6 @@
 #include "w25q_controller.h"
 #include "at24c_controller.h"
 
+uint16_t crc_packing(const uint8_t *data, uint32_t len, bool has_crc);
+
 #endif /* INC_STORAGE_CONTROLLER_H_ */

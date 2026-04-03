@@ -6,6 +6,9 @@
  */
 
 #include "lcd_ui.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include "math.h"
 
 /**
  * @brief UI元素的全局变量，根据需要添加更多的元素和状态变量
@@ -14,6 +17,9 @@
 static lcd_rect_t g_rect = {0, 24, 28, 20, RED};
 static lcd_circle_t g_circle = {20, 58, 10, YELLOW};
 static lcd_label_t g_label = {6, 4, WHITE, BLACK, 8, "DMA ANIM"};
+static lcd_label_t g_label2 = {12, 14, WHITE, BLACK, 8, "TEST"};
+static lcd_circle_t g_circle2 = {60, 58, 10, CYAN};
+static lcd_rect_t g_rect2 = {50, 24, 35, 30, MAGENTA};
 
 /**
  * @brief 初始化UI，设置动画和图层。在这里添加更多的图层和动画配置。
@@ -27,6 +33,9 @@ void lcd_ui_init(void)
     lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
     lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
     lcd_anim_manager_add_layer(&g_circle, lcd_draw_circle_layer);
+    lcd_anim_manager_add_layer(&g_circle2, lcd_draw_circle_layer);
+    lcd_anim_manager_add_layer(&g_label2, lcd_draw_label_layer);
+    lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
 
     lcd_anim_config_t rect_anim_x = {
       .target = &g_rect.x,
@@ -56,6 +65,63 @@ void lcd_ui_init(void)
     };
     lcd_anim_start(&circle_anim_y);
 
+    lcd_anim_config_t circle2_anim_y = {
+      .target = &g_circle2.y,
+      .start_value = 20,
+      .end_value = LCD_H - 20,
+      .duration_ms = 900,
+      .delay_ms = 0,
+      .repeat = true,
+      .yoyo = false,
+      .exec_cb = lcd_anim_exec_set_i16,
+      .done_cb = NULL,
+      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_OUT_CIRC),
+    };
+    lcd_anim_start(&circle2_anim_y);
+
+    lcd_anim_config_t rect2_anim_x = {
+      .target = &g_rect2.x,
+      .start_value = 50,
+      .end_value = LCD_W - g_rect2.w - 50,
+      .duration_ms = 1100,
+      .delay_ms = 0,
+      .repeat = true,
+      .yoyo = true,
+      .exec_cb = lcd_anim_exec_set_i16,
+      .done_cb = NULL,
+      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_BACK),
+    };
+    lcd_anim_start(&rect2_anim_x);
+
+    lcd_anim_config_t label_anim_color = {
+      .target = &g_label.fg_color,
+      .start_value = RED,
+      .end_value = WHITE,
+      .duration_ms = 1000,
+      .delay_ms = 0,
+      .repeat = true,
+      .yoyo = true,
+      .exec_cb = lcd_anim_exec_set_u16,
+      .done_cb = NULL,
+      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_LINEAR),
+    };
+    lcd_anim_start(&label_anim_color);
+
+    lcd_anim_config_t label2_anim_color = {
+      .target = &g_label2.fg_color,
+      .start_value = CYAN,
+      .end_value = MAGENTA,
+      .duration_ms = 3000,
+      .delay_ms = 0,
+      .repeat = true,
+      .yoyo = true,
+      .exec_cb = lcd_anim_exec_set_u16,
+      .done_cb = NULL,
+      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
+    };
+    lcd_anim_start(&label2_anim_color);
+
+
     lcd_anim_manager_render();
 }
 
@@ -65,9 +131,22 @@ void lcd_ui_init(void)
  */
 void lcd_ui_change(void)
 {
-    g_label.text = "CHANGED!";
-    g_rect.color = BLUE;
-    g_circle.color = GREEN;
+  lcd_calculate_usage();
+  static char str_buf[32];
+  static char last_str_buf[8];
+  snprintf(str_buf, sizeof(str_buf), "usage percent:%u %%", cpu_usage_percent);
+
+  g_label.text = str_buf;
+  g_rect.color = BLUE;
+  g_circle.color = GREEN;
+
+  for (uint8_t i = 0; i < sizeof(last_str_buf); i++)
+  {
+    last_str_buf[i] = 32 + (rand() % 95);
+  }
+    g_label2.text = last_str_buf;
+
+    lcd_calculate_fps();
 }
 
 /**

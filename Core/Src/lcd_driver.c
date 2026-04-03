@@ -127,6 +127,11 @@ void lcd_anim_manager_task(void)
 
 void lcd_anim_manager_render(void)
 {
+	if (lcd_dma_busy)
+	{
+		return;
+	}
+
 	lcd_fill_screen_dma(s_bg_color);
 
 	for (uint32_t i = 0; i < LCD_LAYER_MAX_COUNT; i++)

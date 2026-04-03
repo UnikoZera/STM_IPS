@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <limits.h>
 #include <string.h>
+#include <stdio.h>
 #include "math.h"
 
 #define LCD_ANIM_MAX_COUNT 16		// TODO: 可以根据实际需求调整动画最大数量，过多会占用较多内存

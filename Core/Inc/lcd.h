@@ -75,6 +75,7 @@ void lcd_draw_rectangle(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint
 void lcd_draw_circle(uint16_t x0,uint16_t y0,uint8_t r,uint16_t color);
 
 void lcd_calculate_fps();
+void lcd_calculate_usage();
 
 // dma相关函数
 void lcd_screen_update_dma();
@@ -87,11 +88,9 @@ void lcd_draw_string(int16_t x,int16_t y, uint16_t fc, uint16_t bc, uint8_t size
 void lcd_set_area_color(int16_t start_x, int16_t start_y, int16_t end_x, int16_t end_y, uint16_t color);
 
 extern volatile bool lcd_dma_busy;
-// 可能不需要暴露这两个缓冲区指针，外部只需要调用 lcd_screen_update_dma() 来更新屏幕即可，直接操作指针可能会导致数据竞争和不一致问题
-// extern uint16_t lcd_front_buf[LCD_W * LCD_H];
-// extern uint16_t lcd_back_buf[LCD_W * LCD_H];
 extern uint16_t *lcd_frame_ptr;
 extern uint16_t *lcd_write_ptr;
 extern uint16_t lcd_fps;
+extern uint8_t cpu_usage_percent;
 
 #endif /* LCD_H_ */

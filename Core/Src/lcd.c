@@ -9,11 +9,16 @@
 
 volatile bool lcd_dma_busy = false;
 
-uint16_t lcd_front_buf[LCD_W * LCD_H];
-uint16_t lcd_back_buf[LCD_W * LCD_H];
-uint16_t *lcd_frame_ptr = lcd_front_buf;
-uint16_t *lcd_write_ptr = lcd_back_buf;
+static uint16_t lcd_frame_buffer[LCD_W * LCD_H]; // 直接使用单个缓冲区，lcd_frame_ptr指向当前帧数据，lcd_write_ptr指向正在写入的数据位置 可以轻松移植到双缓冲方案
+uint16_t *lcd_frame_ptr = lcd_frame_buffer;
+uint16_t *lcd_write_ptr = lcd_frame_buffer;
 uint16_t lcd_fps = 0;
+static uint32_t s_dwt_last_cycle = 0;
+static uint32_t s_cycle_window = 0;
+static uint32_t s_call_window = 0;
+static uint32_t s_best_cycle_per_call = 0;
+static bool s_dwt_ready = false;
+uint8_t cpu_usage_percent = 0;
 
 static void lcd_write_cmd(uint8_t cmd) // not using dma
 {
@@ -316,21 +321,16 @@ void lcd_screen_update_dma()
 	if (lcd_dma_busy)
 		return;
 
-	uint16_t *frame_buf = lcd_write_ptr;
-	uint16_t *next_write_buf = (frame_buf == lcd_front_buf) ? lcd_back_buf : lcd_front_buf;
-
 	lcd_set_address(0, 0, LCD_W - 1, LCD_H - 1);
 	LCD_DC_Set();
 	LCD_CS_Clr();
-	if (HAL_SPI_Transmit_DMA(&hspi1, (uint8_t *)frame_buf, LCD_W * LCD_H * 2) != HAL_OK)
+	if (HAL_SPI_Transmit_DMA(&hspi1, (uint8_t *)lcd_write_ptr, LCD_W * LCD_H * 2) != HAL_OK)
 	{
 		LCD_CS_Set();
 		return;
 	}
-	memset(next_write_buf, 0, LCD_W * LCD_H * 2);
 
-	lcd_frame_ptr = frame_buf;
-	lcd_write_ptr = next_write_buf;
+	lcd_frame_ptr = lcd_write_ptr;
 	lcd_dma_busy = true;
 }
 
@@ -453,6 +453,72 @@ void lcd_calculate_fps()
 		lcd_fps = (uint16_t)(frame_count * 1000.0f / (current_time - last_time));
 		last_time = current_time;
 		frame_count = 0;
+	}
+}
+
+/**
+ * @brief 在主循环中调用此函数来估算CPU使用率
+ * @attention 这是基于DWT周期计数的主循环负载估算，不是RTOS级别的精确CPU占用率
+ */
+void lcd_calculate_usage()
+{
+	static uint32_t last_time = 0;
+
+	if (!s_dwt_ready)
+	{
+		CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+		DWT->CYCCNT = 0;
+		DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+		s_dwt_last_cycle = DWT->CYCCNT;
+		s_dwt_ready = true;
+		last_time = HAL_GetTick();
+		return;
+	}
+
+	uint32_t current_cycle = DWT->CYCCNT;
+	uint32_t delta_cycle = current_cycle - s_dwt_last_cycle;
+	s_dwt_last_cycle = current_cycle;
+	s_cycle_window += delta_cycle;
+	s_call_window++;
+
+	uint32_t current_time = HAL_GetTick();
+
+	if (current_time - last_time >= 1000)
+	{
+		if (s_call_window == 0)
+		{
+			cpu_usage_percent = 0;
+		}
+		else
+		{
+			uint32_t avg_cycle_per_call = s_cycle_window / s_call_window;
+			if (s_best_cycle_per_call == 0 || avg_cycle_per_call < s_best_cycle_per_call)
+			{
+				s_best_cycle_per_call = avg_cycle_per_call;
+			}
+
+			if (s_best_cycle_per_call == 0 || avg_cycle_per_call == 0)
+			{
+				cpu_usage_percent = 0;
+			}
+			else if (avg_cycle_per_call <= s_best_cycle_per_call)
+			{
+				cpu_usage_percent = 0;
+			}
+			else
+			{
+				uint32_t usage = 100U - ((s_best_cycle_per_call * 100U) / avg_cycle_per_call);
+				if (usage > 100U)
+				{
+					usage = 100U;
+				}
+				cpu_usage_percent = (uint8_t)usage;
+			}
+		}
+
+		last_time = current_time;
+		s_cycle_window = 0;
+		s_call_window = 0;
 	}
 }
 
