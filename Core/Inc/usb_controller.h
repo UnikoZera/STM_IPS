@@ -55,5 +55,6 @@ void usb_controller_task(usb_controller_t* controller);
 usb_send_status_t usb_controller_send(usb_controller_t* controller, const uint8_t* data, uint16_t len);
 void usb_controller_on_tx_complete(void);
 void usb_controller_on_rx_received(uint8_t* buf, uint32_t len);
+uint16_t usb_controller_get_rx_free_space(void);
 
 #endif /* INC_USB_CONTROLLER_H_ */

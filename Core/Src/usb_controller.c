@@ -5,7 +5,6 @@
  *      Author: UnikoZera
  */
 
-
 #include "usb_controller.h"
 #include "usbd_cdc.h"
 #include "usbd_cdc_if.h"
@@ -22,19 +21,19 @@ static uint16_t usb_min_u16(uint16_t a, uint16_t b)
     return (a < b) ? a : b;
 }
 
-static void usb_clear_tx_queue(usb_controller_t* controller)
+static void usb_clear_tx_queue(usb_controller_t *controller)
 {
     controller->tx_tail_ptr = NULL;
     controller->tx_remain_len = 0U;
 }
 
-static void usb_clear_tx_pending(usb_controller_t* controller)
+static void usb_clear_tx_pending(usb_controller_t *controller)
 {
     controller->tx_pending_ptr = NULL;
     controller->tx_pending_len = 0U;
 }
 
-static void usb_reset_tx_state(usb_controller_t* controller, bool clear_pending)
+static void usb_reset_tx_state(usb_controller_t *controller, bool clear_pending)
 {
     controller->usb_tx_active = false;
     controller->usb_tx_done = true;
@@ -46,13 +45,13 @@ static void usb_reset_tx_state(usb_controller_t* controller, bool clear_pending)
     }
 }
 
-static void usb_reset_rx_state(usb_controller_t* controller)
+static void usb_reset_rx_state(usb_controller_t *controller)
 {
     controller->usb_rx_active = false;
     controller->usb_rx_done = false;
 }
 
-static bool usb_load_pending_as_active(usb_controller_t* controller)
+static bool usb_load_pending_as_active(usb_controller_t *controller)
 {
     if ((controller == NULL) || (controller->tx_pending_ptr == NULL) || (controller->tx_pending_len == 0U))
     {
@@ -84,11 +83,11 @@ static bool usb_is_stack_tx_idle(void)
         return false;
     }
 
-    hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
+    hcdc = (USBD_CDC_HandleTypeDef *)hUsbDeviceFS.pClassData;
     return (hcdc->TxState == 0U);
 }
 
-static uint8_t usb_start_tx_chunk(usb_controller_t* controller)
+static uint8_t usb_start_tx_chunk(usb_controller_t *controller)
 {
     uint8_t result;
     uint16_t tx_len;
@@ -129,18 +128,18 @@ static uint8_t usb_start_tx_chunk(usb_controller_t* controller)
 }
 
 // 返回0表示成功，1表示USB忙碌，2表示其他错误
-uint8_t usb_transmit(const uint8_t* buf, uint16_t len)
+uint8_t usb_transmit(const uint8_t *buf, uint16_t len)
 {
     if ((buf == NULL) || (len == 0U))
     {
         return USBD_FAIL;
     }
 
-    return CDC_Transmit_FS((uint8_t*)buf, len);
+    return CDC_Transmit_FS((uint8_t *)buf, len);
 }
 
 // 返回0表示成功，1表示USB忙碌，2表示其他错误
-uint8_t usb_receive(uint8_t* buf, uint32_t len)
+uint8_t usb_receive(uint8_t *buf, uint32_t len)
 {
     uint16_t copied_len;
 
@@ -153,7 +152,7 @@ uint8_t usb_receive(uint8_t* buf, uint32_t len)
     return (copied_len > 0U) ? USBD_OK : USBD_BUSY;
 }
 
-uint16_t usb_controller_receive(usb_controller_t* controller, uint8_t* buf, uint16_t len)
+uint16_t usb_controller_receive(usb_controller_t *controller, uint8_t *buf, uint16_t len)
 {
     uint16_t copy_len = 0;
     uint32_t primask;
@@ -165,10 +164,13 @@ uint16_t usb_controller_receive(usb_controller_t* controller, uint8_t* buf, uint
 
     primask = __get_PRIMASK();
     __disable_irq();
-
     uint16_t head = controller->rx_head;
     uint16_t tail = controller->rx_tail;
-    
+    if (primask == 0U)
+    {
+        __enable_irq();
+    }
+
     // 计算可用数据量
     uint16_t available = (head >= tail) ? (head - tail) : (USB_RECEIVE_BUFFER_SIZE - tail + head);
     copy_len = usb_min_u16(len, available);
@@ -177,16 +179,30 @@ uint16_t usb_controller_receive(usb_controller_t* controller, uint8_t* buf, uint
     {
         uint16_t first_chunk = usb_min_u16(copy_len, USB_RECEIVE_BUFFER_SIZE - tail);
         memcpy(buf, &s_usb_rx_cache[tail], first_chunk);
-        
-        if (first_chunk < copy_len) {
+
+        if (first_chunk < copy_len)
+        {
             memcpy(buf + first_chunk, &s_usb_rx_cache[0], copy_len - first_chunk);
         }
-        controller->rx_tail = (tail + copy_len) % USB_RECEIVE_BUFFER_SIZE;
-    }
 
-    if (primask == 0U)
-    {
-        __enable_irq();
+        primask = __get_PRIMASK();
+        __disable_irq();
+        controller->rx_tail = (tail + copy_len) % USB_RECEIVE_BUFFER_SIZE;
+        if (primask == 0U)
+        {
+            __enable_irq();
+        }
+
+        /* 腾出空间后，检查是否需要重新开启底层的接收 */
+        uint16_t new_free_space = usb_controller_get_rx_free_space();
+        if (new_free_space >= 64U)
+        {
+            USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef *)hUsbDeviceFS.pClassData;
+            if (hcdc != NULL && hcdc->RxState == 0) // 如果处于非接收状态，则恢复
+            {
+                USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+            }
+        }
     }
 
     if (copy_len > 0U)
@@ -198,7 +214,14 @@ uint16_t usb_controller_receive(usb_controller_t* controller, uint8_t* buf, uint
     return copy_len;
 }
 
-void usb_controller_init(usb_controller_t* controller)
+uint16_t usb_controller_get_rx_free_space(void)
+{
+    uint16_t head = g_usb_controller.rx_head;
+    uint16_t tail = g_usb_controller.rx_tail;
+    return (tail > head) ? (tail - head - 1) : (USB_RECEIVE_BUFFER_SIZE - head + tail - 1);
+}
+
+void usb_controller_init(usb_controller_t *controller)
 {
     if (controller == NULL)
     {
@@ -222,10 +245,10 @@ void usb_controller_init(usb_controller_t* controller)
 
 /**
  * @brief 在主循环中调用此函数来处理USB传输状态和超时等逻辑
- * 
- * @param controller 
+ *
+ * @param controller
  */
-void usb_controller_task(usb_controller_t* controller)
+void usb_controller_task(usb_controller_t *controller)
 {
     uint32_t now;
 
@@ -258,10 +281,11 @@ void usb_controller_task(usb_controller_t* controller)
         USBD_CDC_HandleTypeDef *hcdc;
         usb_reset_tx_state(controller, false);
         controller->last_tx_tick = now;
-        
+
         // 软恢复底层端点状态
-        hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
-        if (hcdc != NULL) {
+        hcdc = (USBD_CDC_HandleTypeDef *)hUsbDeviceFS.pClassData;
+        if (hcdc != NULL)
+        {
             USBD_LL_FlushEP(&hUsbDeviceFS, CDC_IN_EP);
             hcdc->TxState = 0;
         }
@@ -294,7 +318,7 @@ void usb_controller_task(usb_controller_t* controller)
     }
 }
 
-usb_send_status_t usb_controller_send(usb_controller_t* controller, const uint8_t* buf, uint16_t len)
+usb_send_status_t usb_controller_send(usb_controller_t *controller, const uint8_t *buf, uint16_t len)
 {
     uint8_t tx_result;
 
@@ -310,8 +334,8 @@ usb_send_status_t usb_controller_send(usb_controller_t* controller, const uint8_
             controller->tx_pending_ptr = buf;
             controller->tx_pending_len = len;
             return USB_SEND_QUEUED;
-        } 
-        else if (len <= controller->tx_pending_len) 
+        }
+        else if (len <= controller->tx_pending_len)
         {
             controller->tx_pending_ptr = buf;
             controller->tx_pending_len = len;
@@ -348,7 +372,7 @@ void usb_controller_on_tx_complete(void)
 }
 
 // callback for rx
-void usb_controller_on_rx_received(uint8_t* buf, uint32_t len)
+void usb_controller_on_rx_received(uint8_t *buf, uint32_t len)
 {
     uint16_t free_len;
     uint16_t copy_len;
@@ -370,7 +394,7 @@ void usb_controller_on_rx_received(uint8_t* buf, uint32_t len)
 
     head = g_usb_controller.rx_head;
     tail = g_usb_controller.rx_tail;
-    
+
     // 计算可用空间 (若等于则是空，差1是满)
     free_len = (tail > head) ? (tail - head - 1) : (USB_RECEIVE_BUFFER_SIZE - head + tail - 1);
     copy_len = usb_min_u16((uint16_t)len, free_len);
@@ -379,8 +403,9 @@ void usb_controller_on_rx_received(uint8_t* buf, uint32_t len)
     {
         uint16_t first_chunk = usb_min_u16(copy_len, USB_RECEIVE_BUFFER_SIZE - head);
         memcpy(&s_usb_rx_cache[head], buf, first_chunk);
-        
-        if (first_chunk < copy_len) {
+
+        if (first_chunk < copy_len)
+        {
             memcpy(&s_usb_rx_cache[0], buf + first_chunk, copy_len - first_chunk);
         }
         g_usb_controller.rx_head = (head + copy_len) % USB_RECEIVE_BUFFER_SIZE;

@@ -45,7 +45,7 @@
 static const uint8_t LCD_FRAME_TAIL[] = {0x0D, 0x00, 0x07, 0x21};
 
 #ifndef LCD_USB_STREAM_ENABLE
-#define LCD_USB_STREAM_ENABLE 1U
+#define LCD_USB_STREAM_ENABLE 0U
 #endif
 
 #ifndef LCD_USB_STREAM_MIN_INTERVAL_MS

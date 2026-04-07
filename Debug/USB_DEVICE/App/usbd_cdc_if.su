@@ -2,6 +2,6 @@
 ../USB_DEVICE/App/usbd_cdc_if.c:167:15:CDC_DeInit_FS	4	static
 ../USB_DEVICE/App/usbd_cdc_if.c:181:15:CDC_Control_FS	16	static
 ../USB_DEVICE/App/usbd_cdc_if.c:262:15:CDC_Receive_FS	16	static
-../USB_DEVICE/App/usbd_cdc_if.c:283:9:CDC_Transmit_FS	24	static
-../USB_DEVICE/App/usbd_cdc_if.c:321:15:CDC_TransmitCplt_FS	32	static
-../USB_DEVICE/App/usbd_cdc_if.c:335:9:CDC_ReceiveCallback	16	static
+../USB_DEVICE/App/usbd_cdc_if.c:289:9:CDC_Transmit_FS	24	static
+../USB_DEVICE/App/usbd_cdc_if.c:327:15:CDC_TransmitCplt_FS	32	static
+../USB_DEVICE/App/usbd_cdc_if.c:341:9:CDC_ReceiveCallback	16	static

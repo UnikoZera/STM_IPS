@@ -9,9 +9,10 @@
 ../Core/Src/usb_controller.c:91:16:usb_start_tx_chunk	7
 ../Core/Src/usb_controller.c:132:9:usb_transmit	3
 ../Core/Src/usb_controller.c:143:9:usb_receive	4
-../Core/Src/usb_controller.c:156:10:usb_controller_receive	10
-../Core/Src/usb_controller.c:201:6:usb_controller_init	2
-../Core/Src/usb_controller.c:228:6:usb_controller_task	18
-../Core/Src/usb_controller.c:297:19:usb_controller_send	12
-../Core/Src/usb_controller.c:343:6:usb_controller_on_tx_complete	1
-../Core/Src/usb_controller.c:351:6:usb_controller_on_rx_received	8
+../Core/Src/usb_controller.c:156:10:usb_controller_receive	14
+../Core/Src/usb_controller.c:211:10:usb_controller_get_rx_free_space	2
+../Core/Src/usb_controller.c:218:6:usb_controller_init	2
+../Core/Src/usb_controller.c:245:6:usb_controller_task	18
+../Core/Src/usb_controller.c:314:19:usb_controller_send	12
+../Core/Src/usb_controller.c:360:6:usb_controller_on_tx_complete	1
+../Core/Src/usb_controller.c:368:6:usb_controller_on_rx_received	8

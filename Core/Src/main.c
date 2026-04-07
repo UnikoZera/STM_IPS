@@ -53,7 +53,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-static uint8_t cache[128]; // USB应用层接收缓存区
+static uint8_t cache[2048]; // USB应用层接收缓存区
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/

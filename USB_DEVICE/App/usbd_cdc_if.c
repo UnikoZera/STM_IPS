@@ -263,9 +263,15 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
   usb_controller_on_rx_received(Buf, *Len);
-  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
-  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
-  return (USBD_OK);
+  
+  if (usb_controller_get_rx_free_space() >= 64U) { 
+    USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
+    USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+    return (USBD_OK);
+  } else {
+    // 空间不足，暂不开启下一次接收，底层 USB 端点会自动对主机回复 NAK。
+    return (USBD_BUSY);
+  }
   /* USER CODE END 6 */
 }
 
