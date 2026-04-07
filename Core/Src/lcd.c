@@ -12,6 +12,10 @@ volatile bool lcd_dma_busy = false;
 static uint16_t lcd_frame_buffer[LCD_W * LCD_H + SEND_TAIL]; // 直接使用单个缓冲区，lcd_frame_ptr指向当前帧数据，lcd_write_ptr指向正在写入的数据位置 可以轻松移植到双缓冲方案
 uint16_t *lcd_frame_ptr = lcd_frame_buffer;
 uint16_t *lcd_write_ptr = lcd_frame_buffer;
+// USB帧流时间节流相关变量
+#if LCD_USB_STREAM_ENABLE
+static uint32_t s_lcd_last_usb_stream_tick = 0U;
+#endif
 uint16_t lcd_fps = 0;
 static uint32_t s_dwt_last_cycle = 0;
 static uint32_t s_cycle_window = 0;
@@ -319,7 +323,9 @@ void lcd_draw_point_dma(int16_t x, int16_t y, uint16_t color)
 void lcd_screen_update_dma()
 {
 	if (lcd_dma_busy)
+	{
 		return;
+	}
 
 	lcd_set_address(0, 0, LCD_W - 1, LCD_H - 1);
 	LCD_DC_Set();
@@ -333,9 +339,23 @@ void lcd_screen_update_dma()
 	lcd_frame_ptr = lcd_write_ptr;
 	lcd_dma_busy = true;
 
+#if LCD_USB_STREAM_ENABLE
+	uint32_t now_tick = HAL_GetTick();
+	if ((uint32_t)(now_tick - s_lcd_last_usb_stream_tick) < LCD_USB_STREAM_MIN_INTERVAL_MS)
+	{
+		return;
+	}
+
 	// usb_controller_send要求发送的数据必须在lcd_frame_ptr指向的内存区域末尾添加SEND_TAIL字节的尾部数据，以便接收端正确识别帧结束
 	memcpy(lcd_frame_ptr + LCD_W * LCD_H, LCD_FRAME_TAIL, SEND_TAIL);
-	usb_controller_send(&g_usb_controller, (uint8_t *)lcd_frame_ptr, LCD_W * LCD_H * 2 + SEND_TAIL);
+	if (!g_usb_controller.usb_tx_active &&
+		(g_usb_controller.tx_remain_len == 0U) &&
+		(g_usb_controller.tx_pending_len == 0U))
+	{
+		usb_controller_send(&g_usb_controller, (uint8_t *)lcd_frame_ptr, LCD_W * LCD_H * 2 + SEND_TAIL);
+		s_lcd_last_usb_stream_tick = now_tick;
+	}
+#endif
 }
 
 // 这里其实就算是清除画面的函数

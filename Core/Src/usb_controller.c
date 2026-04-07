@@ -7,13 +7,14 @@
 
 
 #include "usb_controller.h"
+#include "usbd_cdc.h"
 #include "usbd_cdc_if.h"
 #include "usb_device.h"
 #include <string.h>
 
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
-usb_controller_t g_usb_controller; // sadly we have to use a global variable here becauseUSB库的回调函数无法传递上下文指针
+usb_controller_t g_usb_controller;
 static uint8_t s_usb_rx_cache[USB_RECEIVE_BUFFER_SIZE];
 
 static uint16_t usb_min_u16(uint16_t a, uint16_t b)
@@ -27,43 +28,115 @@ static void usb_clear_tx_queue(usb_controller_t* controller)
     controller->tx_remain_len = 0U;
 }
 
-static bool usb_start_tx_chunk(usb_controller_t* controller, uint8_t* buf, uint16_t len)
+static void usb_clear_tx_pending(usb_controller_t* controller)
 {
-    uint8_t result;
+    controller->tx_pending_ptr = NULL;
+    controller->tx_pending_len = 0U;
+}
 
-    if ((controller == NULL) || (buf == NULL) || (len == 0U))
+static void usb_reset_tx_state(usb_controller_t* controller, bool clear_pending)
+{
+    controller->usb_tx_active = false;
+    controller->usb_tx_done = true;
+    usb_clear_tx_queue(controller);
+
+    if (clear_pending)
+    {
+        usb_clear_tx_pending(controller);
+    }
+}
+
+static void usb_reset_rx_state(usb_controller_t* controller)
+{
+    controller->usb_rx_active = false;
+    controller->usb_rx_done = false;
+}
+
+static bool usb_load_pending_as_active(usb_controller_t* controller)
+{
+    if ((controller == NULL) || (controller->tx_pending_ptr == NULL) || (controller->tx_pending_len == 0U))
     {
         return false;
     }
 
-    result = usb_transmit(buf, len);
+    controller->tx_tail_ptr = controller->tx_pending_ptr;
+    controller->tx_remain_len = controller->tx_pending_len;
+    usb_clear_tx_pending(controller);
+    return true;
+}
+
+static bool usb_is_stack_configured(void)
+{
+    if ((hUsbDeviceFS.dev_state != USBD_STATE_CONFIGURED) || (hUsbDeviceFS.pClassData == NULL))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static bool usb_is_stack_tx_idle(void)
+{
+    USBD_CDC_HandleTypeDef *hcdc;
+
+    if (!usb_is_stack_configured())
+    {
+        return false;
+    }
+
+    hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
+    return (hcdc->TxState == 0U);
+}
+
+static uint8_t usb_start_tx_chunk(usb_controller_t* controller)
+{
+    uint8_t result;
+    uint16_t tx_len;
+
+    if ((controller == NULL) || (controller->tx_tail_ptr == NULL) || (controller->tx_remain_len == 0U))
+    {
+        return USBD_FAIL;
+    }
+
+    tx_len = usb_min_u16(controller->tx_remain_len, USB_SEND_BYTES_PER_CALL);
+    result = usb_transmit(controller->tx_tail_ptr, tx_len);
+
     if (result == USBD_OK)
     {
         controller->usb_tx_active = true;
         controller->usb_tx_done = false;
         controller->last_tx_tick = HAL_GetTick();
-        return true;
+
+        controller->tx_tail_ptr += tx_len;
+        controller->tx_remain_len = (uint16_t)(controller->tx_remain_len - tx_len);
+        if (controller->tx_remain_len == 0U)
+        {
+            controller->tx_tail_ptr = NULL;
+        }
+
+        return USBD_OK;
     }
+
+    controller->usb_tx_active = false;
+    controller->usb_tx_done = true;
 
     if (result != USBD_BUSY)
     {
-        controller->usb_tx_active = false;
-        controller->usb_tx_done = true;
-        usb_clear_tx_queue(controller);
+        return USBD_FAIL;
     }
 
-    return false;
+    return USBD_BUSY;
 }
 
 // 返回0表示成功，1表示USB忙碌，2表示其他错误
-uint8_t usb_transmit(uint8_t* buf, uint16_t len)
+uint8_t usb_transmit(const uint8_t* buf, uint16_t len)
 {
     if ((buf == NULL) || (len == 0U))
     {
         return USBD_FAIL;
     }
 
-    return CDC_Transmit_FS(buf, len);
+    return CDC_Transmit_FS((uint8_t*)buf, len);
 }
 
 // 返回0表示成功，1表示USB忙碌，2表示其他错误
@@ -82,31 +155,45 @@ uint8_t usb_receive(uint8_t* buf, uint32_t len)
 
 uint16_t usb_controller_receive(usb_controller_t* controller, uint8_t* buf, uint16_t len)
 {
-    uint16_t copy_len;
+    uint16_t copy_len = 0;
+    uint32_t primask;
 
     if ((controller == NULL) || !controller->usb_enabled || (buf == NULL) || (len == 0U))
     {
         return 0U;
     }
 
-    if (controller->rx_cached_len == 0U)
+    primask = __get_PRIMASK();
+    __disable_irq();
+
+    uint16_t head = controller->rx_head;
+    uint16_t tail = controller->rx_tail;
+    
+    // 计算可用数据量
+    uint16_t available = (head >= tail) ? (head - tail) : (USB_RECEIVE_BUFFER_SIZE - tail + head);
+    copy_len = usb_min_u16(len, available);
+
+    if (copy_len > 0U)
     {
-        controller->usb_rx_done = false;
-        return 0U;
+        uint16_t first_chunk = usb_min_u16(copy_len, USB_RECEIVE_BUFFER_SIZE - tail);
+        memcpy(buf, &s_usb_rx_cache[tail], first_chunk);
+        
+        if (first_chunk < copy_len) {
+            memcpy(buf + first_chunk, &s_usb_rx_cache[0], copy_len - first_chunk);
+        }
+        controller->rx_tail = (tail + copy_len) % USB_RECEIVE_BUFFER_SIZE;
     }
 
-    copy_len = usb_min_u16(len, controller->rx_cached_len);
-    memcpy(buf, s_usb_rx_cache, copy_len);
-
-    if (copy_len < controller->rx_cached_len)
+    if (primask == 0U)
     {
-        memmove(s_usb_rx_cache, &s_usb_rx_cache[copy_len], controller->rx_cached_len - copy_len);
+        __enable_irq();
     }
 
-    controller->rx_cached_len = (uint16_t)(controller->rx_cached_len - copy_len);
-    controller->rx_tail_ptr = &s_usb_rx_cache[controller->rx_cached_len];
-    controller->usb_rx_done = (controller->rx_cached_len > 0U);
-    controller->last_rx_tick = HAL_GetTick();
+    if (copy_len > 0U)
+    {
+        controller->usb_rx_done = (controller->rx_head != controller->rx_tail);
+        controller->last_rx_tick = HAL_GetTick();
+    }
 
     return copy_len;
 }
@@ -126,9 +213,11 @@ void usb_controller_init(usb_controller_t* controller)
     controller->last_tx_tick = 0;
     controller->last_rx_tick = 0;
     controller->tx_tail_ptr = NULL;
-    controller->rx_tail_ptr = &s_usb_rx_cache[0];
     controller->tx_remain_len = 0U;
-    controller->rx_cached_len = 0U;
+    controller->tx_pending_ptr = NULL;
+    controller->tx_pending_len = 0U;
+    controller->rx_head = 0U;
+    controller->rx_tail = 0U;
 }
 
 /**
@@ -138,78 +227,119 @@ void usb_controller_init(usb_controller_t* controller)
  */
 void usb_controller_task(usb_controller_t* controller)
 {
+    uint32_t now;
+
     if (controller == NULL || !controller->usb_enabled)
     {
         return;
     }
 
-    uint32_t now = HAL_GetTick();
-
-    // 这里可以添加一些USB状态监测和超时处理的逻辑
-    if (controller->usb_tx_active && (now - controller->last_tx_tick > USB_TIMEOUT_MS))
+    // 仅在USB未配置时复位控制器状态，避免大流量发送下误超时导致TxState长期BUSY。
+    if (!usb_is_stack_configured())
     {
-        controller->usb_tx_active = false; // 超时，认为传输失败
+        usb_reset_tx_state(controller, true);
+        usb_reset_rx_state(controller);
+        return;
+    }
+
+    now = HAL_GetTick();
+
+    // 某些场景下可能丢失TX完成回调，这里依据底层TxState做自恢复。
+    if (controller->usb_tx_active && usb_is_stack_tx_idle())
+    {
+        controller->usb_tx_active = false;
         controller->usb_tx_done = true;
-        usb_clear_tx_queue(controller);
+        controller->last_tx_tick = now;
     }
 
-    if (controller->usb_rx_active && (now - controller->last_rx_tick > USB_TIMEOUT_MS))
+    // 发送活跃过久仍无进展，丢弃当前发送任务避免整个链路长期卡死。
+    if (controller->usb_tx_active && ((uint32_t)(now - controller->last_tx_tick) > USB_TX_STUCK_TIMEOUT_MS))
     {
-        controller->usb_rx_active = false; // 超时，认为接收失败
-    }
-
-    if (!controller->usb_tx_active && controller->usb_tx_done && (controller->tx_remain_len > 0U) && (controller->tx_tail_ptr != NULL))
-    {
-        uint16_t tx_len = usb_min_u16(controller->tx_remain_len, USB_SEND_BYTES_PER_CALL);
-
-        if (usb_start_tx_chunk(controller, controller->tx_tail_ptr, tx_len))
-        {
-            controller->tx_tail_ptr += tx_len;
-            controller->tx_remain_len = (uint16_t)(controller->tx_remain_len - tx_len);
-
-            if (controller->tx_remain_len == 0U)
-            {
-                controller->tx_tail_ptr = NULL;
-            }
+        USBD_CDC_HandleTypeDef *hcdc;
+        usb_reset_tx_state(controller, false);
+        controller->last_tx_tick = now;
+        
+        // 软恢复底层端点状态
+        hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
+        if (hcdc != NULL) {
+            USBD_LL_FlushEP(&hUsbDeviceFS, CDC_IN_EP);
+            hcdc->TxState = 0;
         }
     }
 
+    if (!controller->usb_tx_active && (controller->tx_remain_len == 0U) && (controller->tx_tail_ptr == NULL))
+    {
+        usb_load_pending_as_active(controller);
+    }
 
+    if (!controller->usb_tx_active && (controller->tx_remain_len > 0U) && (controller->tx_tail_ptr != NULL))
+    {
+        if ((uint32_t)(now - controller->last_tx_tick) < USB_TX_RETRY_INTERVAL_MS)
+        {
+            return;
+        }
+
+        uint8_t tx_result = usb_start_tx_chunk(controller);
+
+        if (tx_result == USBD_BUSY)
+        {
+            controller->last_tx_tick = now;
+        }
+
+        if (tx_result == USBD_FAIL)
+        {
+            usb_clear_tx_queue(controller);
+            controller->last_tx_tick = now;
+        }
+    }
 }
 
-void usb_controller_send(usb_controller_t* controller, uint8_t* buf, uint16_t len)
+usb_send_status_t usb_controller_send(usb_controller_t* controller, const uint8_t* buf, uint16_t len)
 {
-    uint16_t tx_len;
+    uint8_t tx_result;
 
     if ((controller == NULL) || !controller->usb_enabled || (buf == NULL) || (len == 0U))
     {
-        return; // safe check.
+        return USB_SEND_BUSY_REJECTED; // safe check.
     }
 
-    if (controller->usb_tx_active || !controller->usb_tx_done || (controller->tx_remain_len > 0U))
+    if (controller->usb_tx_active || (controller->tx_remain_len > 0U) || (controller->tx_tail_ptr != NULL))
     {
-        return; // safe check.
+        if (controller->tx_pending_len == 0U)
+        {
+            controller->tx_pending_ptr = buf;
+            controller->tx_pending_len = len;
+            return USB_SEND_QUEUED;
+        } 
+        else if (len <= controller->tx_pending_len) 
+        {
+            controller->tx_pending_ptr = buf;
+            controller->tx_pending_len = len;
+            return USB_SEND_DROPPED_PREVIOUS;
+        }
+        return USB_SEND_BUSY_REJECTED; // safe check.
     }
 
-    tx_len = usb_min_u16(len, USB_SEND_BYTES_PER_CALL);
+    usb_clear_tx_pending(controller);
+    controller->tx_tail_ptr = buf;
+    controller->tx_remain_len = len;
 
-    if (len > tx_len)
+    tx_result = usb_start_tx_chunk(controller);
+    if (tx_result == USBD_BUSY)
     {
-        controller->tx_tail_ptr = buf + tx_len;
-        controller->tx_remain_len = (uint16_t)(len - tx_len);
-    }
-    else
-    {
-        controller->tx_tail_ptr = NULL;
-        controller->tx_remain_len = 0U;
+        controller->last_tx_tick = HAL_GetTick();
     }
 
-    if (!usb_start_tx_chunk(controller, buf, tx_len))
+    if (tx_result == USBD_FAIL)
     {
         usb_clear_tx_queue(controller);
+        return USB_SEND_BUSY_REJECTED;
     }
+
+    return USB_SEND_OK;
 }
 
+// callback for tx complete
 void usb_controller_on_tx_complete(void)
 {
     g_usb_controller.usb_tx_active = false;
@@ -222,6 +352,8 @@ void usb_controller_on_rx_received(uint8_t* buf, uint32_t len)
 {
     uint16_t free_len;
     uint16_t copy_len;
+    uint16_t head;
+    uint16_t tail;
 
     if (!g_usb_controller.usb_enabled || (buf == NULL) || (len == 0U))
     {
@@ -236,17 +368,25 @@ void usb_controller_on_rx_received(uint8_t* buf, uint32_t len)
         len = UINT16_MAX;
     }
 
-    free_len = (uint16_t)(USB_RECEIVE_BUFFER_SIZE - g_usb_controller.rx_cached_len);
+    head = g_usb_controller.rx_head;
+    tail = g_usb_controller.rx_tail;
+    
+    // 计算可用空间 (若等于则是空，差1是满)
+    free_len = (tail > head) ? (tail - head - 1) : (USB_RECEIVE_BUFFER_SIZE - head + tail - 1);
     copy_len = usb_min_u16((uint16_t)len, free_len);
 
     if (copy_len > 0U)
     {
-        memcpy(&s_usb_rx_cache[g_usb_controller.rx_cached_len], buf, copy_len);
-        g_usb_controller.rx_cached_len = (uint16_t)(g_usb_controller.rx_cached_len + copy_len);
-        g_usb_controller.rx_tail_ptr = &s_usb_rx_cache[g_usb_controller.rx_cached_len];
-        g_usb_controller.usb_rx_done = true;
+        uint16_t first_chunk = usb_min_u16(copy_len, USB_RECEIVE_BUFFER_SIZE - head);
+        memcpy(&s_usb_rx_cache[head], buf, first_chunk);
+        
+        if (first_chunk < copy_len) {
+            memcpy(&s_usb_rx_cache[0], buf + first_chunk, copy_len - first_chunk);
+        }
+        g_usb_controller.rx_head = (head + copy_len) % USB_RECEIVE_BUFFER_SIZE;
     }
 
+    g_usb_controller.usb_rx_done = (g_usb_controller.rx_head != g_usb_controller.rx_tail);
     g_usb_controller.usb_rx_active = false;
     g_usb_controller.last_rx_tick = HAL_GetTick();
 }

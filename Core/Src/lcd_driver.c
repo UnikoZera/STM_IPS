@@ -132,6 +132,16 @@ void lcd_anim_manager_render(void)
 		return;
 	}
 
+#if LCD_USB_STREAM_ENABLE
+	// 单缓冲+USB流模式下，必须等待USB发送完全空闲后再重绘，避免发送中的帧被改写造成撕裂。
+	if (g_usb_controller.usb_tx_active ||
+		(g_usb_controller.tx_remain_len > 0U) ||
+		(g_usb_controller.tx_pending_len > 0U))
+	{
+		return;
+	}
+#endif
+
 	lcd_fill_screen_dma(s_bg_color);
 
 	for (uint32_t i = 0; i < LCD_LAYER_MAX_COUNT; i++)
