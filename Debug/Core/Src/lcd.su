@@ -13,10 +13,10 @@
 ../Core/Src/lcd.c:303:6:lcd_draw_point_dma_swapped	16	static
 ../Core/Src/lcd.c:313:6:lcd_draw_point_dma	16	static
 ../Core/Src/lcd.c:319:6:lcd_screen_update_dma	8	static
-../Core/Src/lcd.c:337:6:lcd_fill_screen_dma	32	static
-../Core/Src/lcd.c:347:6:lcd_draw_char	56	static
-../Core/Src/lcd.c:430:6:lcd_draw_string	32	static
-../Core/Src/lcd.c:443:6:lcd_calculate_fps	16	static
-../Core/Src/lcd.c:463:6:lcd_calculate_usage	32	static
-../Core/Src/lcd.c:525:6:lcd_set_area_color	40	static
-../Core/Src/lcd.c:544:6:lcd_draw_line_dma	64	static
+../Core/Src/lcd.c:342:6:lcd_fill_screen_dma	32	static
+../Core/Src/lcd.c:352:6:lcd_draw_char	56	static
+../Core/Src/lcd.c:435:6:lcd_draw_string	32	static
+../Core/Src/lcd.c:448:6:lcd_calculate_fps	16	static
+../Core/Src/lcd.c:468:6:lcd_calculate_usage	32	static
+../Core/Src/lcd.c:530:6:lcd_set_area_color	40	static
+../Core/Src/lcd.c:549:6:lcd_draw_line_dma	64	static

@@ -53,7 +53,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+static uint8_t cache[128]; // USB应用层接收缓存区
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -107,14 +107,33 @@ int main(void)
   /* USER CODE BEGIN 2 */
   lcd_init();
   lcd_ui_init();
+  usb_controller_init(&g_usb_controller);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    uint16_t rx_len;
+
+    rx_len = usb_controller_receive(&g_usb_controller, cache, (uint16_t)sizeof(cache));
+    if (rx_len > 0U)
+    {
+      if (cache[0] == 0x01U) // 测试命令：如果接收到的第一个字节是0x01，就返回固定文本
+      {
+        usb_controller_send(&g_usb_controller, (uint8_t *)"Command received", 16);
+      }
+      else
+      {
+        // 默认回显，便于验证TX/RX链路都正常
+        usb_controller_send(&g_usb_controller, cache, rx_len);
+      }
+    }
+
+    
     lcd_ui_change();
     lcd_ui_updater();
+    usb_controller_task(&g_usb_controller);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

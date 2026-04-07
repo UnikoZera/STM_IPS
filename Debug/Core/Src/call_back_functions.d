@@ -35,7 +35,7 @@ Core/Src/call_back_functions.o: ../Core/Src/call_back_functions.c \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_usb.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd_ex.h \
  ../Core/Inc/lcd.h ../Core/Inc/gpio.h ../Core/Inc/tim.h \
- ../Core/Inc/lcd_font.h
+ ../Core/Inc/lcd_font.h ../Core/Inc/usb_controller.h
 ../Core/Inc/call_back_functions.h:
 ../Core/Inc/w25q_controller.h:
 ../Core/Inc/spi.h:
@@ -77,3 +77,4 @@ Core/Src/call_back_functions.o: ../Core/Src/call_back_functions.c \
 ../Core/Inc/gpio.h:
 ../Core/Inc/tim.h:
 ../Core/Inc/lcd_font.h:
+../Core/Inc/usb_controller.h:

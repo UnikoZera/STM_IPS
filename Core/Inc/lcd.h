@@ -12,6 +12,7 @@
 #include "gpio.h"
 #include "tim.h"
 #include "lcd_font.h"
+#include "usb_controller.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -39,6 +40,9 @@
 #define LCD_OFFSET_X 1
 #define LCD_OFFSET_Y 26
 #endif
+
+#define SEND_TAIL 4
+static const uint8_t LCD_FRAME_TAIL[] = {0x0D, 0x00, 0x07, 0x21};
 
 #pragma region 颜色定义
 #define WHITE 0xFFFF

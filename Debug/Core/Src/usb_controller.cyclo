@@ -1,2 +1,11 @@
-../Core/Src/usb_controller.c:15:9:usb_transmit	1
-../Core/Src/usb_controller.c:21:9:usb_receive	1
+../Core/Src/usb_controller.c:19:17:usb_min_u16	1
+../Core/Src/usb_controller.c:24:13:usb_clear_tx_queue	1
+../Core/Src/usb_controller.c:30:13:usb_start_tx_chunk	6
+../Core/Src/usb_controller.c:59:9:usb_transmit	3
+../Core/Src/usb_controller.c:70:9:usb_receive	4
+../Core/Src/usb_controller.c:83:10:usb_controller_receive	7
+../Core/Src/usb_controller.c:114:6:usb_controller_init	2
+../Core/Src/usb_controller.c:139:6:usb_controller_task	13
+../Core/Src/usb_controller.c:180:6:usb_controller_send	10
+../Core/Src/usb_controller.c:213:6:usb_controller_on_tx_complete	1
+../Core/Src/usb_controller.c:221:6:usb_controller_on_rx_received	6

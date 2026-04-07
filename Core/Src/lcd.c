@@ -9,7 +9,7 @@
 
 volatile bool lcd_dma_busy = false;
 
-static uint16_t lcd_frame_buffer[LCD_W * LCD_H]; // 直接使用单个缓冲区，lcd_frame_ptr指向当前帧数据，lcd_write_ptr指向正在写入的数据位置 可以轻松移植到双缓冲方案
+static uint16_t lcd_frame_buffer[LCD_W * LCD_H + SEND_TAIL]; // 直接使用单个缓冲区，lcd_frame_ptr指向当前帧数据，lcd_write_ptr指向正在写入的数据位置 可以轻松移植到双缓冲方案
 uint16_t *lcd_frame_ptr = lcd_frame_buffer;
 uint16_t *lcd_write_ptr = lcd_frame_buffer;
 uint16_t lcd_fps = 0;
@@ -332,8 +332,13 @@ void lcd_screen_update_dma()
 
 	lcd_frame_ptr = lcd_write_ptr;
 	lcd_dma_busy = true;
+
+	// usb_controller_send要求发送的数据必须在lcd_frame_ptr指向的内存区域末尾添加SEND_TAIL字节的尾部数据，以便接收端正确识别帧结束
+	memcpy(lcd_frame_ptr + LCD_W * LCD_H, LCD_FRAME_TAIL, SEND_TAIL);
+	usb_controller_send(&g_usb_controller, (uint8_t *)lcd_frame_ptr, LCD_W * LCD_H * 2 + SEND_TAIL);
 }
 
+// 这里其实就算是清除画面的函数
 void lcd_fill_screen_dma(uint16_t color)
 {
 	uint16_t swapped_color = swap_uint16_builtin(color);
