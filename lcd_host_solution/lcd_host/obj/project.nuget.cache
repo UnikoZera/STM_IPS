@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "dgSpecHash": "s4EpWpvFdy8=",
+  "success": true,
+  "projectFilePath": "D:\\mcu\\projects\\stm_ips\\lcd_host_solution\\lcd_host\\lcd_host.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.android-arm.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.android-arm.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.android-arm64.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.android-arm64.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.android-x64.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.android-x64.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.android-x86.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.android-x86.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.linux-arm.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.linux-arm.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.linux-arm64.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.linux-arm64.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.linux-bionic-arm64.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.linux-bionic-arm64.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.linux-bionic-x64.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.linux-bionic-x64.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.linux-musl-arm.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.linux-musl-arm.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.linux-musl-arm64.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.linux-musl-arm64.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.linux-musl-x64.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.linux-musl-x64.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.linux-x64.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.linux-x64.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.maccatalyst-arm64.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.maccatalyst-arm64.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.maccatalyst-x64.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.maccatalyst-x64.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.osx-arm64.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.osx-arm64.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\runtime.osx-x64.runtime.native.system.io.ports\\10.0.0-preview.6.25358.103\\runtime.osx-x64.runtime.native.system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\system.io.ports\\10.0.0-preview.6.25358.103\\system.io.ports.10.0.0-preview.6.25358.103.nupkg.sha512",
+    "C:\\Users\\UnikoZera\\.nuget\\packages\\system.management\\10.0.0-preview.6.25358.103\\system.management.10.0.0-preview.6.25358.103.nupkg.sha512"
+  ],
+  "logs": []
+}

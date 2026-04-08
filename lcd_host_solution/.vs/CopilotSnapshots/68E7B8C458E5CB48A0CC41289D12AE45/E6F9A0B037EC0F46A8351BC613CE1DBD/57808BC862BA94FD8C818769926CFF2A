@@ -1,0 +1,939 @@
+﻿using Microsoft.Win32;
+using System.Collections.ObjectModel;
+using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.IO;
+using System.IO.Ports;
+using System.Linq;
+using System.Management;
+using System.Text;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+
+namespace lcd_host
+{
+    public partial class MainWindow : Window
+    {
+        private const int LcdWidth = 160;
+        private const int LcdHeight = 80;
+        private const int FramePixels = LcdWidth * LcdHeight;
+        private const int FrameBytes = FramePixels * 2;
+        private const int TailBytes = 4;
+        private const int FrameTotal = FrameBytes + TailBytes;
+        private const int StreamCapacity = 256 * 1024;
+        private const int MaxUiLogBlocks = 1500;
+        private const int LogFlushBatchSize = 120;
+        private static readonly byte[] FrameTail = [0x0D, 0x00, 0x07, 0x21];
+
+        private readonly ObservableCollection<SerialPortInfo> _ports = [];
+        private readonly List<byte> _lcdStream = [];
+        private readonly object _lcdStreamLock = new();
+        private SerialPort? _serialPort;
+        private CancellationTokenSource? _readerCts;
+        private Task? _readerTask;
+        private WriteableBitmap? _lcdBitmap;
+        private ulong _lcdFrameIndex;
+        private string? _selectedFilePath;
+        private volatile bool _lcdDecodeEnabled;
+        private string? _preferredPortName;
+        private readonly string _configFilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "lcd_host", "serial_config.json");
+        private readonly ConcurrentQueue<LogEntry> _logQueue = new();
+        private readonly DispatcherTimer _logFlushTimer;
+        private int _pendingLogCount;
+        private long _lcdBytesCounter;
+        private long _lastLcdStatsTick;
+
+        private ComboBox PortComboBoxCtl => (ComboBox)FindName("PortComboBox")!;
+        private ComboBox BaudRateComboBoxCtl => (ComboBox)FindName("BaudRateComboBox")!;
+        private ComboBox DataBitsComboBoxCtl => (ComboBox)FindName("DataBitsComboBox")!;
+        private ComboBox ParityComboBoxCtl => (ComboBox)FindName("ParityComboBox")!;
+        private ComboBox StopBitsComboBoxCtl => (ComboBox)FindName("StopBitsComboBox")!;
+        private ComboBox HandshakeComboBoxCtl => (ComboBox)FindName("HandshakeComboBox")!;
+        private ComboBox ReceiveModeComboBoxCtl => (ComboBox)FindName("ReceiveModeComboBox")!;
+        private ComboBox SendModeComboBoxCtl => (ComboBox)FindName("SendModeComboBox")!;
+        private RichTextBox ReceiveRichTextBoxCtl => (RichTextBox)FindName("ReceiveRichTextBox")!;
+        private TextBox SendTextBoxCtl => (TextBox)FindName("SendTextBox")!;
+        private TextBox SelectedFileTextBoxCtl => (TextBox)FindName("SelectedFileTextBox")!;
+        private CheckBox AppendNewLineCheckBoxCtl => (CheckBox)FindName("AppendNewLineCheckBox")!;
+        private CheckBox DtrEnableCheckBoxCtl => (CheckBox)FindName("DtrEnableCheckBox")!;
+        private CheckBox RtsEnableCheckBoxCtl => (CheckBox)FindName("RtsEnableCheckBox")!;
+        private CheckBox EnableLcdDecodeCheckBoxCtl => (CheckBox)FindName("EnableLcdDecodeCheckBox")!;
+        private Button OpenButtonCtl => (Button)FindName("OpenButton")!;
+        private Button CloseButtonCtl => (Button)FindName("CloseButton")!;
+        private Button RefreshButtonCtl => (Button)FindName("RefreshButton")!;
+        private TextBlock StatusTextBlockCtl => (TextBlock)FindName("StatusTextBlock")!;
+        private TextBlock PortDetailTextBlockCtl => (TextBlock)FindName("PortDetailTextBlock")!;
+        private TextBlock LcdFrameInfoTextBlockCtl => (TextBlock)FindName("LcdFrameInfoTextBlock")!;
+        private Image LcdPreviewImageCtl => (Image)FindName("LcdPreviewImage")!;
+
+        public MainWindow()
+        {
+            InitializeComponent();
+            _logFlushTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(60)
+            };
+            _logFlushTimer.Tick += (_, _) => FlushLogs();
+            _logFlushTimer.Start();
+
+            PortComboBoxCtl.ItemsSource = _ports;
+            InitBaudRates();
+            InitSerialOptions();
+            InitLcdPreview();
+            EnableLcdDecodeCheckBoxCtl.Checked += EnableLcdDecodeCheckBox_Changed;
+            EnableLcdDecodeCheckBoxCtl.Unchecked += EnableLcdDecodeCheckBox_Changed;
+            LoadConfig();
+            UpdateUiByConnectionState(false);
+        }
+
+        private void EnableLcdDecodeCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            _lcdDecodeEnabled = EnableLcdDecodeCheckBoxCtl.IsChecked == true;
+            if (_lcdDecodeEnabled)
+            {
+                lock (_lcdStreamLock)
+                {
+                    _lcdStream.Clear();
+                }
+            }
+        }
+
+        private void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            RefreshPorts();
+        }
+
+        private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+        {
+            CloseSerialPort();
+            SaveConfig();
+        }
+
+        private void InitBaudRates()
+        {
+            int[] baudRates = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
+            foreach (var baudRate in baudRates)
+            {
+                BaudRateComboBoxCtl.Items.Add(baudRate);
+            }
+
+            BaudRateComboBoxCtl.SelectedItem = 115200;
+        }
+
+        private void InitSerialOptions()
+        {
+            DataBitsComboBoxCtl.Items.Add(5);
+            DataBitsComboBoxCtl.Items.Add(6);
+            DataBitsComboBoxCtl.Items.Add(7);
+            DataBitsComboBoxCtl.Items.Add(8);
+            DataBitsComboBoxCtl.SelectedItem = 8;
+
+            AddEnumOption(ParityComboBoxCtl, Parity.None, "None");
+            AddEnumOption(ParityComboBoxCtl, Parity.Odd, "Odd");
+            AddEnumOption(ParityComboBoxCtl, Parity.Even, "Even");
+            AddEnumOption(ParityComboBoxCtl, Parity.Mark, "Mark");
+            AddEnumOption(ParityComboBoxCtl, Parity.Space, "Space");
+            ParityComboBoxCtl.SelectedIndex = 0;
+
+            AddEnumOption(StopBitsComboBoxCtl, StopBits.One, "1");
+            AddEnumOption(StopBitsComboBoxCtl, StopBits.OnePointFive, "1.5");
+            AddEnumOption(StopBitsComboBoxCtl, StopBits.Two, "2");
+            StopBitsComboBoxCtl.SelectedIndex = 0;
+
+            AddEnumOption(HandshakeComboBoxCtl, Handshake.None, "None");
+            AddEnumOption(HandshakeComboBoxCtl, Handshake.XOnXOff, "XOnXOff");
+            AddEnumOption(HandshakeComboBoxCtl, Handshake.RequestToSend, "RTS/CTS");
+            AddEnumOption(HandshakeComboBoxCtl, Handshake.RequestToSendXOnXOff, "RTS/CTS + XOnXOff");
+            HandshakeComboBoxCtl.SelectedIndex = 0;
+
+            DtrEnableCheckBoxCtl.IsChecked = true;
+            RtsEnableCheckBoxCtl.IsChecked = true;
+            _lcdDecodeEnabled = EnableLcdDecodeCheckBoxCtl.IsChecked == true;
+        }
+
+        private static void AddEnumOption<T>(ComboBox comboBox, T value, string text) where T : struct
+        {
+            comboBox.Items.Add(new SerialOption<T>(value, text));
+        }
+
+        private void RefreshButton_Click(object sender, RoutedEventArgs e)
+        {
+            RefreshPorts();
+        }
+
+        private void RefreshPorts()
+        {
+            var selectedPortName = (PortComboBoxCtl.SelectedItem as SerialPortInfo)?.PortName;
+            _ports.Clear();
+
+            foreach (var port in GetSerialPortInfos())
+            {
+                _ports.Add(port);
+            }
+
+            if (_ports.Count == 0)
+            {
+                StatusTextBlockCtl.Text = "状态：未发现可用串口";
+                PortComboBoxCtl.SelectedIndex = -1;
+                return;
+            }
+
+            var previous = _ports.FirstOrDefault(p => p.PortName == selectedPortName);
+            var preferred = _ports.FirstOrDefault(p => string.Equals(p.PortName, _preferredPortName, StringComparison.OrdinalIgnoreCase));
+            PortComboBoxCtl.SelectedItem = previous ?? preferred ?? _ports[0];
+            UpdatePortDetail();
+            StatusTextBlockCtl.Text = "状态：串口列表已刷新";
+        }
+
+        private void PortComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdatePortDetail();
+        }
+
+        private void UpdatePortDetail()
+        {
+            if (PortComboBoxCtl.SelectedItem is not SerialPortInfo selectedPort)
+            {
+                PortDetailTextBlockCtl.Text = "端口详情：未选择";
+                return;
+            }
+
+            PortDetailTextBlockCtl.Text = $"端口详情：{selectedPort.DisplayText}";
+        }
+
+        private void InitLcdPreview()
+        {
+            _lcdBitmap = new WriteableBitmap(LcdWidth, LcdHeight, 96, 96, PixelFormats.Bgra32, null);
+            LcdPreviewImageCtl.Source = _lcdBitmap;
+            LcdFrameInfoTextBlockCtl.Text = "LCD帧：0";
+        }
+
+        private static IEnumerable<SerialPortInfo> GetSerialPortInfos()
+        {
+            var list = new List<SerialPortInfo>();
+
+            try
+            {
+                using var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_PnPEntity WHERE Name LIKE '%(COM%'");
+                foreach (var obj in searcher.Get())
+                {
+                    var name = obj["Name"]?.ToString();
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        continue;
+                    }
+
+                    var start = name.LastIndexOf("(COM", StringComparison.OrdinalIgnoreCase);
+                    var end = name.LastIndexOf(')');
+                    if (start < 0 || end <= start)
+                    {
+                        continue;
+                    }
+
+                    var portName = name.Substring(start + 1, end - start - 1);
+                    list.Add(new SerialPortInfo(portName, name));
+                }
+            }
+            catch
+            {
+                foreach (var port in SerialPort.GetPortNames())
+                {
+                    list.Add(new SerialPortInfo(port, $"{port} (无详细描述)"));
+                }
+            }
+
+            foreach (var port in SerialPort.GetPortNames())
+            {
+                if (list.All(p => !string.Equals(p.PortName, port, StringComparison.OrdinalIgnoreCase)))
+                {
+                    list.Add(new SerialPortInfo(port, $"{port} (无详细描述)"));
+                }
+            }
+
+            return list
+                .OrderBy(p => p.PortName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private void OpenButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_serialPort?.IsOpen == true)
+            {
+                return;
+            }
+
+            if (PortComboBoxCtl.SelectedItem is not SerialPortInfo selectedPort)
+            {
+                MessageBox.Show("请先选择串口。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (BaudRateComboBoxCtl.SelectedItem is not int baudRate)
+            {
+                MessageBox.Show("请先选择波特率。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (DataBitsComboBoxCtl.SelectedItem is not int dataBits)
+            {
+                MessageBox.Show("请先选择数据位。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var parity = GetSelectedEnum(ParityComboBoxCtl, Parity.None);
+            var stopBits = GetSelectedEnum(StopBitsComboBoxCtl, StopBits.One);
+            var handshake = GetSelectedEnum(HandshakeComboBoxCtl, Handshake.None);
+            var dtr = DtrEnableCheckBoxCtl.IsChecked == true;
+            var rts = RtsEnableCheckBoxCtl.IsChecked == true;
+
+            try
+            {
+                _serialPort = new SerialPort(selectedPort.PortName, baudRate, parity, dataBits, stopBits)
+                {
+                    Encoding = Encoding.ASCII,
+                    ReadTimeout = 1000,
+                    WriteTimeout = 1000,
+                    Handshake = handshake,
+                    DtrEnable = dtr,
+                    RtsEnable = rts
+                };
+
+                _serialPort.Open();
+                StartSerialReader(_serialPort);
+                lock (_lcdStreamLock)
+                {
+                    _lcdStream.Clear();
+                }
+                _lcdFrameIndex = 0;
+                _lcdBytesCounter = 0;
+                _lastLcdStatsTick = Environment.TickCount64;
+                _ = Dispatcher.InvokeAsync(() =>
+                {
+                    LcdFrameInfoTextBlockCtl.Text = "LCD帧：0";
+                    _lcdBitmap?.WritePixels(new Int32Rect(0, 0, LcdWidth, LcdHeight), new byte[FramePixels * 4], LcdWidth * 4, 0);
+                });
+
+                UpdateUiByConnectionState(true);
+                StatusTextBlockCtl.Text = $"状态：已连接 {selectedPort.PortName} @ {baudRate} {dataBits}{GetParityShortName(parity)}{GetStopBitsShortName(stopBits)} | Flow={handshake} DTR={(dtr ? "On" : "Off")} RTS={(rts ? "On" : "Off")}";
+                AppendSystemLog($"打开串口成功：{selectedPort.DisplayText}");
+                _preferredPortName = selectedPort.PortName;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"打开串口失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                CloseSerialPort();
+            }
+        }
+
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            CloseSerialPort();
+        }
+
+        private void CloseSerialPort()
+        {
+            if (_serialPort == null)
+            {
+                UpdateUiByConnectionState(false);
+                StatusTextBlockCtl.Text = "状态：未连接";
+                return;
+            }
+
+            try
+            {
+                _readerCts?.Cancel();
+                if (_serialPort.IsOpen)
+                {
+                    _serialPort.Close();
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+            finally
+            {
+                _serialPort.Dispose();
+                _serialPort = null;
+                _readerCts?.Dispose();
+                _readerCts = null;
+                _readerTask = null;
+                UpdateUiByConnectionState(false);
+                StatusTextBlockCtl.Text = "状态：已断开";
+                AppendSystemLog("串口已关闭");
+            }
+        }
+
+        private void StartSerialReader(SerialPort port)
+        {
+            _readerCts?.Cancel();
+            _readerCts?.Dispose();
+            _readerCts = new CancellationTokenSource();
+            var token = _readerCts.Token;
+
+            _readerTask = Task.Run(async () =>
+            {
+                var buffer = new byte[4096];
+
+                while (!token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        var read = await port.BaseStream.ReadAsync(buffer.AsMemory(0, buffer.Length), token);
+                        if (read <= 0)
+                        {
+                            continue;
+                        }
+
+                        var incoming = new byte[read];
+                        Buffer.BlockCopy(buffer, 0, incoming, 0, read);
+                        HandleIncomingBytes(incoming);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            AppendSystemLog($"[错误] 接收数据异常：{ex.Message}");
+                        });
+                    }
+                }
+            }, token);
+        }
+
+        private void HandleIncomingBytes(byte[] buffer)
+        {
+            var decodeEnabled = _lcdDecodeEnabled;
+            if (decodeEnabled)
+            {
+                FeedLcdBytes(buffer);
+                _lcdBytesCounter += buffer.Length;
+                var now = Environment.TickCount64;
+                if (now - _lastLcdStatsTick >= 1000)
+                {
+                    var bytes = _lcdBytesCounter;
+                    _lcdBytesCounter = 0;
+                    _lastLcdStatsTick = now;
+                    EnqueueLog("[rx]", $"[lcd] {bytes / 1024.0:F1} KB/s", "#34D399");
+                }
+
+                return;
+            }
+
+            var text = GetSelectedModeText(ReceiveModeComboBoxCtl) == "HEX"
+                ? BitConverter.ToString(buffer).Replace("-", " ")
+                : Encoding.ASCII.GetString(buffer);
+
+            EnqueueLog("[rx]", text, "#34D399");
+        }
+
+        private void FeedLcdBytes(byte[] data)
+        {
+            List<byte[]> frames = [];
+
+            lock (_lcdStreamLock)
+            {
+                if (data.Length > StreamCapacity)
+                {
+                    data = data[^StreamCapacity..];
+                }
+
+                if (_lcdStream.Count + data.Length > StreamCapacity)
+                {
+                    var keep = Math.Min(FrameTotal - 1, _lcdStream.Count);
+                    if (_lcdStream.Count > keep)
+                    {
+                        _lcdStream.RemoveRange(0, _lcdStream.Count - keep);
+                    }
+                }
+
+                _lcdStream.AddRange(data);
+
+                while (_lcdStream.Count >= FrameTotal)
+                {
+                    var found = FindFrameStart(_lcdStream);
+                    if (found < 0)
+                    {
+                        var keep = Math.Min(FrameTotal - 1, _lcdStream.Count);
+                        if (_lcdStream.Count > keep)
+                        {
+                            _lcdStream.RemoveRange(0, _lcdStream.Count - keep);
+                        }
+
+                        break;
+                    }
+
+                    var frame = _lcdStream.GetRange(found, FrameBytes).ToArray();
+                    frames.Add(frame);
+                    _lcdStream.RemoveRange(0, found + FrameTotal);
+                }
+            }
+
+            if (frames.Count > 0)
+            {
+                DecodeAndRenderFrame(frames[^1], frames.Count);
+            }
+        }
+
+        private static int FindFrameStart(List<byte> stream)
+        {
+            for (var i = 0; i + FrameTotal <= stream.Count; i++)
+            {
+                var tailIndex = i + FrameBytes;
+                var matched = true;
+                for (var j = 0; j < TailBytes; j++)
+                {
+                    if (stream[tailIndex + j] != FrameTail[j])
+                    {
+                        matched = false;
+                        break;
+                    }
+                }
+
+                if (matched)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private void DecodeAndRenderFrame(byte[] frame, int extractedFrameCount)
+        {
+            var bgra = new byte[FramePixels * 4];
+
+            for (var i = 0; i < FramePixels; i++)
+            {
+                var raw = (ushort)((frame[i * 2] << 8) | frame[i * 2 + 1]);
+
+                var r5 = (raw >> 11) & 0x1F;
+                var g6 = (raw >> 5) & 0x3F;
+                var b5 = raw & 0x1F;
+
+                var r = (byte)((r5 * 255 + 15) / 31);
+                var g = (byte)((g6 * 255 + 31) / 63);
+                var b = (byte)((b5 * 255 + 15) / 31);
+
+                var idx = i * 4;
+                bgra[idx] = b;
+                bgra[idx + 1] = g;
+                bgra[idx + 2] = r;
+                bgra[idx + 3] = 255;
+            }
+
+            _ = Dispatcher.InvokeAsync(() =>
+            {
+                if (_lcdBitmap == null)
+                {
+                    return;
+                }
+
+                _lcdBitmap.WritePixels(new Int32Rect(0, 0, LcdWidth, LcdHeight), bgra, LcdWidth * 4, 0);
+                _lcdFrameIndex += (ulong)Math.Max(1, extractedFrameCount);
+                LcdFrameInfoTextBlockCtl.Text = $"LCD帧：{_lcdFrameIndex}";
+                Title = $"LCD_HOST_DEVICE - Frame {_lcdFrameIndex}";
+            });
+        }
+
+        private void ClearReceiveButton_Click(object sender, RoutedEventArgs e)
+        {
+            ReceiveRichTextBoxCtl.Document.Blocks.Clear();
+        }
+
+        private void SendButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_serialPort?.IsOpen != true)
+            {
+                MessageBox.Show("串口未打开。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var input = SendTextBoxCtl.Text;
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                return;
+            }
+
+            try
+            {
+                var mode = GetSelectedModeText(SendModeComboBoxCtl);
+                if (mode == "HEX")
+                {
+                    var bytes = ParseHexString(input);
+                    _serialPort.Write(bytes, 0, bytes.Length);
+                    AppendTxLog(BitConverter.ToString(bytes).Replace("-", " "));
+                }
+                else
+                {
+                    if (AppendNewLineCheckBoxCtl.IsChecked == true)
+                    {
+                        input += "\r\n";
+                    }
+
+                    _serialPort.Write(input);
+                    AppendTxLog(input);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"发送失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void SendFileButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_serialPort?.IsOpen != true)
+            {
+                MessageBox.Show("串口未打开。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (!TrySelectFile())
+            {
+                return;
+            }
+
+            try
+            {
+                var bytes = File.ReadAllBytes(_selectedFilePath!);
+                _serialPort.Write(bytes, 0, bytes.Length);
+                AppendTxLog($"[file] {Path.GetFileName(_selectedFilePath)} ({bytes.Length} bytes)");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"发送文件失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void SelectFileButton_Click(object sender, RoutedEventArgs e)
+        {
+            _ = TrySelectFile(forceOpenDialog: true);
+        }
+
+        private bool TrySelectFile(bool forceOpenDialog = false)
+        {
+            if (!forceOpenDialog && !string.IsNullOrWhiteSpace(_selectedFilePath) && File.Exists(_selectedFilePath))
+            {
+                return true;
+            }
+
+            var dialog = new OpenFileDialog
+            {
+                Filter = "所有文件|*.*",
+                Title = "选择要打开的文件"
+            };
+
+            if (dialog.ShowDialog(this) != true)
+            {
+                return false;
+            }
+
+            UpdateSelectedFilePath(dialog.FileName);
+            AppendSystemLog($"已选择文件：{Path.GetFileName(dialog.FileName)}");
+            return true;
+        }
+
+        private void UpdateSelectedFilePath(string? filePath)
+        {
+            _selectedFilePath = filePath;
+            SelectedFileTextBoxCtl.Text = string.IsNullOrWhiteSpace(filePath) ? "(未选择文件)" : filePath;
+        }
+
+        private void LoadConfig()
+        {
+            try
+            {
+                if (!File.Exists(_configFilePath))
+                {
+                    UpdateSelectedFilePath(null);
+                    return;
+                }
+
+                var json = File.ReadAllText(_configFilePath);
+                var config = JsonSerializer.Deserialize<UiConfig>(json);
+                if (config == null)
+                {
+                    UpdateSelectedFilePath(null);
+                    return;
+                }
+
+                _preferredPortName = config.PortName;
+                if (config.BaudRate > 0)
+                {
+                    BaudRateComboBoxCtl.SelectedItem = config.BaudRate;
+                }
+
+                if (config.DataBits is 5 or 6 or 7 or 8)
+                {
+                    DataBitsComboBoxCtl.SelectedItem = config.DataBits;
+                }
+
+                SelectEnumOption(ParityComboBoxCtl, config.Parity, Parity.None);
+                SelectEnumOption(StopBitsComboBoxCtl, config.StopBits, StopBits.One);
+                SelectEnumOption(HandshakeComboBoxCtl, config.Handshake, Handshake.None);
+
+                DtrEnableCheckBoxCtl.IsChecked = config.DtrEnable;
+                RtsEnableCheckBoxCtl.IsChecked = config.RtsEnable;
+                AppendNewLineCheckBoxCtl.IsChecked = config.AppendNewLine;
+                EnableLcdDecodeCheckBoxCtl.IsChecked = config.LcdDecodeEnabled;
+
+                SelectTextOption(ReceiveModeComboBoxCtl, config.ReceiveMode, "ABC");
+                SelectTextOption(SendModeComboBoxCtl, config.SendMode, "ABC");
+
+                UpdateSelectedFilePath(File.Exists(config.SelectedFilePath) ? config.SelectedFilePath : null);
+            }
+            catch
+            {
+                UpdateSelectedFilePath(null);
+            }
+        }
+
+        private void SaveConfig()
+        {
+            try
+            {
+                var config = new UiConfig
+                {
+                    PortName = (PortComboBoxCtl.SelectedItem as SerialPortInfo)?.PortName,
+                    BaudRate = BaudRateComboBoxCtl.SelectedItem as int? ?? 115200,
+                    DataBits = DataBitsComboBoxCtl.SelectedItem as int? ?? 8,
+                    Parity = GetSelectedEnum(ParityComboBoxCtl, Parity.None),
+                    StopBits = GetSelectedEnum(StopBitsComboBoxCtl, StopBits.One),
+                    Handshake = GetSelectedEnum(HandshakeComboBoxCtl, Handshake.None),
+                    DtrEnable = DtrEnableCheckBoxCtl.IsChecked == true,
+                    RtsEnable = RtsEnableCheckBoxCtl.IsChecked == true,
+                    AppendNewLine = AppendNewLineCheckBoxCtl.IsChecked == true,
+                    LcdDecodeEnabled = EnableLcdDecodeCheckBoxCtl.IsChecked == true,
+                    ReceiveMode = GetSelectedModeText(ReceiveModeComboBoxCtl),
+                    SendMode = GetSelectedModeText(SendModeComboBoxCtl),
+                    SelectedFilePath = _selectedFilePath ?? string.Empty
+                };
+
+                var folder = Path.GetDirectoryName(_configFilePath);
+                if (!string.IsNullOrWhiteSpace(folder))
+                {
+                    Directory.CreateDirectory(folder);
+                }
+
+                var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(_configFilePath, json);
+            }
+            catch
+            {
+                // ignore config write failure
+            }
+        }
+
+        private static void SelectEnumOption<T>(ComboBox comboBox, T value, T fallback) where T : struct
+        {
+            var selected = comboBox.Items.OfType<SerialOption<T>>().FirstOrDefault(i => EqualityComparer<T>.Default.Equals(i.Value, value));
+            comboBox.SelectedItem = selected ?? comboBox.Items.OfType<SerialOption<T>>().FirstOrDefault(i => EqualityComparer<T>.Default.Equals(i.Value, fallback));
+        }
+
+        private static void SelectTextOption(ComboBox comboBox, string? text, string fallback)
+        {
+            var target = string.IsNullOrWhiteSpace(text) ? fallback : text;
+            var selected = comboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(i => string.Equals(i.Content?.ToString(), target, StringComparison.OrdinalIgnoreCase));
+            comboBox.SelectedItem = selected ?? comboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(i => string.Equals(i.Content?.ToString(), fallback, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void UpdateUiByConnectionState(bool isConnected)
+        {
+            OpenButtonCtl.IsEnabled = !isConnected;
+            CloseButtonCtl.IsEnabled = isConnected;
+            PortComboBoxCtl.IsEnabled = !isConnected;
+            BaudRateComboBoxCtl.IsEnabled = !isConnected;
+            DataBitsComboBoxCtl.IsEnabled = !isConnected;
+            ParityComboBoxCtl.IsEnabled = !isConnected;
+            StopBitsComboBoxCtl.IsEnabled = !isConnected;
+            HandshakeComboBoxCtl.IsEnabled = !isConnected;
+            DtrEnableCheckBoxCtl.IsEnabled = !isConnected;
+            RtsEnableCheckBoxCtl.IsEnabled = !isConnected;
+            RefreshButtonCtl.IsEnabled = !isConnected;
+        }
+
+        private static T GetSelectedEnum<T>(ComboBox comboBox, T fallback) where T : struct
+        {
+            return comboBox.SelectedItem is SerialOption<T> selected ? selected.Value : fallback;
+        }
+
+        private static string GetParityShortName(Parity parity)
+        {
+            return parity switch
+            {
+                Parity.None => "N",
+                Parity.Odd => "O",
+                Parity.Even => "E",
+                Parity.Mark => "M",
+                Parity.Space => "S",
+                _ => "N"
+            };
+        }
+
+        private static string GetStopBitsShortName(StopBits stopBits)
+        {
+            return stopBits switch
+            {
+                StopBits.One => "1",
+                StopBits.OnePointFive => "1.5",
+                StopBits.Two => "2",
+                _ => "1"
+            };
+        }
+
+        private static string GetSelectedModeText(ComboBox comboBox)
+        {
+            return (comboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "ABC";
+        }
+
+        private static byte[] ParseHexString(string input)
+        {
+            var cleaned = input.Replace(" ", string.Empty)
+                               .Replace("\r", string.Empty)
+                               .Replace("\n", string.Empty);
+
+            if (cleaned.Length % 2 != 0)
+            {
+                throw new FormatException("HEX 数据长度必须为偶数。例：0A FF 1C");
+            }
+
+            var bytes = new byte[cleaned.Length / 2];
+            for (var i = 0; i < bytes.Length; i++)
+            {
+                bytes[i] = Convert.ToByte(cleaned.Substring(i * 2, 2), 16);
+            }
+
+            return bytes;
+        }
+
+        private void AppendTxLog(string text)
+        {
+            EnqueueLog("[tx]", text, "#60A5FA");
+        }
+
+        private void AppendRxLog(string text)
+        {
+            EnqueueLog("[rx]", text, "#34D399");
+        }
+
+        private void AppendSystemLog(string text)
+        {
+            EnqueueLog("[sys]", text, "#FBBF24");
+        }
+
+        private void EnqueueLog(string tag, string text, string hexColor)
+        {
+            var normalized = text;
+            if (normalized.Length > 2000)
+            {
+                normalized = normalized[..2000] + " ...";
+            }
+
+            if (Interlocked.Increment(ref _pendingLogCount) > 5000)
+            {
+                Interlocked.Decrement(ref _pendingLogCount);
+                return;
+            }
+
+            _logQueue.Enqueue(new LogEntry(tag, normalized, hexColor, DateTime.Now));
+        }
+
+        private void FlushLogs()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                return;
+            }
+
+            var added = false;
+            for (var i = 0; i < LogFlushBatchSize; i++)
+            {
+                if (!_logQueue.TryDequeue(out var entry))
+                {
+                    break;
+                }
+
+                Interlocked.Decrement(ref _pendingLogCount);
+                added = true;
+
+                var paragraph = new Paragraph { Margin = new Thickness(0) };
+                paragraph.Inlines.Add(new Run($"[{entry.Time:HH:mm:ss.fff}] ")
+                {
+                    Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8"))
+                });
+                paragraph.Inlines.Add(new Run($"{entry.Tag} ")
+                {
+                    Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(entry.ColorHex)),
+                    FontWeight = FontWeights.SemiBold
+                });
+                paragraph.Inlines.Add(new Run(entry.Message)
+                {
+                    Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F8FAFC"))
+                });
+
+                ReceiveRichTextBoxCtl.Document.Blocks.Add(paragraph);
+            }
+
+            while (ReceiveRichTextBoxCtl.Document.Blocks.Count > MaxUiLogBlocks)
+            {
+                ReceiveRichTextBoxCtl.Document.Blocks.Remove(ReceiveRichTextBoxCtl.Document.Blocks.FirstBlock);
+            }
+
+            if (added)
+            {
+                ReceiveRichTextBoxCtl.ScrollToEnd();
+            }
+        }
+
+        private sealed class SerialPortInfo(string portName, string displayText)
+        {
+            public string PortName { get; } = portName;
+            public string DisplayText { get; } = displayText;
+        }
+
+        private sealed class SerialOption<T>(T value, string text)
+        {
+            public T Value { get; } = value;
+            public string Text { get; } = text;
+            public override string ToString() => Text;
+        }
+
+        private sealed class UiConfig
+        {
+            public string? PortName { get; set; }
+            public int BaudRate { get; set; } = 115200;
+            public int DataBits { get; set; } = 8;
+            public Parity Parity { get; set; } = Parity.None;
+            public StopBits StopBits { get; set; } = StopBits.One;
+            public Handshake Handshake { get; set; } = Handshake.None;
+            public bool DtrEnable { get; set; } = true;
+            public bool RtsEnable { get; set; } = true;
+            public bool AppendNewLine { get; set; }
+            public bool LcdDecodeEnabled { get; set; }
+            public string? ReceiveMode { get; set; } = "ABC";
+            public string? SendMode { get; set; } = "ABC";
+            public string? SelectedFilePath { get; set; }
+        }
+
+        private sealed class LogEntry(string tag, string message, string colorHex, DateTime time)
+        {
+            public string Tag { get; } = tag;
+            public string Message { get; } = message;
+            public string ColorHex { get; } = colorHex;
+            public DateTime Time { get; } = time;
+        }
+    }
+}

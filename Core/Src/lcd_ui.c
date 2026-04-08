@@ -18,6 +18,7 @@ static lcd_rect_t g_rect = {0, 24, 28, 20, RED};
 static lcd_circle_t g_circle = {20, 58, 10, YELLOW};
 static lcd_label_t g_label = {6, 4, WHITE, BLACK, 8, "DMA ANIM"};
 static lcd_label_t g_label2 = {12, 14, WHITE, BLACK, 8, "TEST"};
+static lcd_label_t g_label3 = {12, 14, WHITE, BLACK, 8, "TEST"};
 static lcd_circle_t g_circle2 = {60, 58, 10, CYAN};
 static lcd_rect_t g_rect2 = {50, 24, 35, 30, MAGENTA};
 
@@ -36,6 +37,7 @@ void lcd_ui_init(void)
     lcd_anim_manager_add_layer(&g_circle2, lcd_draw_circle_layer);
     lcd_anim_manager_add_layer(&g_label2, lcd_draw_label_layer);
     lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
+    lcd_anim_manager_add_layer(&g_label3, lcd_draw_label_layer);
 
     lcd_anim_config_t rect_anim_x = {
       .target = &g_rect.x,
@@ -121,6 +123,33 @@ void lcd_ui_init(void)
     };
     lcd_anim_start(&label2_anim_color);
 
+    lcd_anim_config_t label3_anim_color = {
+      .target = &g_label3.x,
+      .start_value = 0,
+      .end_value = 60,
+      .duration_ms = 3000,
+      .delay_ms = 300,
+      .repeat = true,
+      .yoyo = true,
+      .exec_cb = lcd_anim_exec_set_u16,
+      .done_cb = NULL,
+      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
+    };
+
+    lcd_anim_config_t label3_anim_color2 = {
+      .target = &g_label3.y,
+      .start_value = 14,
+      .end_value = 40,
+      .duration_ms = 1000,
+      .delay_ms = 0,
+      .repeat = true,
+      .yoyo = true,
+      .exec_cb = lcd_anim_exec_set_u16,
+      .done_cb = NULL,
+      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_OUT_ELASTIC),
+    };
+    lcd_anim_start(&label3_anim_color);
+    lcd_anim_start(&label3_anim_color2);
 
     lcd_anim_manager_render();
 }
@@ -133,6 +162,9 @@ void lcd_ui_change(void)
 {
   lcd_calculate_usage();
   static char str_buf[32];
+  static char fps_buf[16];
+  snprintf(fps_buf, sizeof(fps_buf), "FPS:%u", lcd_fps);
+  g_label3.text = fps_buf;
   static char last_str_buf[8];
   snprintf(str_buf, sizeof(str_buf), "usage percent:%u %%", cpu_usage_percent);
 
