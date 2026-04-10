@@ -12,7 +12,7 @@
 ../Core/Src/lcd.c:271:6:lcd_draw_circle	32	static
 ../Core/Src/lcd.c:307:6:lcd_draw_point_dma_swapped	16	static
 ../Core/Src/lcd.c:317:6:lcd_draw_point_dma	16	static
-../Core/Src/lcd.c:323:6:lcd_screen_update_dma	16	static
+../Core/Src/lcd.c:323:6:lcd_screen_update_dma	8	static
 ../Core/Src/lcd.c:362:6:lcd_fill_screen_dma	32	static
 ../Core/Src/lcd.c:372:6:lcd_draw_char	56	static
 ../Core/Src/lcd.c:455:6:lcd_draw_string	32	static

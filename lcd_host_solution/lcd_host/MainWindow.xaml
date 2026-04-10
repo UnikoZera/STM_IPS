@@ -304,12 +304,16 @@
         </Style>
     </Window.Resources>
 
-    <Border Margin="8"
+    <Border x:Name="RootFrameBorder"
+            Margin="8"
             Padding="4"
             CornerRadius="14"
             BorderThickness="1.2"
             BorderBrush="{StaticResource FrameBorderBrush}"
             Background="#140F172A">
+        <Border.RenderTransform>
+            <TranslateTransform x:Name="RootFrameTranslate" />
+        </Border.RenderTransform>
         <Grid Margin="10">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -414,14 +418,31 @@
                                   Content="RTS" />
                     </WrapPanel>
 
-                    <WrapPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,4,0,0">
-                        <Button x:Name="RefreshButton" Content="刷新端口" Click="RefreshButton_Click" />
-                        <Button x:Name="OpenButton" Content="打开串口" Click="OpenButton_Click" />
-                        <Button x:Name="CloseButton"
-                                Content="关闭串口"
-                                Background="#F15E5E"
-                                Click="CloseButton_Click" />
-                    </WrapPanel>
+                    <Grid Grid.Row="1" Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <WrapPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="RefreshButton" Content="刷新端口" Click="RefreshButton_Click" />
+                            <Button x:Name="OpenButton" Content="打开串口" Click="OpenButton_Click" />
+                            <Button x:Name="CloseButton"
+                                    Content="关闭串口"
+                                    Background="#F15E5E"
+                                    Click="CloseButton_Click" />
+                        </WrapPanel>
+
+                        <CheckBox x:Name="EnableUiAnimationCheckBox"
+                                  Grid.Column="1"
+                                  Margin="12,0,0,0"
+                                  VerticalAlignment="Bottom"
+                                  HorizontalAlignment="Right"
+                                  IsChecked="True"
+                                  Content="启用动画"
+                                  Checked="EnableUiAnimationCheckBox_Changed"
+                                  Unchecked="EnableUiAnimationCheckBox_Changed" />
+                    </Grid>
                 </Grid>
             </Border>
 
@@ -459,36 +480,61 @@
                                 </Grid.RowDefinitions>
 
                                 <DockPanel Grid.Row="0" Margin="0,0,0,6">
-                                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
-                                        <TextBlock Margin="3,0"
-                                           VerticalAlignment="Center"
-                                           FontWeight="SemiBold"
-                                           Text="显示编码" />
-                                        <ComboBox x:Name="ReceiveModeComboBox" Width="120" SelectionChanged="ReceiveModeComboBox_SelectionChanged">
-                                            <ComboBoxItem Content="ABC" IsSelected="True" />
-                                            <ComboBoxItem Content="HEX" />
-                                        </ComboBox>
-                                        <CheckBox x:Name="EnableLcdDecodeCheckBox"
-                                          Margin="8,0,0,0"
-                                          IsChecked="False"
-                                          VerticalAlignment="Center"
-                                          Content="启用LCD帧解析"
-                                          Checked="EnableLcdDecodeCheckBox_Changed"
-                                          Unchecked="EnableLcdDecodeCheckBox_Changed" />
-                                        <CheckBox x:Name="ReceiveTimestampCheckBox"
-                                          Margin="8,0,0,0"
-                                          IsChecked="True"
-                                          VerticalAlignment="Center"
-                                          Content="时间戳"
-                                          Checked="ReceiveTimestampCheckBox_Changed"
-                                          Unchecked="ReceiveTimestampCheckBox_Changed" />
-                                    </StackPanel>
-
                                     <Button DockPanel.Dock="Right"
                                     HorizontalAlignment="Right"
                                     Content="清空接收"
                                     Background="#64748B"
                                     Click="ClearReceiveButton_Click" />
+
+                                    <StackPanel DockPanel.Dock="Left">
+                                        <WrapPanel Orientation="Horizontal">
+                                            <TextBlock Margin="3,0"
+                                               VerticalAlignment="Center"
+                                               FontWeight="SemiBold"
+                                               Text="显示编码" />
+                                            <ComboBox x:Name="ReceiveModeComboBox" Width="120" SelectionChanged="ReceiveModeComboBox_SelectionChanged">
+                                                <ComboBoxItem Content="ABC" IsSelected="True" />
+                                                <ComboBoxItem Content="HEX" />
+                                            </ComboBox>
+                                            <CheckBox x:Name="EnableLcdDecodeCheckBox"
+                                              Margin="8,0,0,0"
+                                              IsChecked="False"
+                                              VerticalAlignment="Center"
+                                              Content="启用LCD帧解析"
+                                              Checked="EnableLcdDecodeCheckBox_Changed"
+                                              Unchecked="EnableLcdDecodeCheckBox_Changed" />
+                                            <CheckBox x:Name="ReceiveTimestampCheckBox"
+                                              Margin="8,0,0,0"
+                                              IsChecked="True"
+                                              VerticalAlignment="Center"
+                                              Content="时间戳"
+                                              Checked="ReceiveTimestampCheckBox_Changed"
+                                              Unchecked="ReceiveTimestampCheckBox_Changed" />
+                                        </WrapPanel>
+
+                                        <WrapPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                            <TextBlock Margin="3,0"
+                                               VerticalAlignment="Center"
+                                               FontWeight="SemiBold"
+                                               Text="文本空闲Flush(ms)" />
+                                            <TextBox x:Name="RxTextIdleFlushTextBox"
+                                                 Width="70"
+                                                 Text="90"
+                                                 VerticalContentAlignment="Center"
+                                                 LostFocus="RxTuneTextBox_LostFocus"
+                                                 PreviewKeyDown="RxTuneTextBox_PreviewKeyDown" />
+                                            <TextBlock Margin="10,0,0,0"
+                                               VerticalAlignment="Center"
+                                               FontWeight="SemiBold"
+                                               Text="Chunk间隔阈值(ms)" />
+                                            <TextBox x:Name="RxChunkGapThresholdTextBox"
+                                                 Width="70"
+                                                 Text="28"
+                                                 VerticalContentAlignment="Center"
+                                                 LostFocus="RxTuneTextBox_LostFocus"
+                                                 PreviewKeyDown="RxTuneTextBox_PreviewKeyDown" />
+                                        </WrapPanel>
+                                    </StackPanel>
                                 </DockPanel>
 
                                 <RichTextBox x:Name="ReceiveRichTextBox"

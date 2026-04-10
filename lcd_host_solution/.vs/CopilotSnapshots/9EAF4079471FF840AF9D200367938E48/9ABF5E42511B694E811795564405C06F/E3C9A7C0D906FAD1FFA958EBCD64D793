@@ -1,0 +1,726 @@
+﻿<Window x:Class="lcd_host.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:lcd_host"
+        mc:Ignorable="d"
+        Title="LCD_HOST_DEVICE"
+        Height="700"
+        Width="1100"
+        MinWidth="760"
+        MinHeight="520"
+        WindowStyle="SingleBorderWindow"
+        ResizeMode="CanResize"
+        FontFamily="Segoe UI"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType"
+        TextOptions.TextHintingMode="Fixed"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        Foreground="{DynamicResource PrimaryForegroundBrush}"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing">
+    <Window.Resources>
+        <LinearGradientBrush x:Key="WindowBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#090F1D" Offset="0" />
+            <GradientStop Color="#0F172A" Offset="0.55" />
+            <GradientStop Color="#111827" Offset="1" />
+        </LinearGradientBrush>
+        <SolidColorBrush x:Key="PrimaryForegroundBrush" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="PanelBorderBrush" Color="#334155" />
+        <SolidColorBrush x:Key="GroupBackgroundBrush" Color="#111827" />
+        <SolidColorBrush x:Key="PrimaryButtonBrush" Color="#6366F1" />
+        <SolidColorBrush x:Key="InputBackgroundBrush" Color="#0F172A" />
+        <SolidColorBrush x:Key="InputForegroundBrush" Color="#BFDBFE" />
+        <SolidColorBrush x:Key="TextForegroundBrush" Color="#F1F5F9" />
+        <SolidColorBrush x:Key="CheckForegroundBrush" Color="#E2E8F0" />
+        <SolidColorBrush x:Key="ParameterLabelBrush" Color="#BFDBFE" />
+        <SolidColorBrush x:Key="HoverEdgeBrush" Color="#60A5FA" />
+        <SolidColorBrush x:Key="FocusEdgeBrush" Color="#38BDF8" />
+        <SolidColorBrush x:Key="SerialConfigComboBoxBackgroundBrush" Color="#E2E8F0" />
+        <SolidColorBrush x:Key="SerialConfigComboBoxForegroundBrush" Color="#0F172A" />
+
+        <LinearGradientBrush x:Key="PanelBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#66111B2E" Offset="0" />
+            <GradientStop Color="#4A1E293B" Offset="1" />
+        </LinearGradientBrush>
+
+        <LinearGradientBrush x:Key="FrameBorderBrush" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#60A5FA" Offset="0" />
+            <GradientStop Color="#22D3EE" Offset="1" />
+        </LinearGradientBrush>
+
+        <LinearGradientBrush x:Key="PanelDepthBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#4D334155" Offset="0" />
+            <GradientStop Color="#331E293B" Offset="1" />
+        </LinearGradientBrush>
+
+        <LinearGradientBrush x:Key="EdgeHighlightBrush" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#66E2E8F0" Offset="0" />
+            <GradientStop Color="#2238BDF8" Offset="1" />
+        </LinearGradientBrush>
+
+        <LinearGradientBrush x:Key="GlassSheenBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#24FFFFFF" Offset="0" />
+            <GradientStop Color="#10C7D2FE" Offset="0.45" />
+            <GradientStop Color="#06FFFFFF" Offset="1" />
+        </LinearGradientBrush>
+
+        <DataTemplate x:Key="SerialConfigDefaultItemTemplate">
+            <TextBlock Text="{Binding}" />
+        </DataTemplate>
+
+        <DataTemplate x:Key="SerialConfigPortItemTemplate">
+            <TextBlock Text="{Binding DisplayText}" />
+        </DataTemplate>
+
+        <Style x:Key="SoftGridSplitterStyle" TargetType="GridSplitter">
+            <Setter Property="Background" Value="#334155" />
+            <Setter Property="Opacity" Value="0.6" />
+            <Setter Property="ShowsPreview" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="GridSplitter">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="2" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#60A5FA" />
+                    <Setter Property="Opacity" Value="0.95" />
+                </Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                    <Setter Property="Background" Value="#38BDF8" />
+                    <Setter Property="Opacity" Value="0.95" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="GroupBox">
+            <Setter Property="Margin" Value="0,0,0,8" />
+            <Setter Property="Padding" Value="8" />
+            <Setter Property="BorderBrush" Value="{DynamicResource PanelBorderBrush}" />
+            <Setter Property="Background" Value="{StaticResource PanelDepthBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="{DynamicResource CheckForegroundBrush}" />
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <ScaleTransform ScaleX="1" ScaleY="1" />
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <EventTrigger RoutedEvent="MouseEnter">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1.006" Duration="0:0:0.14" />
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1.006" Duration="0:0:0.14" />
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+                <EventTrigger RoutedEvent="MouseLeave">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.16" />
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.16" />
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource HoverEdgeBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="Button">
+            <Setter Property="Margin" Value="3" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="#00000000" />
+            <Setter Property="Background" Value="{DynamicResource PrimaryButtonBrush}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <ScaleTransform ScaleX="1" ScaleY="1" />
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <EventTrigger RoutedEvent="MouseEnter">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1.03" Duration="0:0:0.12" />
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1.03" Duration="0:0:0.12" />
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+                <EventTrigger RoutedEvent="MouseLeave">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.15" />
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.15" />
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource HoverEdgeBrush}" />
+                </Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource FocusEdgeBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="Margin" Value="3" />
+            <Setter Property="Padding" Value="6" />
+            <Setter Property="BorderBrush" Value="{DynamicResource PanelBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource InputForegroundBrush}" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource HoverEdgeBrush}" />
+                </Trigger>
+                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource FocusEdgeBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="RichTextBox">
+            <Setter Property="Margin" Value="3" />
+            <Setter Property="Padding" Value="6" />
+            <Setter Property="BorderBrush" Value="{DynamicResource PanelBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Background" Value="{DynamicResource InputBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource InputForegroundBrush}" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource HoverEdgeBrush}" />
+                </Trigger>
+                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource FocusEdgeBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="ComboBox">
+            <Setter Property="Margin" Value="3" />
+            <Setter Property="Padding" Value="4" />
+            <Setter Property="BorderBrush" Value="#0F172A" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="MinWidth" Value="120" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="Foreground" Value="#111827" />
+            <Setter Property="TextElement.Foreground" Value="#111827" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource HoverEdgeBrush}" />
+                </Trigger>
+                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource FocusEdgeBrush}" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="1" />
+                    <Setter Property="Foreground" Value="#334155" />
+                    <Setter Property="Background" Value="#E2E8F0" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="#0B1220" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Padding" Value="6,5" />
+            <Style.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter Property="Background" Value="#1E40AF" />
+                    <Setter Property="Foreground" Value="White" />
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#1D4ED8" />
+                    <Setter Property="Foreground" Value="White" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SerialConfigComboBoxItemStyle" TargetType="ComboBoxItem" BasedOn="{StaticResource {x:Type ComboBoxItem}}">
+            <Setter Property="Foreground" Value="{DynamicResource SerialConfigComboBoxForegroundBrush}" />
+            <Setter Property="Background" Value="{DynamicResource SerialConfigComboBoxBackgroundBrush}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Style.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter Property="Background" Value="#BFDBFE" />
+                    <Setter Property="Foreground" Value="{DynamicResource SerialConfigComboBoxForegroundBrush}" />
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#93C5FD" />
+                    <Setter Property="Foreground" Value="{DynamicResource SerialConfigComboBoxForegroundBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SerialConfigComboBoxStyle" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+            <Setter Property="Background" Value="{DynamicResource SerialConfigComboBoxBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource SerialConfigComboBoxForegroundBrush}" />
+            <Setter Property="TextElement.Foreground" Value="{DynamicResource SerialConfigComboBoxForegroundBrush}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource SerialConfigComboBoxItemStyle}" />
+            <Style.Resources>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Foreground" Value="{DynamicResource SerialConfigComboBoxForegroundBrush}" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </Style>
+            </Style.Resources>
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="1" />
+                    <Setter Property="Foreground" Value="#1E293B" />
+                    <Setter Property="TextElement.Foreground" Value="#1E293B" />
+                    <Setter Property="Background" Value="#CBD5E1" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextForegroundBrush}" />
+        </Style>
+
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{DynamicResource CheckForegroundBrush}" />
+        </Style>
+
+        <Style x:Key="ParameterLabelStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#E2E8F0" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="3,0" />
+        </Style>
+    </Window.Resources>
+
+    <Border Margin="8"
+            Padding="4"
+            CornerRadius="14"
+            BorderThickness="1.2"
+            BorderBrush="{StaticResource FrameBorderBrush}"
+            Background="#140F172A">
+        <Grid Margin="10">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.RowSpan="3"
+                    Margin="0"
+                    CornerRadius="12"
+                    Background="{StaticResource GlassSheenBrush}"
+                    BorderBrush="#1CF8FAFC"
+                    BorderThickness="1"
+                    IsHitTestVisible="False"
+                    Panel.ZIndex="0" />
+
+            <Border Grid.Row="0"
+                Margin="0,-2,0,8"
+                Padding="6"
+                CornerRadius="10"
+                BorderBrush="{StaticResource EdgeHighlightBrush}"
+                BorderThickness="1"
+                Background="{StaticResource PanelBackgroundBrush}"
+                Panel.ZIndex="1">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <WrapPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center" ItemHeight="30">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                            <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="端口" />
+                            <ComboBox x:Name="PortComboBox"
+                                      Style="{StaticResource SerialConfigComboBoxStyle}"
+                                      Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
+                                      ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
+                                      Width="250"
+                                      DisplayMemberPath="DisplayText"
+                                      SelectedValuePath="PortName"
+                                      SelectionChanged="PortComboBox_SelectionChanged" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                            <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="波特率" />
+                            <ComboBox x:Name="BaudRateComboBox"
+                                      Style="{StaticResource SerialConfigComboBoxStyle}"
+                                      Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
+                                      ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
+                                      ItemTemplate="{DynamicResource SerialConfigDefaultItemTemplate}"
+                                      Width="100" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                            <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="数据位" />
+                            <ComboBox x:Name="DataBitsComboBox"
+                                      Style="{StaticResource SerialConfigComboBoxStyle}"
+                                      Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
+                                      ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
+                                      ItemTemplate="{DynamicResource SerialConfigDefaultItemTemplate}"
+                                      Width="80" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                            <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="校验位" />
+                            <ComboBox x:Name="ParityComboBox"
+                                      Style="{StaticResource SerialConfigComboBoxStyle}"
+                                      Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
+                                      ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
+                                      DisplayMemberPath="Text"
+                                      Width="92" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                            <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="停止位" />
+                            <ComboBox x:Name="StopBitsComboBox"
+                                      Style="{StaticResource SerialConfigComboBoxStyle}"
+                                      Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
+                                      ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
+                                      DisplayMemberPath="Text"
+                                      Width="94" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                            <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="流控" />
+                            <ComboBox x:Name="HandshakeComboBox"
+                                      Style="{StaticResource SerialConfigComboBoxStyle}"
+                                      Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
+                                      ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
+                                      DisplayMemberPath="Text"
+                                      Width="138" />
+                        </StackPanel>
+
+                        <CheckBox x:Name="DtrEnableCheckBox"
+                                  Margin="10,0,0,0"
+                                  VerticalAlignment="Center"
+                                  Content="DTR" />
+
+                        <CheckBox x:Name="RtsEnableCheckBox"
+                                  Margin="6,0,0,0"
+                                  VerticalAlignment="Center"
+                                  Content="RTS" />
+                    </WrapPanel>
+
+                    <WrapPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,4,0,0">
+                        <Button x:Name="RefreshButton" Content="刷新端口" Click="RefreshButton_Click" />
+                        <Button x:Name="OpenButton" Content="打开串口" Click="OpenButton_Click" />
+                        <Button x:Name="CloseButton"
+                                Content="关闭串口"
+                                Background="#F15E5E"
+                                Click="CloseButton_Click" />
+                    </WrapPanel>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="1" Panel.ZIndex="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="LeftMainColumn" Width="1.7*" MinWidth="300" />
+                    <ColumnDefinition x:Name="MiddleSplitterColumn" Width="4" />
+                    <ColumnDefinition x:Name="RightLcdColumn" Width="*" MinWidth="260" />
+                </Grid.ColumnDefinitions>
+
+                <Grid x:Name="LeftPaneGrid" Margin="0">
+                    <Grid.RenderTransform>
+                        <TranslateTransform x:Name="LeftPaneTranslate" />
+                    </Grid.RenderTransform>
+                    <Grid.RowDefinitions>
+                        <RowDefinition x:Name="LeftReceiveRow" Height="1.0*" MinHeight="70" />
+                        <RowDefinition x:Name="LeftSplitterRow" Height="4" />
+                        <RowDefinition x:Name="LeftSendRow" Height="1.28*" MinHeight="126" />
+                    </Grid.RowDefinitions>
+
+                    <ContentControl x:Name="ReceivePanelHost" Grid.Row="0" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+                        <GroupBox x:Name="ReceiveGroupBox"
+                                  Header="串口接收区域"
+                                  Margin="0,0,0,2"
+                                  AllowDrop="True"
+                                  PreviewMouseLeftButtonDown="PanelDrag_MouseLeftButtonDown"
+                                  PreviewMouseLeftButtonUp="PanelDrag_MouseLeftButtonUp"
+                                  PreviewMouseMove="PanelDrag_MouseMove"
+                                  DragOver="PanelDrop_DragOver"
+                                  Drop="PanelDrop_Drop">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                                        <TextBlock Margin="3,0"
+                                           VerticalAlignment="Center"
+                                           FontWeight="SemiBold"
+                                           Text="显示编码" />
+                                        <ComboBox x:Name="ReceiveModeComboBox" Width="120" SelectionChanged="ReceiveModeComboBox_SelectionChanged">
+                                            <ComboBoxItem Content="ABC" IsSelected="True" />
+                                            <ComboBoxItem Content="HEX" />
+                                        </ComboBox>
+                                        <CheckBox x:Name="EnableLcdDecodeCheckBox"
+                                          Margin="8,0,0,0"
+                                          IsChecked="False"
+                                          VerticalAlignment="Center"
+                                          Content="启用LCD帧解析"
+                                          Checked="EnableLcdDecodeCheckBox_Changed"
+                                          Unchecked="EnableLcdDecodeCheckBox_Changed" />
+                                        <CheckBox x:Name="ReceiveTimestampCheckBox"
+                                          Margin="8,0,0,0"
+                                          IsChecked="True"
+                                          VerticalAlignment="Center"
+                                          Content="时间戳"
+                                          Checked="ReceiveTimestampCheckBox_Changed"
+                                          Unchecked="ReceiveTimestampCheckBox_Changed" />
+                                    </StackPanel>
+
+                                    <Button DockPanel.Dock="Right"
+                                    HorizontalAlignment="Right"
+                                    Content="清空接收"
+                                    Background="#64748B"
+                                    Click="ClearReceiveButton_Click" />
+                                </DockPanel>
+
+                                <RichTextBox x:Name="ReceiveRichTextBox"
+                                     Grid.Row="1"
+                                     IsReadOnly="True"
+                                     VerticalScrollBarVisibility="Auto"
+                                     HorizontalScrollBarVisibility="Auto"
+                                     FontFamily="Consolas"
+                                     FontSize="13" />
+                            </Grid>
+                        </GroupBox>
+                    </ContentControl>
+
+                    <GridSplitter Grid.Row="1"
+                              x:Name="LeftHorizontalSplitter"
+                              Style="{StaticResource SoftGridSplitterStyle}"
+                              Height="4"
+                              HorizontalAlignment="Stretch"
+                              VerticalAlignment="Center"
+                              DragCompleted="GridSplitter_DragCompleted"
+                              ResizeBehavior="PreviousAndNext" />
+
+                    <ContentControl x:Name="SendPanelHost" Grid.Row="2" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+                        <GroupBox x:Name="SendGroupBox"
+                                  Header="串口发送区域"
+                                  Margin="0,2,0,0"
+                                  AllowDrop="True"
+                                  PreviewMouseLeftButtonDown="PanelDrag_MouseLeftButtonDown"
+                                  PreviewMouseLeftButtonUp="PanelDrag_MouseLeftButtonUp"
+                                  PreviewMouseMove="PanelDrag_MouseMove"
+                                  DragOver="PanelDrop_DragOver"
+                                  Drop="PanelDrop_Drop">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="0" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <StackPanel Orientation="Horizontal" Grid.Row="0">
+                                    <TextBlock Margin="3,0"
+                                   VerticalAlignment="Center"
+                                   FontWeight="SemiBold"
+                                   Text="发送编码" />
+                                    <ComboBox x:Name="SendModeComboBox" Width="120">
+                                        <ComboBoxItem Content="ABC" IsSelected="True" />
+                                        <ComboBoxItem Content="HEX" />
+                                    </ComboBox>
+                                    <TextBlock FontWeight="SemiBold" Text="发送结束符" Height="18" Margin="10,0,6,0" />
+                                    <ComboBox x:Name="LineEndingComboBox" Width="140">
+                                        <ComboBoxItem Content="无" IsSelected="True" />
+                                        <ComboBoxItem Content="\r" />
+                                        <ComboBoxItem Content="\n" />
+                                        <ComboBoxItem Content="\r\n" />
+                                    </ComboBox>
+                                </StackPanel>
+
+                                <TextBox x:Name="SendTextBox"
+                             Grid.Row="1"
+                             MinHeight="64"
+                             Margin="4"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             FontFamily="Consolas"
+                             FontSize="13" />
+
+                                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="6,4,6,2" VerticalAlignment="Center"/>
+
+                                <Grid Grid.Row="3" Margin="3,2,3,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="SelectedFileTextBox"
+                                 IsReadOnly="True"
+                                  Margin="0,2,4,0"
+                                 ToolTip="后续拓展可直接使用该已选文件" />
+                                    <Button Grid.Column="1"
+                                Content="打开文件"
+                                Background="#0EA5A4"
+                                Click="SelectFileButton_Click" Margin="3,2,3,0" />
+                                </Grid>
+
+                                <StackPanel Grid.Row="4"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Right">
+                                    <Button Content="发送文本/命令" Click="SendButton_Click" />
+                                    <Button Content="发送文件" Background="#00A870" Click="SendFileButton_Click" />
+                                </StackPanel>
+                            </Grid>
+                        </GroupBox>
+                    </ContentControl>
+
+                </Grid>
+
+                <GridSplitter Grid.Column="1"
+                          x:Name="MainVerticalSplitter"
+                          Style="{StaticResource SoftGridSplitterStyle}"
+                          Width="4"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Stretch"
+                          DragCompleted="GridSplitter_DragCompleted"
+                          ResizeBehavior="PreviousAndNext" />
+
+                <Grid x:Name="RightLcdGrid" Grid.Column="2" Margin="0">
+                    <Grid.RenderTransform>
+                        <TranslateTransform x:Name="RightPaneTranslate" />
+                    </Grid.RenderTransform>
+                    <Grid.RowDefinitions>
+                        <RowDefinition x:Name="ReceiveAreaRow" Height="0" />
+                        <RowDefinition x:Name="LcdSplitterRow" Height="0" />
+                        <RowDefinition x:Name="LcdAreaRow" Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <ContentControl x:Name="LcdPanelHost" Grid.Row="2" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+                        <GroupBox x:Name="LcdPreviewGroupBox"
+                                  Header="LCD 预览 (RGB565 + Tail: 0D 00 07 21)"
+                                  Margin="0,0,0,8"
+                                  AllowDrop="True"
+                                  PreviewMouseLeftButtonDown="PanelDrag_MouseLeftButtonDown"
+                                  PreviewMouseLeftButtonUp="PanelDrag_MouseLeftButtonUp"
+                                  PreviewMouseMove="PanelDrag_MouseMove"
+                                  DragOver="PanelDrop_DragOver"
+                                  Drop="PanelDrop_Drop">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Border Margin="4"
+                                    CornerRadius="10"
+                                    BorderBrush="{StaticResource EdgeHighlightBrush}"
+                                    BorderThickness="1.2"
+                                    Background="#030712">
+                                    <Border Padding="2"
+                                        CornerRadius="9"
+                                        BorderBrush="{StaticResource FrameBorderBrush}"
+                                        BorderThickness="1"
+                                        Background="#020617">
+                                        <Grid>
+                                            <Viewbox Stretch="Uniform" Margin="10">
+                                                <Image x:Name="LcdPreviewImage"
+                                               Width="208"
+                                               Height="104"
+                                               Stretch="Fill"
+                                               SnapsToDevicePixels="True" />
+                                            </Viewbox>
+                                            <Border Margin="10"
+                                                    VerticalAlignment="Top"
+                                                    Height="12"
+                                                    CornerRadius="6"
+                                                    Background="#26E2E8F0"
+                                                    IsHitTestVisible="False" />
+                                        </Grid>
+                                    </Border>
+                                </Border>
+
+                                <DockPanel Grid.Row="1" Margin="6,4,6,2">
+                                    <TextBlock x:Name="LcdFrameInfoTextBlock"
+                                       DockPanel.Dock="Left"
+                                       Text="LCD帧：0"
+                                       Margin="0,0,20,0"
+                                       Foreground="#93C5FD"
+                                       FontWeight="SemiBold" />
+
+                                    <TextBlock x:Name="LcdSpeedTextBlock"
+                                       DockPanel.Dock="Right"
+                                       Margin="20,0,0,0"
+                                       Text="速率：0.0 KB/s"
+                                       Foreground="#F8FAFC"
+                                       FontWeight="SemiBold" />
+                                </DockPanel>
+                            </Grid>
+                        </GroupBox>
+                    </ContentControl>
+                </Grid>
+            </Grid>
+
+            <Border Grid.Row="2"
+                Padding="8,6"
+                CornerRadius="8"
+                BorderBrush="{StaticResource EdgeHighlightBrush}"
+                BorderThickness="1"
+                Background="{StaticResource PanelBackgroundBrush}" Margin="0,3,0,0"
+                Panel.ZIndex="1">
+                <DockPanel LastChildFill="False">
+                    <TextBlock x:Name="StatusTextBlock"
+                           DockPanel.Dock="Left"
+                           FontWeight="SemiBold"
+                           Text="状态：未连接"
+                           Foreground="#93C5FD" />
+
+                    <TextBlock x:Name="PortDetailTextBlock"
+                           DockPanel.Dock="Right"
+                           Margin="12,0,0,0"
+                           VerticalAlignment="Bottom"
+                           FontWeight="SemiBold"
+                           Foreground="#BFDBFE"
+                           Text="端口详情：未选择" />
+                </DockPanel>
+            </Border>
+
+            <Border x:Name="ToastHost"
+                    Grid.RowSpan="3"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    Margin="0,6,4,0"
+                    Padding="12,8"
+                    CornerRadius="8"
+                    Background="#CC0F172A"
+                    BorderBrush="#38BDF8"
+                    BorderThickness="1"
+                    Visibility="Collapsed"
+                    Opacity="0"
+                    Panel.ZIndex="99"
+                    MouseRightButtonUp="ToastHost_MouseRightButtonUp"
+                    PreviewMouseLeftButtonDown="ToastHost_PreviewMouseLeftButtonDown"
+                    PreviewMouseLeftButtonUp="ToastHost_PreviewMouseLeftButtonUp"
+                    PreviewMouseMove="ToastHost_PreviewMouseMove">
+                <Border.RenderTransform>
+                    <TranslateTransform x:Name="ToastTranslate" X="24" />
+                </Border.RenderTransform>
+                <TextBlock x:Name="ToastTextBlock"
+                           Text=""
+                           FontWeight="SemiBold"
+                           Foreground="#F8FAFC" />
+            </Border>
+
+        </Grid>
+    </Border>
+</Window>
