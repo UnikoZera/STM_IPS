@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:local="clr-namespace:lcd_host"
         mc:Ignorable="d"
         Title="LCD_HOST_DEVICE"
@@ -10,7 +11,7 @@
         Width="1100"
         MinWidth="760"
         MinHeight="520"
-        WindowStyle="SingleBorderWindow"
+        WindowStyle="None"
         ResizeMode="CanResize"
         FontFamily="Segoe UI"
         TextOptions.TextFormattingMode="Display"
@@ -19,7 +20,15 @@
         Background="{DynamicResource WindowBackgroundBrush}"
         Foreground="{DynamicResource PrimaryForegroundBrush}"
         Loaded="Window_Loaded"
+        StateChanged="Window_StateChanged"
         Closing="Window_Closing">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            ResizeBorderThickness="6"
+                            CornerRadius="12,12,0,0"
+                            GlassFrameThickness="0"
+                            UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
     <Window.Resources>
         <LinearGradientBrush x:Key="WindowBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
             <GradientStop Color="#090F1D" Offset="0" />
@@ -143,6 +152,22 @@
             <Setter Property="Background" Value="{DynamicResource PrimaryButtonBrush}" />
             <Setter Property="Foreground" Value="White" />
             <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
             <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
             <Setter Property="RenderTransform">
                 <Setter.Value>
@@ -302,26 +327,102 @@
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="Margin" Value="3,0" />
         </Style>
+
+        <Style x:Key="TitleBarButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="22" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="1,0,0,0" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Background" Value="#2234475A" />
+            <Setter Property="BorderBrush" Value="#00000000" />
+        </Style>
+
+        <Style x:Key="PopupTitleButtonStyle" TargetType="Button" BasedOn="{StaticResource TitleBarButtonStyle}">
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+            <Setter Property="Background" Value="#334155" />
+        </Style>
+
+        <Style x:Key="RxScrollThumbStyle" TargetType="Thumb">
+            <Setter Property="OverridesDefaultStyle" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border CornerRadius="5"
+                                Margin="1"
+                                Background="#5B93C5FD"
+                                BorderBrush="#7D38BDF8"
+                                BorderThickness="1" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="RxScrollBarStyle" TargetType="ScrollBar">
+            <Setter Property="Background" Value="#101E293B" />
+            <Setter Property="Foreground" Value="#93C5FD" />
+            <Setter Property="Width" Value="11" />
+            <Setter Property="Height" Value="11" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Border CornerRadius="6"
+                                Background="#13233450"
+                                BorderBrush="#2A475569"
+                                BorderThickness="1"
+                                Padding="1">
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" IsTabStop="False" />
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource RxScrollThumbStyle}" />
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" IsTabStop="False" />
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Height" Value="11" />
+                    <Setter Property="Width" Value="Auto" />
+                </Trigger>
+                <Trigger Property="Orientation" Value="Vertical">
+                    <Setter Property="Width" Value="11" />
+                    <Setter Property="Height" Value="Auto" />
+                </Trigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#17293F66" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
 
     <Border x:Name="RootFrameBorder"
             Margin="8"
             Padding="4"
-            CornerRadius="14"
-            BorderThickness="1.2"
-            BorderBrush="{StaticResource FrameBorderBrush}"
-            Background="#140F172A">
+            CornerRadius="16,16,10,10"
+            BorderThickness="1"
+            BorderBrush="#2A334155"
+            Background="#120F172A">
         <Border.RenderTransform>
             <TranslateTransform x:Name="RootFrameTranslate" />
         </Border.RenderTransform>
         <Grid Margin="10">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <Border Grid.RowSpan="3"
+            <Border Grid.RowSpan="4"
                     Margin="0"
                     CornerRadius="12"
                     Background="{StaticResource GlassSheenBrush}"
@@ -331,12 +432,50 @@
                     Panel.ZIndex="0" />
 
             <Border Grid.Row="0"
+                    Margin="0,0,0,6"
+                    Padding="6,1,2,1"
+                    CornerRadius="10"
+                    BorderBrush="#1F334155"
+                    BorderThickness="1"
+                    Background="#190F172A"
+                    Panel.ZIndex="1"
+                    MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock VerticalAlignment="Center"
+                               FontWeight="SemiBold"
+                               Foreground="#E2E8F0"
+                               Text="LCD_HOST_DEVICE" />
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                        <Button x:Name="MainMinimizeButton"
+                                Style="{StaticResource TitleBarButtonStyle}"
+                                Content="—"
+                                Click="MainMinimizeButton_Click" />
+                        <Button x:Name="MainMaxRestoreButton"
+                                Style="{StaticResource TitleBarButtonStyle}"
+                                Content="▢"
+                                Click="MainMaxRestoreButton_Click" />
+                        <Button x:Name="MainCloseButton"
+                                Style="{StaticResource TitleBarButtonStyle}"
+                                Background="#BE123C"
+                                Content="✕"
+                                Click="MainCloseButton_Click" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1"
                 Margin="0,-2,0,8"
                 Padding="6"
                 CornerRadius="10"
-                BorderBrush="{StaticResource EdgeHighlightBrush}"
+                BorderBrush="#22475A73"
                 BorderThickness="1"
-                Background="{StaticResource PanelBackgroundBrush}"
+                Background="#1A0F172A"
                 Panel.ZIndex="1">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -446,7 +585,7 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Row="1" Panel.ZIndex="1">
+            <Grid Grid.Row="2" Panel.ZIndex="1">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition x:Name="LeftMainColumn" Width="1.7*" MinWidth="300" />
                     <ColumnDefinition x:Name="MiddleSplitterColumn" Width="4" />
@@ -487,7 +626,7 @@
                                     Click="ClearReceiveButton_Click" />
 
                                     <StackPanel DockPanel.Dock="Left">
-                                        <WrapPanel Orientation="Horizontal">
+                                        <WrapPanel Orientation="Horizontal" ItemHeight="28">
                                             <TextBlock Margin="3,0"
                                                VerticalAlignment="Center"
                                                FontWeight="SemiBold"
@@ -510,29 +649,11 @@
                                               Content="时间戳"
                                               Checked="ReceiveTimestampCheckBox_Changed"
                                               Unchecked="ReceiveTimestampCheckBox_Changed" />
-                                        </WrapPanel>
-
-                                        <WrapPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                            <TextBlock Margin="3,0"
-                                               VerticalAlignment="Center"
-                                               FontWeight="SemiBold"
-                                               Text="文本空闲Flush(ms)" />
-                                            <TextBox x:Name="RxTextIdleFlushTextBox"
-                                                 Width="70"
-                                                 Text="90"
-                                                 VerticalContentAlignment="Center"
-                                                 LostFocus="RxTuneTextBox_LostFocus"
-                                                 PreviewKeyDown="RxTuneTextBox_PreviewKeyDown" />
-                                            <TextBlock Margin="10,0,0,0"
-                                               VerticalAlignment="Center"
-                                               FontWeight="SemiBold"
-                                               Text="Chunk间隔阈值(ms)" />
-                                            <TextBox x:Name="RxChunkGapThresholdTextBox"
-                                                 Width="70"
-                                                 Text="28"
-                                                 VerticalContentAlignment="Center"
-                                                 LostFocus="RxTuneTextBox_LostFocus"
-                                                 PreviewKeyDown="RxTuneTextBox_PreviewKeyDown" />
+                                            <Button x:Name="AdvancedRxSettingsButton"
+                                                Margin="10,0,0,0"
+                                                Padding="10,3"
+                                                Content="高级参数"
+                                                Click="AdvancedRxSettingsButton_Click" />
                                         </WrapPanel>
                                     </StackPanel>
                                 </DockPanel>
@@ -543,7 +664,11 @@
                                      VerticalScrollBarVisibility="Auto"
                                      HorizontalScrollBarVisibility="Auto"
                                      FontFamily="Consolas"
-                                     FontSize="13" />
+                                     FontSize="13">
+                                    <RichTextBox.Resources>
+                                        <Style TargetType="ScrollBar" BasedOn="{StaticResource RxScrollBarStyle}" />
+                                    </RichTextBox.Resources>
+                                </RichTextBox>
                             </Grid>
                         </GroupBox>
                     </ContentControl>
@@ -572,7 +697,7 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" />
                                     <RowDefinition Height="0" />
-                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="0" />
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
@@ -602,11 +727,15 @@
                              TextWrapping="Wrap"
                              VerticalScrollBarVisibility="Auto"
                              FontFamily="Consolas"
-                             FontSize="13" />
+                             FontSize="13">
+                                    <TextBox.Resources>
+                                        <Style TargetType="ScrollBar" BasedOn="{StaticResource RxScrollBarStyle}" />
+                                    </TextBox.Resources>
+                                </TextBox>
 
                                 <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="6,4,6,2" VerticalAlignment="Center"/>
 
-                                <Grid Grid.Row="3" Margin="3,2,3,2">
+                                <Grid Grid.Row="3" Margin="3,2,3,2" Visibility="Collapsed">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
@@ -625,7 +754,7 @@
                                 Orientation="Horizontal"
                                 HorizontalAlignment="Right">
                                     <Button Content="发送文本/命令" Click="SendButton_Click" />
-                                    <Button Content="发送文件" Background="#00A870" Click="SendFileButton_Click" />
+                                    <Button Content="文件发送..." Background="#00A870" Click="SendFileButton_Click" />
                                 </StackPanel>
                             </Grid>
                         </GroupBox>
@@ -717,7 +846,7 @@
                 </Grid>
             </Grid>
 
-            <Border Grid.Row="2"
+            <Border Grid.Row="3"
                 Padding="8,6"
                 CornerRadius="8"
                 BorderBrush="{StaticResource EdgeHighlightBrush}"
@@ -742,7 +871,7 @@
             </Border>
 
             <Border x:Name="ToastHost"
-                    Grid.RowSpan="3"
+                    Grid.RowSpan="4"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Top"
                     Margin="0,6,4,0"

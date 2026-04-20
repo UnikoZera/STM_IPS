@@ -352,7 +352,7 @@ void lcd_screen_update_dma()
 		(g_usb_controller.tx_remain_len == 0U) &&
 		(g_usb_controller.tx_pending_len == 0U))
 	{
-		usb_controller_send(&g_usb_controller, (uint8_t *)lcd_frame_ptr, LCD_W * LCD_H * 2 + SEND_TAIL);
+		usb_controller_send(&g_usb_controller, 0xA0U, (uint8_t *)lcd_frame_ptr, LCD_W * LCD_H * 2 + SEND_TAIL);
 		s_lcd_last_usb_stream_tick = now_tick;
 	}
 #endif

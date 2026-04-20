@@ -121,12 +121,12 @@ int main(void)
     {
       if (cache[0] == 0x01U) // 测试命令：如果接收到的第一个字节是0x01，就返回固定文本
       {
-        usb_controller_send(&g_usb_controller, (uint8_t *)"Command received", 16);
+        usb_controller_send(&g_usb_controller, 0x01U, (uint8_t *)"Command received", 16);
       }
       else
       {
         // 默认回显，便于验证TX/RX链路都正常
-        usb_controller_send(&g_usb_controller, cache, rx_len);
+        usb_controller_send(&g_usb_controller, 0x02U, cache, rx_len);
       }
     }
 

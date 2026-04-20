@@ -33,6 +33,13 @@ namespace lcd_host
         private const int MaxUiLogBlocks = 400;
         private const int RxLogChunkChars = 4096;
         private const int RxAssembleHexMaxLatencyMs = 120;
+        private const int RxPacketHeaderBytes = 5;
+        private const int RxPacketPayloadMaxBytes = 512 * 1024;
+        private const int RxPacketStreamCapacity = 1024 * 1024;
+        private const int FrameDropNoticeIntervalMs = 5000;
+        private const byte RxPacketHead0 = 0xAA;
+        private const byte RxPacketHead1 = 0x55;
+        private const byte RxCommandFrameParse = 0xA0;
         private const int DefaultRxAssembleTextIdleFlushMs = 90;
         private const int DefaultRxAssembleTextChunkGapBoundaryMs = 28;
         private const int MinRxTuneMs = 1;
@@ -98,11 +105,17 @@ namespace lcd_host
         private const int MaxPendingTxRequests = 512;
         private readonly object _rxAssembleLock = new();
         private readonly StringBuilder _rxAssembleBuffer = new();
+        private readonly List<byte> _rxPacketStream = [];
+        private readonly object _rxPacketLock = new();
         private int _rxAssembleBytes;
         private bool _rxAssembleHexMode;
         private long _lastRxAssembleFlushTick;
         private long _lastRxAssembleAppendTick;
         private int _logScrollThrottleCounter;
+        private long _lastFrameDropNoticeTick;
+        private int _droppedFramePacketCount;
+        private int _droppedFrameBytes;
+        private bool _showFrameDropNotice = true;
         private int _rxTextIdleFlushMs = DefaultRxAssembleTextIdleFlushMs;
         private int _rxTextChunkGapBoundaryMs = DefaultRxAssembleTextChunkGapBoundaryMs;
         private bool _enableUiAnimations = true;
@@ -123,8 +136,6 @@ namespace lcd_host
         private CheckBox RtsEnableCheckBoxCtl => (CheckBox)FindName("RtsEnableCheckBox")!;
         private CheckBox EnableLcdDecodeCheckBoxCtl => (CheckBox)FindName("EnableLcdDecodeCheckBox")!;
         private CheckBox ReceiveTimestampCheckBoxCtl => (CheckBox)FindName("ReceiveTimestampCheckBox")!;
-        private TextBox RxTextIdleFlushTextBoxCtl => (TextBox)FindName("RxTextIdleFlushTextBox")!;
-        private TextBox RxChunkGapThresholdTextBoxCtl => (TextBox)FindName("RxChunkGapThresholdTextBox")!;
         private CheckBox EnableUiAnimationCheckBoxCtl => (CheckBox)FindName("EnableUiAnimationCheckBox")!;
         private Button OpenButtonCtl => (Button)FindName("OpenButton")!;
         private Button CloseButtonCtl => (Button)FindName("CloseButton")!;
@@ -159,6 +170,7 @@ namespace lcd_host
         private TranslateTransform ToastTranslateCtl => (TranslateTransform)FindName("ToastTranslate")!;
         private Border RootFrameBorderCtl => (Border)FindName("RootFrameBorder")!;
         private TranslateTransform RootFrameTranslateCtl => (TranslateTransform)FindName("RootFrameTranslate")!;
+        private Button MainMaxRestoreButtonCtl => (Button)FindName("MainMaxRestoreButton")!;
 
         public MainWindow()
         {
@@ -194,25 +206,239 @@ namespace lcd_host
             _rxTextIdleFlushMs = DefaultRxAssembleTextIdleFlushMs;
             _rxTextChunkGapBoundaryMs = DefaultRxAssembleTextChunkGapBoundaryMs;
             _enableUiAnimations = EnableUiAnimationCheckBoxCtl.IsChecked != false;
-            RxTextIdleFlushTextBoxCtl.Text = _rxTextIdleFlushMs.ToString();
-            RxChunkGapThresholdTextBoxCtl.Text = _rxTextChunkGapBoundaryMs.ToString();
+            _showFrameDropNotice = true;
             EnableUiAnimationCheckBoxCtl.IsChecked = _enableUiAnimations;
         }
 
-        private void RxTuneTextBox_LostFocus(object sender, RoutedEventArgs e)
+        private void AdvancedRxSettingsButton_Click(object sender, RoutedEventArgs e)
         {
-            ApplyPerformanceTuningInputs(showToast: false);
+            AnimateUserAction(sender as UIElement);
+            ShowAdvancedRxSettingsDialog();
         }
 
-        private void RxTuneTextBox_PreviewKeyDown(object sender, KeyEventArgs e)
+        private void ShowAdvancedRxSettingsDialog()
         {
-            if (e.Key != Key.Enter)
+            var idleTextBox = new TextBox
+            {
+                Width = 120,
+                Text = _rxTextIdleFlushMs.ToString(),
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            var gapTextBox = new TextBox
+            {
+                Width = 120,
+                Text = _rxTextChunkGapBoundaryMs.ToString(),
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            var dropNoticeCheckBox = new CheckBox
+            {
+                Content = "提示 A0 丢弃（5s 一次）",
+                IsChecked = _showFrameDropNotice,
+                Margin = new Thickness(0, 0, 0, 14),
+                Foreground = Brushes.White
+            };
+
+            var resetButton = new Button
+            {
+                Content = "回到默认",
+                Width = 90,
+                Margin = new Thickness(0, 0, 8, 0),
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#475569")!)
+            };
+            var applyButton = new Button
+            {
+                Content = "应用",
+                Width = 86,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            var cancelButton = new Button
+            {
+                Content = "取消",
+                Width = 86,
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#64748B")!)
+            };
+
+            var dialog = new Window
+            {
+                Owner = this,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ResizeMode = ResizeMode.NoResize,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                MinWidth = 360,
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
+                ShowInTaskbar = false,
+                Background = Brushes.Transparent,
+                Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E2E8F0")!)
+            };
+
+            dialog.Content = new Border
+                {
+                    CornerRadius = new CornerRadius(12),
+                    BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2234475A")!),
+                    BorderThickness = new Thickness(1),
+                    Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0F172A")!),
+                    Child = new StackPanel
+                    {
+                        Children =
+                        {
+                            CreatePopupTitleBar(dialog, "RX 高级参数"),
+                            new StackPanel
+                            {
+                                Margin = new Thickness(16),
+                                Children =
+                                {
+                                    new TextBlock { Text = "文本空闲 Flush (ms)", Margin = new Thickness(0, 0, 0, 4), FontWeight = FontWeights.SemiBold, Foreground = Brushes.White },
+                                    idleTextBox,
+                                    new TextBlock { Text = "Chunk 间隔阈值 (ms)", Margin = new Thickness(0, 0, 0, 4), FontWeight = FontWeights.SemiBold, Foreground = Brushes.White },
+                                    gapTextBox,
+                                    dropNoticeCheckBox,
+                                    new StackPanel
+                                    {
+                                        Orientation = Orientation.Horizontal,
+                                        HorizontalAlignment = HorizontalAlignment.Right,
+                                        Children = { resetButton, applyButton, cancelButton }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+            dialog.MouseLeftButtonDown += (_, args) =>
+            {
+                if (args.LeftButton == MouseButtonState.Pressed)
+                {
+                    dialog.DragMove();
+                }
+            };
+
+            resetButton.Click += (_, _) =>
+            {
+                idleTextBox.Text = DefaultRxAssembleTextIdleFlushMs.ToString();
+                gapTextBox.Text = DefaultRxAssembleTextChunkGapBoundaryMs.ToString();
+                dropNoticeCheckBox.IsChecked = true;
+            };
+
+            applyButton.Click += (_, _) =>
+            {
+                _rxTextIdleFlushMs = ParseTuneMs(idleTextBox.Text, _rxTextIdleFlushMs);
+                _rxTextChunkGapBoundaryMs = ParseTuneMs(gapTextBox.Text, _rxTextChunkGapBoundaryMs);
+                _showFrameDropNotice = dropNoticeCheckBox.IsChecked == true;
+                if (!_showFrameDropNotice)
+                {
+                    Interlocked.Exchange(ref _droppedFramePacketCount, 0);
+                    Interlocked.Exchange(ref _droppedFrameBytes, 0);
+                }
+
+                ShowToast($"已应用高级参数：Idle={_rxTextIdleFlushMs}ms, Gap={_rxTextChunkGapBoundaryMs}ms");
+                dialog.DialogResult = true;
+                dialog.Close();
+            };
+
+            cancelButton.Click += (_, _) =>
+            {
+                dialog.DialogResult = false;
+                dialog.Close();
+            };
+
+            _ = dialog.ShowDialog();
+        }
+
+        private Border CreatePopupTitleBar(Window dialog, string title)
+        {
+            var titleText = new TextBlock
+            {
+                Text = title,
+                Foreground = Brushes.White,
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var minButton = new Button
+            {
+                Content = "—",
+                Style = (Style)FindResource("PopupTitleButtonStyle"),
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#334155")!)
+            };
+            var closeButton = new Button
+            {
+                Content = "✕",
+                Style = (Style)FindResource("PopupTitleButtonStyle"),
+                Margin = new Thickness(0),
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#BE123C")!)
+            };
+
+            minButton.Click += (_, _) => dialog.WindowState = WindowState.Minimized;
+            closeButton.Click += (_, _) => dialog.Close();
+
+            var titleGrid = new Grid();
+            titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            titleGrid.Children.Add(titleText);
+
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            actions.Children.Add(minButton);
+            actions.Children.Add(closeButton);
+            Grid.SetColumn(actions, 1);
+            titleGrid.Children.Add(actions);
+
+            return new Border
+            {
+                Padding = new Thickness(14, 10, 14, 8),
+                BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1F334155")!),
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0F172A")!),
+                Child = titleGrid
+            };
+        }
+
+        private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.LeftButton != MouseButtonState.Pressed)
             {
                 return;
             }
 
-            ApplyPerformanceTuningInputs(showToast: true);
-            e.Handled = true;
+            if (e.ClickCount == 2)
+            {
+                ToggleMainWindowState();
+                return;
+            }
+
+            DragMove();
+        }
+
+        private void MainMinimizeButton_Click(object sender, RoutedEventArgs e)
+        {
+            WindowState = WindowState.Minimized;
+        }
+
+        private void MainMaxRestoreButton_Click(object sender, RoutedEventArgs e)
+        {
+            ToggleMainWindowState();
+        }
+
+        private void MainCloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
+        }
+
+        private void Window_StateChanged(object sender, EventArgs e)
+        {
+            if (!IsLoaded)
+            {
+                return;
+            }
+
+            MainMaxRestoreButtonCtl.Content = WindowState == WindowState.Maximized ? "❐" : "▢";
+        }
+
+        private void ToggleMainWindowState()
+        {
+            WindowState = WindowState == WindowState.Maximized
+                ? WindowState.Normal
+                : WindowState.Maximized;
         }
 
         private void EnableUiAnimationCheckBox_Changed(object sender, RoutedEventArgs e)
@@ -220,23 +446,6 @@ namespace lcd_host
             AnimateUserAction(EnableUiAnimationCheckBoxCtl);
             _enableUiAnimations = EnableUiAnimationCheckBoxCtl.IsChecked != false;
             ShowToast(_enableUiAnimations ? "界面动画：开启" : "界面动画：关闭（性能优先）");
-        }
-
-        private void ApplyPerformanceTuningInputs(bool showToast)
-        {
-            var idleFlush = ParseTuneMs(RxTextIdleFlushTextBoxCtl.Text, _rxTextIdleFlushMs);
-            var chunkGap = ParseTuneMs(RxChunkGapThresholdTextBoxCtl.Text, _rxTextChunkGapBoundaryMs);
-
-            _rxTextIdleFlushMs = idleFlush;
-            _rxTextChunkGapBoundaryMs = chunkGap;
-
-            RxTextIdleFlushTextBoxCtl.Text = idleFlush.ToString();
-            RxChunkGapThresholdTextBoxCtl.Text = chunkGap.ToString();
-
-            if (showToast)
-            {
-                ShowToast($"参数已应用：Idle={idleFlush}ms, Gap={chunkGap}ms");
-            }
         }
 
         private static int ParseTuneMs(string? text, int fallback)
@@ -1191,31 +1400,178 @@ namespace lcd_host
 
         private void HandleIncomingBytes(byte[] buffer)
         {
-            var decodeEnabled = _lcdDecodeEnabled;
             var session = _lcdDecodeSession;
-            if (decodeEnabled)
+            List<RxPacket> packets = [];
+
+            lock (_rxPacketLock)
             {
-                FeedLcdBytes(buffer, session);
-                _lcdBytesCounter += buffer.Length;
-                var now = Environment.TickCount64;
-                if (now - _lastLcdStatsTick >= 1000)
+                if (buffer.Length > RxPacketStreamCapacity)
                 {
-                    var bytes = _lcdBytesCounter;
-                    _lcdBytesCounter = 0;
-                    _lastLcdStatsTick = now;
-                    _ = Dispatcher.InvokeAsync(() =>
+                    buffer = buffer[^RxPacketStreamCapacity..];
+                }
+
+                if (_rxPacketStream.Count + buffer.Length > RxPacketStreamCapacity)
+                {
+                    var keep = Math.Min(RxPacketHeaderBytes - 1, _rxPacketStream.Count);
+                    if (_rxPacketStream.Count > keep)
                     {
-                        if (_lcdDecodeEnabled && session == _lcdDecodeSession)
+                        _rxPacketStream.RemoveRange(0, _rxPacketStream.Count - keep);
+                    }
+                }
+
+                _rxPacketStream.AddRange(buffer);
+
+                while (_rxPacketStream.Count >= RxPacketHeaderBytes)
+                {
+                    var start = FindRxPacketStart(_rxPacketStream);
+                    if (start < 0)
+                    {
+                        var keep = Math.Min(RxPacketHeaderBytes - 1, _rxPacketStream.Count);
+                        if (_rxPacketStream.Count > keep)
                         {
-                            LcdSpeedTextBlockCtl.Text = $"速率：{bytes / 1024.0:F1} KB/s";
+                            _rxPacketStream.RemoveRange(0, _rxPacketStream.Count - keep);
                         }
-                    });
+
+                        break;
+                    }
+
+                    if (start > 0)
+                    {
+                        _rxPacketStream.RemoveRange(0, start);
+                    }
+
+                    if (_rxPacketStream.Count < RxPacketHeaderBytes)
+                    {
+                        break;
+                    }
+
+                    var command = _rxPacketStream[2];
+                    var payloadLength = _rxPacketStream[3] | (_rxPacketStream[4] << 8);
+                    if (payloadLength > RxPacketPayloadMaxBytes)
+                    {
+                        _rxPacketStream.RemoveAt(0);
+                        continue;
+                    }
+
+                    var packetBytes = RxPacketHeaderBytes + payloadLength;
+                    if (_rxPacketStream.Count < packetBytes)
+                    {
+                        break;
+                    }
+
+                    var payload = payloadLength == 0
+                        ? []
+                        : _rxPacketStream.GetRange(RxPacketHeaderBytes, payloadLength).ToArray();
+
+                    packets.Add(new RxPacket(command, payload));
+                    _rxPacketStream.RemoveRange(0, packetBytes);
+                }
+            }
+
+            foreach (var packet in packets)
+            {
+                ProcessRxPacket(packet, session);
+            }
+        }
+
+        private static int FindRxPacketStart(List<byte> stream)
+        {
+            for (var i = 0; i + RxPacketHeaderBytes <= stream.Count; i++)
+            {
+                if (stream[i] == RxPacketHead0 && stream[i + 1] == RxPacketHead1)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private void ProcessRxPacket(RxPacket packet, int session)
+        {
+            if (packet.Command == RxCommandFrameParse)
+            {
+                if (_lcdDecodeEnabled)
+                {
+                    FeedLcdBytes(packet.Payload, session);
+                    _lcdBytesCounter += packet.Payload.Length;
+                    var now = Environment.TickCount64;
+                    if (now - _lastLcdStatsTick >= 1000)
+                    {
+                        var bytes = _lcdBytesCounter;
+                        _lcdBytesCounter = 0;
+                        _lastLcdStatsTick = now;
+                        _ = Dispatcher.InvokeAsync(() =>
+                        {
+                            if (_lcdDecodeEnabled && session == _lcdDecodeSession)
+                            {
+                                LcdSpeedTextBlockCtl.Text = $"速率：{bytes / 1024.0:F1} KB/s";
+                            }
+                        });
+                    }
+                }
+                else
+                {
+                    RecordDroppedFramePacket(packet.Payload.Length);
                 }
 
                 return;
             }
 
-            AppendRxChunkAssembled(buffer);
+            if (packet.Payload.Length > 0)
+            {
+                AppendRxPacketLog(packet.Command, packet.Payload);
+            }
+        }
+
+        private void AppendRxPacketLog(byte command, byte[] payload)
+        {
+            if (Volatile.Read(ref _pendingLogCount) >= RxLogDropThreshold)
+            {
+                DropRxDataForRealtime(payload.Length);
+                return;
+            }
+
+            var prefix = $"[cmd:0x{command:X2}] ";
+            string text;
+            if (_receiveHexMode)
+            {
+                var sb = new StringBuilder(prefix.Length + payload.Length * 3 + 8);
+                sb.Append(prefix);
+                AppendHexChunk(sb, payload, false);
+                text = sb.ToString();
+            }
+            else
+            {
+                text = prefix + Encoding.ASCII.GetString(payload);
+            }
+
+            AppendRxLogWithBackpressure(text, payload.Length);
+        }
+
+        private void RecordDroppedFramePacket(int payloadLength)
+        {
+            if (!_showFrameDropNotice)
+            {
+                return;
+            }
+
+            Interlocked.Increment(ref _droppedFramePacketCount);
+            Interlocked.Add(ref _droppedFrameBytes, payloadLength);
+
+            var now = Environment.TickCount64;
+            if (now - Interlocked.Read(ref _lastFrameDropNoticeTick) < FrameDropNoticeIntervalMs)
+            {
+                return;
+            }
+
+            Interlocked.Exchange(ref _lastFrameDropNoticeTick, now);
+            var droppedPackets = Interlocked.Exchange(ref _droppedFramePacketCount, 0);
+            var droppedBytes = Interlocked.Exchange(ref _droppedFrameBytes, 0);
+            if (droppedPackets > 0)
+            {
+                AppendSystemLog($"已忽略 {droppedPackets} 条 0xA0 帧包（{droppedBytes} bytes），开启 LCD 解析可显示图像。");
+            }
         }
 
         private void AppendRxChunkAssembled(byte[] buffer)
@@ -1570,21 +1926,130 @@ namespace lcd_host
                 return;
             }
 
-            if (!TrySelectFile())
-            {
-                return;
-            }
+            ShowSendFileDialog();
+        }
 
-            try
+        private void ShowSendFileDialog()
+        {
+            var filePathTextBox = new TextBox
             {
-                var bytes = File.ReadAllBytes(_selectedFilePath!);
-                var fileName = Path.GetFileName(_selectedFilePath);
-                EnqueueTx(bytes, $"[file] {fileName} ({bytes.Length} bytes)");
-            }
-            catch (Exception ex)
+                IsReadOnly = true,
+                Text = string.IsNullOrWhiteSpace(_selectedFilePath) ? "(未选择文件)" : _selectedFilePath,
+                Margin = new Thickness(0, 0, 0, 10),
+                MinWidth = 420,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                TextWrapping = TextWrapping.NoWrap
+            };
+
+            var chooseButton = new Button
             {
-                MessageBox.Show($"发送文件失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
+                Content = "选择文件",
+                Width = 90,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            var sendButton = new Button
+            {
+                Content = "发送文件",
+                Width = 90,
+                Margin = new Thickness(0, 0, 8, 0),
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#00A870")!)
+            };
+            var closeButton = new Button
+            {
+                Content = "关闭",
+                Width = 90,
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#64748B")!)
+            };
+
+            var dialog = new Window
+            {
+                Owner = this,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ResizeMode = ResizeMode.NoResize,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                MinWidth = 560,
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
+                ShowInTaskbar = false,
+                Background = Brushes.Transparent,
+                Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E2E8F0")!)
+            };
+
+            dialog.Content = new Border
+                {
+                    CornerRadius = new CornerRadius(12),
+                    BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2234475A")!),
+                    BorderThickness = new Thickness(1),
+                    Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0F172A")!),
+                    Child = new StackPanel
+                    {
+                        Children =
+                        {
+                            CreatePopupTitleBar(dialog, "TX 文件发送"),
+                            new StackPanel
+                            {
+                                Margin = new Thickness(16),
+                                Children =
+                                {
+                                    new TextBlock { Text = "当前文件", Margin = new Thickness(0, 0, 0, 4), Foreground = Brushes.White, FontWeight = FontWeights.SemiBold },
+                                    filePathTextBox,
+                                    new StackPanel
+                                    {
+                                        Orientation = Orientation.Horizontal,
+                                        HorizontalAlignment = HorizontalAlignment.Right,
+                                        Children = { chooseButton, sendButton, closeButton }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+            dialog.MouseLeftButtonDown += (_, args) =>
+            {
+                if (args.LeftButton == MouseButtonState.Pressed)
+                {
+                    dialog.DragMove();
+                }
+            };
+
+            chooseButton.Click += (_, _) =>
+            {
+                if (TrySelectFile(forceOpenDialog: true))
+                {
+                    filePathTextBox.Text = _selectedFilePath ?? "(未选择文件)";
+                }
+            };
+
+            sendButton.Click += (_, _) =>
+            {
+                try
+                {
+                    if (!TrySelectFile())
+                    {
+                        return;
+                    }
+
+                    var bytes = File.ReadAllBytes(_selectedFilePath!);
+                    var fileName = Path.GetFileName(_selectedFilePath);
+                    EnqueueTx(bytes, $"[file] {fileName} ({bytes.Length} bytes)");
+                    dialog.DialogResult = true;
+                    dialog.Close();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"发送文件失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            };
+
+            closeButton.Click += (_, _) =>
+            {
+                dialog.DialogResult = false;
+                dialog.Close();
+            };
+
+            _ = dialog.ShowDialog();
         }
 
         private void EnqueueTx(byte[] bytes, string logText)
@@ -1636,70 +2101,12 @@ namespace lcd_host
 
         private void ShowToast(string message)
         {
-            if (string.IsNullOrWhiteSpace(message))
-            {
-                return;
-            }
-
-            if (_toastTimer is null)
-            {
-                return;
-            }
-
-            _toastTimer.Stop();
-            ToastTextBlockCtl.Text = message;
-            ToastHostCtl.Visibility = Visibility.Visible;
-            if (!_enableUiAnimations)
-            {
-                ToastHostCtl.Opacity = 1;
-                ToastTranslateCtl.X = 0;
-                _toastTimer.Start();
-                return;
-            }
-
-            ToastHostCtl.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160))
-            {
-                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
-            });
-            ToastTranslateCtl.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(24, 0, TimeSpan.FromMilliseconds(180))
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-            });
-            _toastTimer.Start();
+            return;
         }
 
         private void HideToast(bool animate)
         {
-            _toastTimer.Stop();
-
-            if (ToastHostCtl.Visibility != Visibility.Visible)
-            {
-                return;
-            }
-
-            if (!animate || !_enableUiAnimations)
-            {
-                ToastHostCtl.Visibility = Visibility.Collapsed;
-                ToastHostCtl.Opacity = 0;
-                ToastTranslateCtl.X = 24;
-                return;
-            }
-
-            var duration = TimeSpan.FromMilliseconds(160);
-            var fade = new DoubleAnimation(0, duration)
-            {
-                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn }
-            };
-            fade.Completed += (_, _) =>
-            {
-                ToastHostCtl.Visibility = Visibility.Collapsed;
-                ToastTranslateCtl.X = 24;
-            };
-            ToastHostCtl.BeginAnimation(OpacityProperty, fade);
-            ToastTranslateCtl.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0, 24, duration)
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
-            });
+            return;
         }
 
         private void ToastHost_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
@@ -1778,12 +2185,11 @@ namespace lcd_host
                 RtsEnableCheckBoxCtl.IsChecked = config.RtsEnable;
                 EnableLcdDecodeCheckBoxCtl.IsChecked = config.LcdDecodeEnabled;
                 ReceiveTimestampCheckBoxCtl.IsChecked = config.ReceiveTimestampEnabled;
+                _showFrameDropNotice = config.ShowFrameDropNotice;
                 EnableUiAnimationCheckBoxCtl.IsChecked = config.EnableUiAnimation;
                 _enableUiAnimations = config.EnableUiAnimation;
                 _rxTextIdleFlushMs = Math.Clamp(config.TextIdleFlushMs <= 0 ? DefaultRxAssembleTextIdleFlushMs : config.TextIdleFlushMs, MinRxTuneMs, MaxRxTuneMs);
                 _rxTextChunkGapBoundaryMs = Math.Clamp(config.ChunkGapThresholdMs <= 0 ? DefaultRxAssembleTextChunkGapBoundaryMs : config.ChunkGapThresholdMs, MinRxTuneMs, MaxRxTuneMs);
-                RxTextIdleFlushTextBoxCtl.Text = _rxTextIdleFlushMs.ToString();
-                RxChunkGapThresholdTextBoxCtl.Text = _rxTextChunkGapBoundaryMs.ToString();
 
                 SelectTextOption(ReceiveModeComboBoxCtl, config.ReceiveMode, "ABC");
                 SelectTextOption(SendModeComboBoxCtl, config.SendMode, "ABC");
@@ -1817,6 +2223,7 @@ namespace lcd_host
                     RtsEnable = RtsEnableCheckBoxCtl.IsChecked == true,
                     LcdDecodeEnabled = EnableLcdDecodeCheckBoxCtl.IsChecked == true,
                     ReceiveTimestampEnabled = ReceiveTimestampCheckBoxCtl.IsChecked == true,
+                    ShowFrameDropNotice = _showFrameDropNotice,
                     EnableUiAnimation = EnableUiAnimationCheckBoxCtl.IsChecked != false,
                     TextIdleFlushMs = _rxTextIdleFlushMs,
                     ChunkGapThresholdMs = _rxTextChunkGapBoundaryMs,
@@ -2079,6 +2486,7 @@ namespace lcd_host
             public bool RtsEnable { get; set; } = true;
             public bool LcdDecodeEnabled { get; set; }
             public bool ReceiveTimestampEnabled { get; set; } = true;
+            public bool ShowFrameDropNotice { get; set; } = true;
             public bool EnableUiAnimation { get; set; } = true;
             public int TextIdleFlushMs { get; set; } = DefaultRxAssembleTextIdleFlushMs;
             public int ChunkGapThresholdMs { get; set; } = DefaultRxAssembleTextChunkGapBoundaryMs;
@@ -2100,6 +2508,12 @@ namespace lcd_host
         {
             public byte[] Bytes { get; } = bytes;
             public string LogText { get; } = logText;
+        }
+
+        private readonly struct RxPacket(byte command, byte[] payload)
+        {
+            public byte Command { get; } = command;
+            public byte[] Payload { get; } = payload;
         }
 
         private static SolidColorBrush CreateFrozenBrush(string hex)

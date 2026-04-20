@@ -21,16 +21,47 @@ static uint16_t usb_min_u16(uint16_t a, uint16_t b)
     return (a < b) ? a : b;
 }
 
+static void usb_clear_tx_protocol_payload(usb_controller_t *controller)
+{
+    controller->tx_protocol_payload_ptr = NULL;
+    controller->tx_protocol_payload_len = 0U;
+    controller->tx_protocol_payload_pending = false;
+}
+
 static void usb_clear_tx_queue(usb_controller_t *controller)
 {
     controller->tx_tail_ptr = NULL;
     controller->tx_remain_len = 0U;
+    usb_clear_tx_protocol_payload(controller);
 }
 
 static void usb_clear_tx_pending(usb_controller_t *controller)
 {
     controller->tx_pending_ptr = NULL;
     controller->tx_pending_len = 0U;
+    controller->tx_pending_cmd = 0U;
+}
+
+static bool usb_prepare_protocol_tx(usb_controller_t *controller, uint8_t cmd, const uint8_t *payload, uint16_t payload_len)
+{
+    if ((controller == NULL) || (payload == NULL) || (payload_len == 0U))
+    {
+        return false;
+    }
+
+    controller->tx_header[0] = USB_PROTOCOL_HEAD_BYTE0;
+    controller->tx_header[1] = USB_PROTOCOL_HEAD_BYTE1;
+    controller->tx_header[2] = cmd;
+    controller->tx_header[3] = (uint8_t)(payload_len & 0xFFU);
+    controller->tx_header[4] = (uint8_t)(payload_len >> 8); // 小端长度字段
+
+    controller->tx_tail_ptr = controller->tx_header;
+    controller->tx_remain_len = USB_PROTOCOL_HEADER_SIZE;
+    controller->tx_protocol_payload_ptr = payload;
+    controller->tx_protocol_payload_len = payload_len;
+    controller->tx_protocol_payload_pending = true;
+
+    return true;
 }
 
 static void usb_reset_tx_state(usb_controller_t *controller, bool clear_pending)
@@ -58,8 +89,12 @@ static bool usb_load_pending_as_active(usb_controller_t *controller)
         return false;
     }
 
-    controller->tx_tail_ptr = controller->tx_pending_ptr;
-    controller->tx_remain_len = controller->tx_pending_len;
+    if (!usb_prepare_protocol_tx(controller, controller->tx_pending_cmd, controller->tx_pending_ptr, controller->tx_pending_len))
+    {
+        usb_clear_tx_pending(controller);
+        return false;
+    }
+
     usb_clear_tx_pending(controller);
     return true;
 }
@@ -110,7 +145,19 @@ static uint8_t usb_start_tx_chunk(usb_controller_t *controller)
         controller->tx_remain_len = (uint16_t)(controller->tx_remain_len - tx_len);
         if (controller->tx_remain_len == 0U)
         {
-            controller->tx_tail_ptr = NULL;
+            if (controller->tx_protocol_payload_pending &&
+                (controller->tx_protocol_payload_ptr != NULL) &&
+                (controller->tx_protocol_payload_len > 0U))
+            {
+                controller->tx_tail_ptr = controller->tx_protocol_payload_ptr;
+                controller->tx_remain_len = controller->tx_protocol_payload_len;
+            }
+            else
+            {
+                controller->tx_tail_ptr = NULL;
+            }
+
+            usb_clear_tx_protocol_payload(controller);
         }
 
         return USBD_OK;
@@ -239,6 +286,10 @@ void usb_controller_init(usb_controller_t *controller)
     controller->tx_remain_len = 0U;
     controller->tx_pending_ptr = NULL;
     controller->tx_pending_len = 0U;
+    controller->tx_pending_cmd = 0U;
+    controller->tx_protocol_payload_ptr = NULL;
+    controller->tx_protocol_payload_len = 0U;
+    controller->tx_protocol_payload_pending = false;
     controller->rx_head = 0U;
     controller->rx_tail = 0U;
 }
@@ -318,7 +369,7 @@ void usb_controller_task(usb_controller_t *controller)
     }
 }
 
-usb_send_status_t usb_controller_send(usb_controller_t *controller, const uint8_t *buf, uint16_t len)
+usb_send_status_t usb_controller_send(usb_controller_t *controller, uint8_t cmd, const uint8_t *buf, uint16_t len)
 {
     uint8_t tx_result;
 
@@ -333,20 +384,24 @@ usb_send_status_t usb_controller_send(usb_controller_t *controller, const uint8_
         {
             controller->tx_pending_ptr = buf;
             controller->tx_pending_len = len;
+            controller->tx_pending_cmd = cmd;
             return USB_SEND_QUEUED;
         }
         else if (len <= controller->tx_pending_len)
         {
             controller->tx_pending_ptr = buf;
             controller->tx_pending_len = len;
+            controller->tx_pending_cmd = cmd;
             return USB_SEND_DROPPED_PREVIOUS;
         }
         return USB_SEND_BUSY_REJECTED; // safe check.
     }
 
     usb_clear_tx_pending(controller);
-    controller->tx_tail_ptr = buf;
-    controller->tx_remain_len = len;
+    if (!usb_prepare_protocol_tx(controller, cmd, buf, len))
+    {
+        return USB_SEND_BUSY_REJECTED;
+    }
 
     tx_result = usb_start_tx_chunk(controller);
     if (tx_result == USBD_BUSY)
