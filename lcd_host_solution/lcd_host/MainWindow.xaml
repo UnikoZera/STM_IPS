@@ -25,7 +25,7 @@
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="0"
                             ResizeBorderThickness="6"
-                            CornerRadius="12,12,0,0"
+                            CornerRadius="12"
                             GlassFrameThickness="0"
                             UseAeroCaptionButtons="False" />
     </shell:WindowChrome.WindowChrome>
@@ -263,6 +263,21 @@
             <Setter Property="Background" Value="White" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Padding" Value="6,5" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="ItemBorder"
+                                Margin="2,1"
+                                Padding="{TemplateBinding Padding}"
+                                CornerRadius="6"
+                                Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Stretch"
+                                              VerticalAlignment="Center"
+                                              SnapsToDevicePixels="True" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
             <Style.Triggers>
                 <Trigger Property="IsHighlighted" Value="True">
                     <Setter Property="Background" Value="#1E40AF" />
@@ -336,6 +351,29 @@
             <Setter Property="FontSize" Value="11" />
             <Setter Property="Background" Value="#2234475A" />
             <Setter Property="BorderBrush" Value="#00000000" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#334155" />
+                    <Setter Property="BorderBrush" Value="#475569" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="#1E293B" />
+                    <Setter Property="BorderBrush" Value="#475569" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="TitleBarCloseButtonStyle" TargetType="Button" BasedOn="{StaticResource TitleBarButtonStyle}">
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#BE123C" />
+                    <Setter Property="BorderBrush" Value="#E11D48" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="#9F1239" />
+                    <Setter Property="BorderBrush" Value="#BE123C" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <Style x:Key="PopupTitleButtonStyle" TargetType="Button" BasedOn="{StaticResource TitleBarButtonStyle}">
@@ -343,6 +381,43 @@
             <Setter Property="Height" Value="24" />
             <Setter Property="Margin" Value="0,0,4,0" />
             <Setter Property="Background" Value="#334155" />
+        </Style>
+
+        <Style x:Key="PopupTitleCloseButtonStyle" TargetType="Button" BasedOn="{StaticResource PopupTitleButtonStyle}">
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#BE123C" />
+                    <Setter Property="BorderBrush" Value="#E11D48" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="#9F1239" />
+                    <Setter Property="BorderBrush" Value="#BE123C" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="OpenSerialButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="#16A34A" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#64748B" />
+                    <Setter Property="Foreground" Value="#CBD5E1" />
+                    <Setter Property="BorderBrush" Value="#475569" />
+                    <Setter Property="Cursor" Value="Arrow" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="CloseSerialButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="#EF4444" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#64748B" />
+                    <Setter Property="Foreground" Value="#CBD5E1" />
+                    <Setter Property="BorderBrush" Value="#475569" />
+                    <Setter Property="Cursor" Value="Arrow" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <Style x:Key="RxScrollThumbStyle" TargetType="Thumb">
@@ -405,16 +480,16 @@
     </Window.Resources>
 
     <Border x:Name="RootFrameBorder"
-            Margin="8"
-            Padding="4"
-            CornerRadius="16,16,10,10"
+            Margin="0"
+            Padding="0"
+            CornerRadius="12"
             BorderThickness="1"
             BorderBrush="#2A334155"
             Background="#120F172A">
         <Border.RenderTransform>
             <TranslateTransform x:Name="RootFrameTranslate" />
         </Border.RenderTransform>
-        <Grid Margin="10">
+        <Grid Margin="4">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -424,7 +499,7 @@
 
             <Border Grid.RowSpan="4"
                     Margin="0"
-                    CornerRadius="12"
+                    CornerRadius="11"
                     Background="{StaticResource GlassSheenBrush}"
                     BorderBrush="#1CF8FAFC"
                     BorderThickness="1"
@@ -461,8 +536,7 @@
                                 Content="▢"
                                 Click="MainMaxRestoreButton_Click" />
                         <Button x:Name="MainCloseButton"
-                                Style="{StaticResource TitleBarButtonStyle}"
-                                Background="#BE123C"
+                                Style="{StaticResource TitleBarCloseButtonStyle}"
                                 Content="✕"
                                 Click="MainCloseButton_Click" />
                     </StackPanel>
@@ -565,10 +639,10 @@
 
                         <WrapPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                             <Button x:Name="RefreshButton" Content="刷新端口" Click="RefreshButton_Click" />
-                            <Button x:Name="OpenButton" Content="打开串口" Click="OpenButton_Click" />
+                            <Button x:Name="OpenButton" Style="{StaticResource OpenSerialButtonStyle}" Content="打开串口" Click="OpenButton_Click" />
                             <Button x:Name="CloseButton"
+                                    Style="{StaticResource CloseSerialButtonStyle}"
                                     Content="关闭串口"
-                                    Background="#F15E5E"
                                     Click="CloseButton_Click" />
                         </WrapPanel>
 
@@ -618,48 +692,58 @@
                                     <RowDefinition Height="*" />
                                 </Grid.RowDefinitions>
 
-                                <DockPanel Grid.Row="0" Margin="0,0,0,6">
-                                    <Button DockPanel.Dock="Right"
-                                    HorizontalAlignment="Right"
-                                    Content="清空接收"
-                                    Background="#64748B"
-                                    Click="ClearReceiveButton_Click" />
+                                <Grid Grid.Row="0" Margin="0,0,0,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
 
-                                    <StackPanel DockPanel.Dock="Left">
-                                        <WrapPanel Orientation="Horizontal" ItemHeight="28">
-                                            <TextBlock Margin="3,0"
-                                               VerticalAlignment="Center"
-                                               FontWeight="SemiBold"
-                                               Text="显示编码" />
-                                            <ComboBox x:Name="ReceiveModeComboBox" Width="120" SelectionChanged="ReceiveModeComboBox_SelectionChanged">
-                                                <ComboBoxItem Content="ABC" IsSelected="True" />
-                                                <ComboBoxItem Content="HEX" />
-                                            </ComboBox>
-                                            <CheckBox x:Name="EnableLcdDecodeCheckBox"
-                                              Margin="8,0,0,0"
-                                              IsChecked="False"
-                                              VerticalAlignment="Center"
-                                              Content="启用LCD帧解析"
-                                              Checked="EnableLcdDecodeCheckBox_Changed"
-                                              Unchecked="EnableLcdDecodeCheckBox_Changed" />
-                                            <CheckBox x:Name="ReceiveTimestampCheckBox"
-                                              Margin="8,0,0,0"
-                                              IsChecked="True"
-                                              VerticalAlignment="Center"
-                                              Content="时间戳"
-                                              Checked="ReceiveTimestampCheckBox_Changed"
-                                              Unchecked="ReceiveTimestampCheckBox_Changed" />
-                                            <Button x:Name="AdvancedRxSettingsButton"
+                                    <WrapPanel Grid.Column="0" Orientation="Horizontal" ItemHeight="28" VerticalAlignment="Center">
+                                        <TextBlock Margin="3,0"
+                                                   VerticalAlignment="Center"
+                                                   FontWeight="SemiBold"
+                                                   Text="显示编码" />
+                                        <ComboBox x:Name="ReceiveModeComboBox" Width="120" SelectionChanged="ReceiveModeComboBox_SelectionChanged">
+                                            <ComboBoxItem Content="ABC" IsSelected="True" />
+                                            <ComboBoxItem Content="HEX" />
+                                        </ComboBox>
+                                        <CheckBox x:Name="EnableLcdDecodeCheckBox"
+                                                  Margin="8,0,0,0"
+                                                  IsChecked="False"
+                                                  VerticalAlignment="Center"
+                                                  Content="启用LCD帧解析"
+                                                  Checked="EnableLcdDecodeCheckBox_Changed"
+                                                  Unchecked="EnableLcdDecodeCheckBox_Changed" />
+                                        <CheckBox x:Name="ReceiveTimestampCheckBox"
+                                                  Margin="8,0,0,0"
+                                                  IsChecked="True"
+                                                  VerticalAlignment="Center"
+                                                  Content="时间戳"
+                                                  Checked="ReceiveTimestampCheckBox_Changed"
+                                                  Unchecked="ReceiveTimestampCheckBox_Changed" />
+                                        <Button x:Name="AdvancedRxSettingsButton"
                                                 Margin="10,0,0,0"
                                                 Padding="10,3"
                                                 Content="高级参数"
                                                 Click="AdvancedRxSettingsButton_Click" />
-                                        </WrapPanel>
-                                    </StackPanel>
-                                </DockPanel>
+                                    </WrapPanel>
+
+                                    <Button Grid.Column="1"
+                                            x:Name="ClearReceiveButton"
+                                            HorizontalAlignment="Right"
+                                            VerticalAlignment="Top"
+                                            Margin="10,0,0,0"
+                                            MinWidth="86"
+                                            Padding="12,4"
+                                            Content="清空接收"
+                                            Background="#475569"
+                                            BorderBrush="#64748B"
+                                            Click="ClearReceiveButton_Click" />
+                                </Grid>
 
                                 <RichTextBox x:Name="ReceiveRichTextBox"
                                      Grid.Row="1"
+                                       Margin="0,1,0,0"
                                      IsReadOnly="True"
                                      VerticalScrollBarVisibility="Auto"
                                      HorizontalScrollBarVisibility="Auto"
@@ -815,12 +899,6 @@
                                                Stretch="Fill"
                                                SnapsToDevicePixels="True" />
                                             </Viewbox>
-                                            <Border Margin="10"
-                                                    VerticalAlignment="Top"
-                                                    Height="12"
-                                                    CornerRadius="6"
-                                                    Background="#26E2E8F0"
-                                                    IsHitTestVisible="False" />
                                         </Grid>
                                     </Border>
                                 </Border>

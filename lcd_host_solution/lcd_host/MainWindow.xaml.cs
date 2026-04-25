@@ -13,6 +13,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -119,6 +120,9 @@ namespace lcd_host
         private int _rxTextIdleFlushMs = DefaultRxAssembleTextIdleFlushMs;
         private int _rxTextChunkGapBoundaryMs = DefaultRxAssembleTextChunkGapBoundaryMs;
         private bool _enableUiAnimations = true;
+        private bool _allowWindowClose;
+        private bool _isWindowCloseAnimationRunning;
+        private bool _isWindowShutdownCompleted;
 
         private ComboBox PortComboBoxCtl => (ComboBox)FindName("PortComboBox")!;
         private ComboBox BaudRateComboBoxCtl => (ComboBox)FindName("BaudRateComboBox")!;
@@ -175,6 +179,7 @@ namespace lcd_host
         public MainWindow()
         {
             InitializeComponent();
+            ApplyApplicationIcon();
             _logFlushTimer = new DispatcherTimer(DispatcherPriority.Background)
             {
                 Interval = TimeSpan.FromMilliseconds(33)
@@ -271,6 +276,7 @@ namespace lcd_host
                 Background = Brushes.Transparent,
                 Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E2E8F0")!)
             };
+            ConfigureChildDialogWindow(dialog);
 
             dialog.Content = new Border
                 {
@@ -304,14 +310,6 @@ namespace lcd_host
                         }
                     }
                 };
-
-            dialog.MouseLeftButtonDown += (_, args) =>
-            {
-                if (args.LeftButton == MouseButtonState.Pressed)
-                {
-                    dialog.DragMove();
-                }
-            };
 
             resetButton.Click += (_, _) =>
             {
@@ -364,9 +362,8 @@ namespace lcd_host
             var closeButton = new Button
             {
                 Content = "✕",
-                Style = (Style)FindResource("PopupTitleButtonStyle"),
-                Margin = new Thickness(0),
-                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#BE123C")!)
+                Style = (Style)FindResource("PopupTitleCloseButtonStyle"),
+                Margin = new Thickness(0)
             };
 
             minButton.Click += (_, _) => dialog.WindowState = WindowState.Minimized;
@@ -388,8 +385,57 @@ namespace lcd_host
                 Padding = new Thickness(14, 10, 14, 8),
                 BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1F334155")!),
                 BorderThickness = new Thickness(0, 0, 0, 1),
+                CornerRadius = new CornerRadius(12, 12, 0, 0),
                 Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0F172A")!),
                 Child = titleGrid
+            };
+        }
+
+        private void ConfigureChildDialogWindow(Window dialog)
+        {
+            dialog.RenderTransform = new TranslateTransform();
+            if (_enableUiAnimations)
+            {
+                dialog.Opacity = 0;
+                ((TranslateTransform)dialog.RenderTransform).Y = 10;
+            }
+
+            var allowDialogClose = false;
+            var isDialogCloseAnimating = false;
+            var entrancePlayed = false;
+
+            dialog.Loaded += (_, _) =>
+            {
+                if (entrancePlayed)
+                {
+                    return;
+                }
+
+                entrancePlayed = true;
+                PlayChildWindowEntranceAnimation(dialog);
+            };
+            dialog.Closing += (_, args) =>
+            {
+                if (!_enableUiAnimations || allowDialogClose || isDialogCloseAnimating)
+                {
+                    return;
+                }
+
+                args.Cancel = true;
+                isDialogCloseAnimating = true;
+                PlayChildWindowExitAnimation(dialog, () =>
+                {
+                    allowDialogClose = true;
+                    dialog.Close();
+                });
+            };
+
+            dialog.MouseLeftButtonDown += (_, args) =>
+            {
+                if (args.LeftButton == MouseButtonState.Pressed)
+                {
+                    dialog.DragMove();
+                }
             };
         }
 
@@ -421,6 +467,7 @@ namespace lcd_host
 
         private void MainCloseButton_Click(object sender, RoutedEventArgs e)
         {
+            AnimateUserAction(sender as UIElement);
             Close();
         }
 
@@ -432,6 +479,7 @@ namespace lcd_host
             }
 
             MainMaxRestoreButtonCtl.Content = WindowState == WindowState.Maximized ? "❐" : "▢";
+            UpdateRootFrameByWindowState();
         }
 
         private void ToggleMainWindowState()
@@ -496,8 +544,34 @@ namespace lcd_host
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
+            UpdateRootFrameByWindowState();
             PlayWindowEntranceAnimation();
             RefreshPorts();
+        }
+
+        private void ApplyApplicationIcon()
+        {
+            try
+            {
+                Icon = Imaging.CreateBitmapSourceFromHIcon(System.Drawing.SystemIcons.Application.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
+        private void UpdateRootFrameByWindowState()
+        {
+            if (WindowState == WindowState.Maximized)
+            {
+                RootFrameBorderCtl.Margin = new Thickness(7);
+                RootFrameBorderCtl.CornerRadius = new CornerRadius(0);
+                return;
+            }
+
+            RootFrameBorderCtl.Margin = new Thickness(0);
+            RootFrameBorderCtl.CornerRadius = new CornerRadius(12);
         }
 
         private void PlayWindowEntranceAnimation()
@@ -524,8 +598,99 @@ namespace lcd_host
             });
         }
 
+        private void PlayWindowExitAnimation(Action onCompleted)
+        {
+            if (!_enableUiAnimations)
+            {
+                onCompleted();
+                return;
+            }
+
+            var duration = TimeSpan.FromMilliseconds(180);
+            var fade = new DoubleAnimation(1, 0, duration)
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn }
+            };
+            fade.Completed += (_, _) => onCompleted();
+
+            RootFrameBorderCtl.BeginAnimation(OpacityProperty, fade);
+            RootFrameTranslateCtl.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, 12, duration)
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+            });
+        }
+
+        private void PlayChildWindowEntranceAnimation(Window dialog)
+        {
+            if (!_enableUiAnimations)
+            {
+                dialog.Opacity = 1;
+                if (dialog.RenderTransform is TranslateTransform noAnimationTransform)
+                {
+                    noAnimationTransform.Y = 0;
+                }
+
+                return;
+            }
+
+            if (dialog.RenderTransform is TranslateTransform translate)
+            {
+                translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(10, 0, TimeSpan.FromMilliseconds(135))
+                {
+                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseOut }
+                });
+            }
+
+            dialog.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(135))
+            {
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseOut }
+            });
+        }
+
+        private void PlayChildWindowExitAnimation(Window dialog, Action onCompleted)
+        {
+            if (!_enableUiAnimations)
+            {
+                onCompleted();
+                return;
+            }
+
+            var fade = new DoubleAnimation(dialog.Opacity, 0, TimeSpan.FromMilliseconds(120))
+            {
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseIn }
+            };
+            fade.Completed += (_, _) => onCompleted();
+            dialog.BeginAnimation(OpacityProperty, fade);
+
+            if (dialog.RenderTransform is TranslateTransform translate)
+            {
+                translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, 8, TimeSpan.FromMilliseconds(120))
+                {
+                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseIn }
+                });
+            }
+        }
+
         private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
+            if (!_allowWindowClose && !_isWindowCloseAnimationRunning && _enableUiAnimations)
+            {
+                e.Cancel = true;
+                _isWindowCloseAnimationRunning = true;
+                PlayWindowExitAnimation(() =>
+                {
+                    _allowWindowClose = true;
+                    Close();
+                });
+                return;
+            }
+
+            if (_isWindowShutdownCompleted)
+            {
+                return;
+            }
+
+            _isWindowShutdownCompleted = true;
             _rxAssembleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             FlushRxAssembledLog();
             _rxAssembleTimer.Dispose();
@@ -1870,7 +2035,6 @@ namespace lcd_host
                 _lcdFrameIndex += (ulong)Math.Max(1, extractedFrameCount);
                 LcdFrameInfoTextBlockCtl.Text = $"LCD帧：{_lcdFrameIndex}";
 
-                Title = $"LCD_HOST_DEVICE - Frame {_lcdFrameIndex}";
             });
         }
 
@@ -1975,6 +2139,7 @@ namespace lcd_host
                 Background = Brushes.Transparent,
                 Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E2E8F0")!)
             };
+            ConfigureChildDialogWindow(dialog);
 
             dialog.Content = new Border
                 {
@@ -2005,14 +2170,6 @@ namespace lcd_host
                         }
                     }
                 };
-
-            dialog.MouseLeftButtonDown += (_, args) =>
-            {
-                if (args.LeftButton == MouseButtonState.Pressed)
-                {
-                    dialog.DragMove();
-                }
-            };
 
             chooseButton.Click += (_, _) =>
             {
