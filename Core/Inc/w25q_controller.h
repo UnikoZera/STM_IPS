@@ -51,10 +51,11 @@ bool w25q_page_program_dma(uint32_t address, uint8_t *data, uint32_t size);
 bool w25q_write_data_dma(uint32_t address, uint8_t *data, uint32_t size);
 bool w25q_read_data_dma(uint32_t address, uint8_t *data, uint32_t size);
 bool w25q_fast_read_data_dma(uint32_t address, uint8_t *data, uint32_t size);
-void w25q_write_data_dma_task(void);
-bool w25q_write_data_dma_is_busy(void);
-bool w25q_write_data_dma_is_done(void);
-bool w25q_write_data_dma_is_error(void);
+
+void w25q_dma_task(void);
+bool w25q_dma_is_busy(void);
+bool w25q_dma_is_done(void);
+bool w25q_dma_is_error(void);
 void w25q_on_spi_error_callback(void);
 
 extern volatile bool w25q_rx_dma_busy;

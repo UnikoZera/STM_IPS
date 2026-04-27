@@ -4,7 +4,7 @@
 ../Core/Src/lcd_driver.c:60:6:lcd_anim_manager_init	1
 ../Core/Src/lcd_driver.c:67:6:lcd_anim_manager_set_bg	1
 ../Core/Src/lcd_driver.c:72:6:lcd_anim_manager_task	13
-../Core/Src/lcd_driver.c:128:6:lcd_anim_manager_render	8
+../Core/Src/lcd_driver.c:128:6:lcd_anim_manager_render	5
 ../Core/Src/lcd_driver.c:164:8:lcd_anim_manager_add_layer	4
 ../Core/Src/lcd_driver.c:190:6:lcd_anim_manager_remove_layer	3
 ../Core/Src/lcd_driver.c:206:6:lcd_anim_manager_clear_layers	1

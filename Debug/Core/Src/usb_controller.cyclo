@@ -12,9 +12,9 @@
 ../Core/Src/usb_controller.c:178:9:usb_transmit	3
 ../Core/Src/usb_controller.c:189:9:usb_receive	4
 ../Core/Src/usb_controller.c:202:10:usb_controller_receive	14
-../Core/Src/usb_controller.c:264:10:usb_controller_get_rx_free_space	2
-../Core/Src/usb_controller.c:271:6:usb_controller_init	2
-../Core/Src/usb_controller.c:302:6:usb_controller_task	18
-../Core/Src/usb_controller.c:372:19:usb_controller_send	13
-../Core/Src/usb_controller.c:422:6:usb_controller_on_tx_complete	1
-../Core/Src/usb_controller.c:430:6:usb_controller_on_rx_received	8
+../Core/Src/usb_controller.c:265:10:usb_controller_get_rx_free_space	2
+../Core/Src/usb_controller.c:272:6:usb_controller_init	2
+../Core/Src/usb_controller.c:304:6:usb_controller_task	18
+../Core/Src/usb_controller.c:374:19:usb_controller_send	13
+../Core/Src/usb_controller.c:424:6:usb_controller_on_tx_complete	1
+../Core/Src/usb_controller.c:432:6:usb_controller_on_rx_received	8

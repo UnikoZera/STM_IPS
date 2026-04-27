@@ -33,6 +33,7 @@
 #include "w25q_controller.h"
 #include "at24c_controller.h"
 #include "usb_controller.h"
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -53,7 +54,10 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-static uint8_t cache[2048]; // USB应用层接收缓存区
+static uint8_t cache[4096]; // USB应用层接收缓存区
+static uint8_t echo_tx_cache[4096];
+static uint16_t echo_pending_len = 0U;
+static bool echo_pending_valid = false;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -64,6 +68,35 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+static bool usb_echo_tx_path_idle(void)
+{
+  return (!g_usb_controller.usb_tx_active) &&
+         (g_usb_controller.tx_remain_len == 0U) &&
+         (g_usb_controller.tx_tail_ptr == NULL) &&
+         (g_usb_controller.tx_pending_len == 0U) &&
+         (!g_usb_controller.tx_protocol_payload_pending);
+}
+
+static void usb_echo_try_submit_pending(void)
+{
+  usb_send_status_t status;
+
+  if (!echo_pending_valid || (echo_pending_len == 0U))
+  {
+    return;
+  }
+
+  status = usb_controller_send(&g_usb_controller, 0x02U, echo_tx_cache, echo_pending_len);
+  if ((status == USB_SEND_OK) ||
+      (status == USB_SEND_QUEUED) ||
+      (status == USB_SEND_DROPPED_PREVIOUS))
+  {
+    // 控制器已接管该payload，等待其发送完成后再覆盖echo_tx_cache。
+    echo_pending_valid = false;
+    echo_pending_len = 0U;
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -84,6 +117,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  usb_controller_init(&g_usb_controller);
 
   /* USER CODE END Init */
 
@@ -107,7 +141,6 @@ int main(void)
   /* USER CODE BEGIN 2 */
   lcd_init();
   lcd_ui_init();
-  usb_controller_init(&g_usb_controller);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -116,24 +149,27 @@ int main(void)
   {
     uint16_t rx_len;
 
-    rx_len = usb_controller_receive(&g_usb_controller, cache, (uint16_t)sizeof(cache));
-    if (rx_len > 0U)
+    usb_controller_task(&g_usb_controller);
+
+    // 等待发送路线空闲，并且准备好的数据尚未被接收机制清空时才提取新数据
+    if (!echo_pending_valid && usb_echo_tx_path_idle())
     {
-      if (cache[0] == 0x01U) // 测试命令：如果接收到的第一个字节是0x01，就返回固定文本
+      rx_len = usb_controller_receive(&g_usb_controller, cache, (uint16_t)sizeof(cache));
+      if (rx_len > 0U)
       {
-        usb_controller_send(&g_usb_controller, 0x01U, (uint8_t *)"Command received", 16);
-      }
-      else
-      {
-        // 默认回显，便于验证TX/RX链路都正常
-        usb_controller_send(&g_usb_controller, 0x02U, cache, rx_len);
+        memcpy(echo_tx_cache, cache, rx_len);
+        echo_pending_len = rx_len;
+        echo_pending_valid = true;
       }
     }
 
-    
+    usb_echo_try_submit_pending();
+
     lcd_ui_change();
     lcd_ui_updater();
+
     usb_controller_task(&g_usb_controller);
+    // HAL_Delay(50); // 去掉延时以提高响应与吞吐量
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

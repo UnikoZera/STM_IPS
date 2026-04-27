@@ -241,8 +241,9 @@ uint16_t usb_controller_receive(usb_controller_t *controller, uint8_t *buf, uint
         }
 
         /* 腾出空间后，检查是否需要重新开启底层的接收 */
+        // 但是这个函数已经在中断里调用了，所以理论上不应该有并发问题，暂时不加锁了。
         uint16_t new_free_space = usb_controller_get_rx_free_space();
-        if (new_free_space >= 64U)
+        if (new_free_space >= 64U) // 以USB FS的最大包长为阈值，避免过早开启底层接收导致频繁NAK
         {
             USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef *)hUsbDeviceFS.pClassData;
             if (hcdc != NULL && hcdc->RxState == 0) // 如果处于非接收状态，则恢复
@@ -297,7 +298,8 @@ void usb_controller_init(usb_controller_t *controller)
 /**
  * @brief 在主循环中调用此函数来处理USB传输状态和超时等逻辑
  *
- * @param controller
+ * @param controller USB控制器状态结构体指针
+ * @note 该函数会根据当前USB状态自动处理发送队列、重试
  */
 void usb_controller_task(usb_controller_t *controller)
 {

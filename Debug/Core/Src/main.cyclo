@@ -1,3 +1,5 @@
-../Core/Src/main.c:74:5:main	3
-../Core/Src/main.c:148:6:SystemClock_Config	3
-../Core/Src/main.c:197:6:Error_Handler	1
+../Core/Src/main.c:72:13:usb_echo_tx_path_idle	6
+../Core/Src/main.c:81:13:usb_echo_try_submit_pending	6
+../Core/Src/main.c:107:5:main	4
+../Core/Src/main.c:184:6:SystemClock_Config	3
+../Core/Src/main.c:233:6:Error_Handler	1
