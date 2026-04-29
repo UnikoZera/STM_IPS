@@ -1,6 +1,6 @@
-Core/Src/storage_controller.o: ../Core/Src/storage_controller.c \
- ../Core/Inc/storage_controller.h ../Core/Inc/w25q_controller.h \
- ../Core/Inc/spi.h ../Core/Inc/main.h \
+Core/Src/storage_manager.o: ../Core/Src/storage_manager.c \
+ ../Core/Inc/storage_manager.h ../Core/Inc/crc16.h \
+ ../Core/Inc/at24c_controller.h ../Core/Inc/i2c.h ../Core/Inc/main.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h \
  ../Core/Inc/stm32f4xx_hal_conf.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rcc.h \
@@ -34,10 +34,12 @@ Core/Src/storage_controller.o: ../Core/Src/storage_controller.c \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_usb.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd_ex.h \
- ../Core/Inc/at24c_controller.h ../Core/Inc/i2c.h
-../Core/Inc/storage_controller.h:
-../Core/Inc/w25q_controller.h:
-../Core/Inc/spi.h:
+ ../Core/Inc/w25q_controller.h ../Core/Inc/spi.h \
+ ../Core/Inc/usb_controller.h
+../Core/Inc/storage_manager.h:
+../Core/Inc/crc16.h:
+../Core/Inc/at24c_controller.h:
+../Core/Inc/i2c.h:
 ../Core/Inc/main.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h:
 ../Core/Inc/stm32f4xx_hal_conf.h:
@@ -72,5 +74,6 @@ Core/Src/storage_controller.o: ../Core/Src/storage_controller.c \
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_usb.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd_ex.h:
-../Core/Inc/at24c_controller.h:
-../Core/Inc/i2c.h:
+../Core/Inc/w25q_controller.h:
+../Core/Inc/spi.h:
+../Core/Inc/usb_controller.h:

@@ -1,0 +1,2 @@
+../Core/Src/crc16.c:54:10:crc16_check	24	static
+../Core/Src/crc16.c:76:10:crc_packing	32	static

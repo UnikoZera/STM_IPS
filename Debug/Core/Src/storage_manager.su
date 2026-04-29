@@ -1,0 +1,8 @@
+../Core/Src/storage_manager.c:113:17:allocate_large_continuous_sectors	40	static
+../Core/Src/storage_manager.c:152:17:allocate_small_space	24	static
+../Core/Src/storage_manager.c:164:13:free_sectors	24	static
+../Core/Src/storage_manager.c:188:13:clear_host_payload	8	static
+../Core/Src/storage_manager.c:193:13:process_host_command	48	static
+../Core/Src/storage_manager.c:297:13:storage_manager_process_host_byte	16	static
+../Core/Src/storage_manager.c:366:6:storage_manager_init	4	static
+../Core/Src/storage_manager.c:374:6:storage_manager_task	24	static

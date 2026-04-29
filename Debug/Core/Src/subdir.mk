@@ -7,6 +7,7 @@
 C_SRCS += \
 ../Core/Src/at24c_controller.c \
 ../Core/Src/call_back_functions.c \
+../Core/Src/crc16.c \
 ../Core/Src/dma.c \
 ../Core/Src/gpio.c \
 ../Core/Src/i2c.c \
@@ -17,7 +18,7 @@ C_SRCS += \
 ../Core/Src/spi.c \
 ../Core/Src/stm32f4xx_hal_msp.c \
 ../Core/Src/stm32f4xx_it.c \
-../Core/Src/storage_controller.c \
+../Core/Src/storage_manager.c \
 ../Core/Src/syscalls.c \
 ../Core/Src/sysmem.c \
 ../Core/Src/system_stm32f4xx.c \
@@ -28,6 +29,7 @@ C_SRCS += \
 OBJS += \
 ./Core/Src/at24c_controller.o \
 ./Core/Src/call_back_functions.o \
+./Core/Src/crc16.o \
 ./Core/Src/dma.o \
 ./Core/Src/gpio.o \
 ./Core/Src/i2c.o \
@@ -38,7 +40,7 @@ OBJS += \
 ./Core/Src/spi.o \
 ./Core/Src/stm32f4xx_hal_msp.o \
 ./Core/Src/stm32f4xx_it.o \
-./Core/Src/storage_controller.o \
+./Core/Src/storage_manager.o \
 ./Core/Src/syscalls.o \
 ./Core/Src/sysmem.o \
 ./Core/Src/system_stm32f4xx.o \
@@ -49,6 +51,7 @@ OBJS += \
 C_DEPS += \
 ./Core/Src/at24c_controller.d \
 ./Core/Src/call_back_functions.d \
+./Core/Src/crc16.d \
 ./Core/Src/dma.d \
 ./Core/Src/gpio.d \
 ./Core/Src/i2c.d \
@@ -59,7 +62,7 @@ C_DEPS += \
 ./Core/Src/spi.d \
 ./Core/Src/stm32f4xx_hal_msp.d \
 ./Core/Src/stm32f4xx_it.d \
-./Core/Src/storage_controller.d \
+./Core/Src/storage_manager.d \
 ./Core/Src/syscalls.d \
 ./Core/Src/sysmem.d \
 ./Core/Src/system_stm32f4xx.d \
@@ -75,7 +78,7 @@ Core/Src/%.o Core/Src/%.su Core/Src/%.cyclo: ../Core/Src/%.c Core/Src/subdir.mk
 clean: clean-Core-2f-Src
 
 clean-Core-2f-Src:
-	-$(RM) ./Core/Src/at24c_controller.cyclo ./Core/Src/at24c_controller.d ./Core/Src/at24c_controller.o ./Core/Src/at24c_controller.su ./Core/Src/call_back_functions.cyclo ./Core/Src/call_back_functions.d ./Core/Src/call_back_functions.o ./Core/Src/call_back_functions.su ./Core/Src/dma.cyclo ./Core/Src/dma.d ./Core/Src/dma.o ./Core/Src/dma.su ./Core/Src/gpio.cyclo ./Core/Src/gpio.d ./Core/Src/gpio.o ./Core/Src/gpio.su ./Core/Src/i2c.cyclo ./Core/Src/i2c.d ./Core/Src/i2c.o ./Core/Src/i2c.su ./Core/Src/lcd.cyclo ./Core/Src/lcd.d ./Core/Src/lcd.o ./Core/Src/lcd.su ./Core/Src/lcd_driver.cyclo ./Core/Src/lcd_driver.d ./Core/Src/lcd_driver.o ./Core/Src/lcd_driver.su ./Core/Src/lcd_ui.cyclo ./Core/Src/lcd_ui.d ./Core/Src/lcd_ui.o ./Core/Src/lcd_ui.su ./Core/Src/main.cyclo ./Core/Src/main.d ./Core/Src/main.o ./Core/Src/main.su ./Core/Src/spi.cyclo ./Core/Src/spi.d ./Core/Src/spi.o ./Core/Src/spi.su ./Core/Src/stm32f4xx_hal_msp.cyclo ./Core/Src/stm32f4xx_hal_msp.d ./Core/Src/stm32f4xx_hal_msp.o ./Core/Src/stm32f4xx_hal_msp.su ./Core/Src/stm32f4xx_it.cyclo ./Core/Src/stm32f4xx_it.d ./Core/Src/stm32f4xx_it.o ./Core/Src/stm32f4xx_it.su ./Core/Src/storage_controller.cyclo ./Core/Src/storage_controller.d ./Core/Src/storage_controller.o ./Core/Src/storage_controller.su ./Core/Src/syscalls.cyclo ./Core/Src/syscalls.d ./Core/Src/syscalls.o ./Core/Src/syscalls.su ./Core/Src/sysmem.cyclo ./Core/Src/sysmem.d ./Core/Src/sysmem.o ./Core/Src/sysmem.su ./Core/Src/system_stm32f4xx.cyclo ./Core/Src/system_stm32f4xx.d ./Core/Src/system_stm32f4xx.o ./Core/Src/system_stm32f4xx.su ./Core/Src/tim.cyclo ./Core/Src/tim.d ./Core/Src/tim.o ./Core/Src/tim.su ./Core/Src/usb_controller.cyclo ./Core/Src/usb_controller.d ./Core/Src/usb_controller.o ./Core/Src/usb_controller.su ./Core/Src/w25q_controller.cyclo ./Core/Src/w25q_controller.d ./Core/Src/w25q_controller.o ./Core/Src/w25q_controller.su
+	-$(RM) ./Core/Src/at24c_controller.cyclo ./Core/Src/at24c_controller.d ./Core/Src/at24c_controller.o ./Core/Src/at24c_controller.su ./Core/Src/call_back_functions.cyclo ./Core/Src/call_back_functions.d ./Core/Src/call_back_functions.o ./Core/Src/call_back_functions.su ./Core/Src/crc16.cyclo ./Core/Src/crc16.d ./Core/Src/crc16.o ./Core/Src/crc16.su ./Core/Src/dma.cyclo ./Core/Src/dma.d ./Core/Src/dma.o ./Core/Src/dma.su ./Core/Src/gpio.cyclo ./Core/Src/gpio.d ./Core/Src/gpio.o ./Core/Src/gpio.su ./Core/Src/i2c.cyclo ./Core/Src/i2c.d ./Core/Src/i2c.o ./Core/Src/i2c.su ./Core/Src/lcd.cyclo ./Core/Src/lcd.d ./Core/Src/lcd.o ./Core/Src/lcd.su ./Core/Src/lcd_driver.cyclo ./Core/Src/lcd_driver.d ./Core/Src/lcd_driver.o ./Core/Src/lcd_driver.su ./Core/Src/lcd_ui.cyclo ./Core/Src/lcd_ui.d ./Core/Src/lcd_ui.o ./Core/Src/lcd_ui.su ./Core/Src/main.cyclo ./Core/Src/main.d ./Core/Src/main.o ./Core/Src/main.su ./Core/Src/spi.cyclo ./Core/Src/spi.d ./Core/Src/spi.o ./Core/Src/spi.su ./Core/Src/stm32f4xx_hal_msp.cyclo ./Core/Src/stm32f4xx_hal_msp.d ./Core/Src/stm32f4xx_hal_msp.o ./Core/Src/stm32f4xx_hal_msp.su ./Core/Src/stm32f4xx_it.cyclo ./Core/Src/stm32f4xx_it.d ./Core/Src/stm32f4xx_it.o ./Core/Src/stm32f4xx_it.su ./Core/Src/storage_manager.cyclo ./Core/Src/storage_manager.d ./Core/Src/storage_manager.o ./Core/Src/storage_manager.su ./Core/Src/syscalls.cyclo ./Core/Src/syscalls.d ./Core/Src/syscalls.o ./Core/Src/syscalls.su ./Core/Src/sysmem.cyclo ./Core/Src/sysmem.d ./Core/Src/sysmem.o ./Core/Src/sysmem.su ./Core/Src/system_stm32f4xx.cyclo ./Core/Src/system_stm32f4xx.d ./Core/Src/system_stm32f4xx.o ./Core/Src/system_stm32f4xx.su ./Core/Src/tim.cyclo ./Core/Src/tim.d ./Core/Src/tim.o ./Core/Src/tim.su ./Core/Src/usb_controller.cyclo ./Core/Src/usb_controller.d ./Core/Src/usb_controller.o ./Core/Src/usb_controller.su ./Core/Src/w25q_controller.cyclo ./Core/Src/w25q_controller.d ./Core/Src/w25q_controller.o ./Core/Src/w25q_controller.su
 
 .PHONY: clean-Core-2f-Src
 

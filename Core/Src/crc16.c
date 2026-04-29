@@ -5,7 +5,7 @@
  *      Author: UnikoZera
  */
 
-#include "storage_controller.h"
+#include "crc16.h"
 
 // ==================== CRC16 查表 ====================
 // 多项式：0xA001 (CRC16-IBM 标准反向多项式)
@@ -81,9 +81,10 @@ uint16_t crc_packing(const uint8_t *data, uint32_t len, bool has_crc)
         {
             return 0;
         }
-        uint16_t received_crc = (data[len - 2] << 8) | data[len - 1]; // 提取数据包末尾的 CRC16 校验码
+        // uint16_t received_crc = data[len - 2] | (data[len - 1] << 8); // 提取数据包末尾的 CRC16 校验码
+        uint16_t received_crc = (uint16_t)data[len - 1] << 8 | data[len - 2]; // 提取数据包末尾的 CRC16 校验码 小端模式
         uint16_t calculated_crc = crc16_check(data, len - 2); // 计算数据包前面部分的 CRC16 值
-        return (received_crc == calculated_crc) ? 1 : 0; // 校验通过返回 1，校验失败返回 0
+        return (received_crc == calculated_crc) ? true : false; // 校验通过返回 1，校验失败返回 0
     }
     else
     {

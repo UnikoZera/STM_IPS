@@ -1,12 +1,36 @@
 {
   "Version": 1,
   "WorkspaceRootPath": "D:\\mcu\\projects\\stm_ips\\lcd_host_solution\\",
-  "Documents": [],
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{30A28572-3EAC-DD3D-EB26-17E3E06834C5}|lcd_host\\lcd_host.csproj|d:\\mcu\\projects\\stm_ips\\lcd_host_solution\\lcd_host\\mainwindow.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}",
+      "RelativeMoniker": "D:0:0:{30A28572-3EAC-DD3D-EB26-17E3E06834C5}|lcd_host\\lcd_host.csproj|solutionrelative:lcd_host\\mainwindow.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}"
+    }
+  ],
   "DocumentGroupContainers": [
     {
       "Orientation": 0,
       "VerticalTabListWidth": 256,
-      "DocumentGroups": []
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 0,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "MainWindow.xaml",
+              "DocumentMoniker": "D:\\mcu\\projects\\stm_ips\\lcd_host_solution\\lcd_host\\MainWindow.xaml",
+              "RelativeDocumentMoniker": "lcd_host\\MainWindow.xaml",
+              "ToolTip": "D:\\mcu\\projects\\stm_ips\\lcd_host_solution\\lcd_host\\MainWindow.xaml",
+              "RelativeToolTip": "lcd_host\\MainWindow.xaml",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003549|",
+              "WhenOpened": "2026-04-29T05:47:10.177Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
     }
   ]
 }

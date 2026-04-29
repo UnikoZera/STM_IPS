@@ -12,7 +12,7 @@
 #include <stdbool.h>
 
 #define USB_SEND_BYTES_PER_CALL 5120  // 分片减小可提升LCD流开启时的命令响应稳定性
-#define USB_RECEIVE_BUFFER_SIZE 4096  // 提高突发接收缓冲余量，减小主循环忙时的NAK概率
+#define USB_RECEIVE_BUFFER_SIZE 1536  // 提高突发接收缓冲余量，减小主循环忙时的NAK概率 // 经过测试，3072是lcd没开启时候的最快速度,再大就没什么提升并且伴随丢包. // TODO:考虑一个更好的流控机制来支持更大缓冲区和更高速度，比如基于协议的窗口控制或者分片确认机制。
 #define USB_TX_RETRY_INTERVAL_MS 2U	  // busy时的最小重试间隔，避免高频空转
 #define USB_TX_STUCK_TIMEOUT_MS 2000U // 发送活跃超过该时间仍无进展时执行软恢复
 #define USB_PROTOCOL_HEADER_SIZE 5U	  // 帧头(0xAA,0x55)+命令(1B)+长度(2B,小端)

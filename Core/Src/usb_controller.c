@@ -44,7 +44,7 @@ static void usb_clear_tx_pending(usb_controller_t *controller)
 
 static bool usb_prepare_protocol_tx(usb_controller_t *controller, uint8_t cmd, const uint8_t *payload, uint16_t payload_len)
 {
-    if ((controller == NULL) || (payload == NULL) || (payload_len == 0U))
+    if (controller == NULL)
     {
         return false;
     }
@@ -57,9 +57,11 @@ static bool usb_prepare_protocol_tx(usb_controller_t *controller, uint8_t cmd, c
 
     controller->tx_tail_ptr = controller->tx_header;
     controller->tx_remain_len = USB_PROTOCOL_HEADER_SIZE;
+    
+    // 如果 len 为 0，不设置 payload 阶段指针即可
     controller->tx_protocol_payload_ptr = payload;
     controller->tx_protocol_payload_len = payload_len;
-    controller->tx_protocol_payload_pending = true;
+    controller->tx_protocol_payload_pending = (payload_len > 0U);
 
     return true;
 }
@@ -375,9 +377,15 @@ usb_send_status_t usb_controller_send(usb_controller_t *controller, uint8_t cmd,
 {
     uint8_t tx_result;
 
-    if ((controller == NULL) || !controller->usb_enabled || (buf == NULL) || (len == 0U))
+    if ((controller == NULL) || !controller->usb_enabled)
     {
         return USB_SEND_BUSY_REJECTED; // safe check.
+    }
+
+    // 允许 len 为 0 (仅发送无负载协议头指令)
+    if (len > 0U && buf == NULL)
+    {
+        return USB_SEND_BUSY_REJECTED; 
     }
 
     if (controller->usb_tx_active || (controller->tx_remain_len > 0U) || (controller->tx_tail_ptr != NULL))

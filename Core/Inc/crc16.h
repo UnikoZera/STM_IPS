@@ -5,12 +5,12 @@
  *      Author: UnikoZera
  */
 
-#ifndef INC_STORAGE_CONTROLLER_H_
-#define INC_STORAGE_CONTROLLER_H_
+#ifndef INC_CRC16_H_
+#define INC_CRC16_H_
 
-#include "w25q_controller.h"
-#include "at24c_controller.h"
+#include <stdint.h>
+#include <stdbool.h>
 
 uint16_t crc_packing(const uint8_t *data, uint32_t len, bool has_crc);
 
-#endif /* INC_STORAGE_CONTROLLER_H_ */
+#endif /* INC_CRC16_H_ */
