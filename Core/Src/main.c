@@ -107,10 +107,13 @@ int main(void)
   MX_TIM9_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
+  crc16_usb_init_table();
   usb_controller_init(&g_usb_controller);
   lcd_init();
   lcd_ui_init();
-  // storage_manager_init();
+  bool w25q_ok = w25q_init();
+  bool storage_init_ok = storage_manager_init();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -118,29 +121,31 @@ int main(void)
   while (1)
   {
 
-    // usb_controller_task(&g_usb_controller);
-
-    // // 等待发送路线空闲，并且准备好的数据尚未被接收机制清空时才提取新数据
-    // if (!echo_pending_valid && usb_echo_tx_path_idle())
-    // {
-    //   rx_len = usb_controller_receive(&g_usb_controller, cache, (uint16_t)sizeof(cache));
-    //   if (rx_len > 0U)
-    //   {
-    //     memcpy(echo_tx_cache, cache, rx_len);
-    //     echo_pending_len = rx_len;
-    //     echo_pending_valid = true;
-    //   }
-    // }
-
-    // usb_echo_try_submit_pending();
-
-
-    lcd_ui_change();
     lcd_ui_updater();
 
+    if (w25q_ok)
+    {
+      w25q_dma_task();
+    }
+    else
+    {
+      // W25Q初始化失败，显示错误信息（系统基本无法使用了）
+      // usb烧录的功能也基本无法使用
+      lcd_draw_string(10, 10, RED, BLACK, 8, "W25Q FAIL"); // hopefully this won't happen, if it does then the system is basically unusable anyway
+    }
+
+    if (storage_init_ok)
+    {
+      storage_manager_task();
+    }
+    else
+    {
+      lcd_draw_string(10, 30, RED, BLACK, 8, "STORAGE FAIL"); // 存储管理器初始化失败，可能导致文件操作相关功能无法使用，但其他功能可能不受影响
+    }
+
     usb_controller_task(&g_usb_controller);
-    storage_manager_task();
-    // HAL_Delay(50); // 去掉延时以提高响应与吞吐量
+    // storage_manager_task();
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

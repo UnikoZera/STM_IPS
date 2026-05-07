@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-uint16_t crc_packing(const uint8_t *data, uint32_t len, bool has_crc);
+void crc16_usb_init_table(void);
+uint16_t crc16_usb_packing(const uint8_t *data, size_t len, bool has_crc);
 
 #endif /* INC_CRC16_H_ */

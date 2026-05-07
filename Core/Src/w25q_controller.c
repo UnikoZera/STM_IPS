@@ -12,7 +12,7 @@ volatile bool w25q_tx_dma_busy = false;
 
 #define W25Q_PAGE_SIZE      256U
 #define W25Q_ADDRESS_SPACE  0x01000000UL
-#define W25Q_TASK_SPI_TIMEOUT 1U
+#define W25Q_TASK_SPI_TIMEOUT 5U
 
 typedef enum
 {
@@ -171,7 +171,7 @@ uint32_t w25q_read_id(void)
 bool w25q_init(void)
 {
     uint32_t id = w25q_read_id();
-    if (id != 0xEF4018) return false;
+    if (id != 0xC84018) return false;
     return true;
 }
 

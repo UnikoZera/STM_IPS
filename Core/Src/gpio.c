@@ -84,12 +84,19 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(ENCODER_INPUT_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : IPS_RES_Pin IPS_DC_Pin IPS_CS_Pin */
-  GPIO_InitStruct.Pin = IPS_RES_Pin|IPS_DC_Pin|IPS_CS_Pin;
+  /*Configure GPIO pins : IPS_RES_Pin IPS_DC_Pin */
+  GPIO_InitStruct.Pin = IPS_RES_Pin|IPS_DC_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : IPS_CS_Pin */
+  GPIO_InitStruct.Pin = IPS_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(IPS_CS_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : USB_EN_Pin */
   GPIO_InitStruct.Pin = USB_EN_Pin;
@@ -98,12 +105,19 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(USB_EN_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : W25Q_CS_Pin LED_0_Pin */
-  GPIO_InitStruct.Pin = W25Q_CS_Pin|LED_0_Pin;
+  /*Configure GPIO pin : W25Q_CS_Pin */
+  GPIO_InitStruct.Pin = W25Q_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(W25Q_CS_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : LED_0_Pin */
+  GPIO_InitStruct.Pin = LED_0_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(LED_0_GPIO_Port, &GPIO_InitStruct);
 
 }
 

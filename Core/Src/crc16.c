@@ -1,94 +1,69 @@
-/*
- * storage_controller.c
- *
- *  Created on: 2026年4月2日
- *      Author: UnikoZera
- */
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
 
-#include "crc16.h"
+/* 查找表（运行时填充） */
+static uint16_t crc16_usb_table[256];
+static bool crc16_usb_table_ok = false;
 
-// ==================== CRC16 查表 ====================
-// 多项式：0xA001 (CRC16-IBM 标准反向多项式)
-static const uint16_t crc16_table[256] = {
-    0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
-    0xC601, 0x06C0, 0x0780, 0xC741, 0x0500, 0xC5C1, 0xC481, 0x0440,
-    0xCC01, 0x0CC0, 0x0D80, 0xCD41, 0x0F00, 0xCFC1, 0xCE81, 0x0E40,
-    0x0A00, 0xCAC1, 0xCB81, 0x0B40, 0xC901, 0x09C0, 0x0880, 0xC841,
-    0xD801, 0x18C0, 0x1980, 0xD941, 0x1B00, 0xDBC1, 0xDA81, 0x1A40,
-    0x1E00, 0xDEC1, 0xDF81, 0x1F40, 0xDD01, 0x1DC0, 0x1C80, 0xDC41,
-    0x1400, 0xD4C1, 0xD581, 0x1540, 0xD701, 0x17C0, 0x1680, 0xD641,
-    0xD201, 0x12C0, 0x1380, 0xD341, 0x1100, 0xD1C1, 0xD081, 0x1040,
-    0xF001, 0x30C0, 0x3180, 0xF141, 0x3300, 0xF3C1, 0xF281, 0x3240,
-    0x3600, 0xF6C1, 0xF781, 0x3740, 0xF501, 0x35C0, 0x3480, 0xF441,
-    0x3C00, 0xFCC1, 0xFD81, 0x3D40, 0xFF01, 0x3FC0, 0x3E80, 0xFE41,
-    0xFA01, 0x3AC0, 0x3B80, 0xFB41, 0x3900, 0xF9C1, 0xF881, 0x3840,
-    0x2800, 0xE8C1, 0xE981, 0x2940, 0xEB01, 0x2BC0, 0x2A80, 0xEA41,
-    0xEE01, 0x2EC0, 0x2D80, 0xED41, 0x2F00, 0xEFC1, 0xEE81, 0x2E40,
-    0xE601, 0x26C0, 0x2780, 0xE741, 0x2500, 0xE5C1, 0xE481, 0x2440,
-    0x2000, 0xE0C1, 0xE181, 0x2140, 0xE301, 0x23C0, 0x2280, 0xE241,
-    0xA001, 0x60C0, 0x6180, 0xA141, 0x6300, 0xA3C1, 0xA281, 0x6240,
-    0x6600, 0xA6C1, 0xA781, 0x6740, 0xA501, 0x65C0, 0x6480, 0xA441,
-    0x6C00, 0xACC1, 0xAD81, 0x6D40, 0xAF01, 0x6FC0, 0x6E80, 0xAE41,
-    0xAA01, 0x6AC0, 0x6B80, 0xAB41, 0x6900, 0xA9C1, 0xA881, 0x6840,
-    0x7800, 0xB8C1, 0xB981, 0x7940, 0xBB01, 0x7BC0, 0x7A80, 0xBA41,
-    0xBE01, 0x7EC0, 0x7D80, 0xBD41, 0x7F00, 0xBFC1, 0xBE81, 0x7E40,
-    0xB601, 0x76C0, 0x7780, 0xB741, 0x7500, 0xB5C1, 0xB481, 0x7440,
-    0x7000, 0xB0C1, 0xB181, 0x7140, 0xB301, 0x73C0, 0x7280, 0xB241,
-    0x5000, 0x90C1, 0x9181, 0x5140, 0x9301, 0x53C0, 0x5280, 0x9241,
-    0x9601, 0x56C0, 0x5780, 0x9741, 0x5500, 0x95C1, 0x9481, 0x5440,
-    0x9C01, 0x5CC0, 0x5D80, 0x9D41, 0x5F00, 0x9FC1, 0x9E81, 0x5E40,
-    0x5A00, 0x9AC1, 0x9B81, 0x5B40, 0x9901, 0x59C0, 0x5880, 0x9841,
-    0x8801, 0x48C0, 0x4980, 0x8941, 0x4B00, 0x8BC1, 0x8A81, 0x4A40,
-    0x4E00, 0x8EC1, 0x8F81, 0x4F40, 0x8D01, 0x4DC0, 0x4C80, 0x8C41,
-    0x4400, 0x84C1, 0x8581, 0x4540, 0x8701, 0x47C0, 0x4680, 0x8641,
-    0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040
-};
-
-// ==================== CRC16 查表计算函数 ====================
 /**
- * @brief  查表法计算 CRC16
- * @param  data: 待校验数据首地址
- * @param  len:  数据长度
- * @return 计算好的 16 位 CRC 值
+ * @brief 初始化 CRC16/USB 查找表（须在其他函数之前调用一次）
  */
-uint16_t crc16_check(const uint8_t *data, uint32_t len)
+void crc16_usb_init_table(void)
 {
-    uint16_t crc = 0xFFFF;  // 初始值：0xFFFF (标准)
-    uint32_t i;
-
-    for (i = 0; i < len; i++)
-    {
-        // 核心查表公式
-        crc = (crc >> 8) ^ crc16_table[(crc & 0xFF) ^ data[i]];
+    const uint16_t rev_poly = 0xA001;   /* 0x8005 的位反转 */
+    for (int i = 0; i < 256; i++) {
+        uint16_t crc = i;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 1) {
+                crc = (crc >> 1) ^ rev_poly;
+            } else {
+                crc >>= 1;
+            }
+        }
+        crc16_usb_table[i] = crc;
     }
-
-    return crc;
+    crc16_usb_table_ok = true;
 }
 
 /**
- * @brief 检查数据包的 CRC16 校验码是否正确||计算数据包的 CRC16 校验码
- * 
- * @param data 数据包首地址
- * @param len 数据包整个长度
- * @param has_crc 如果为 true，表示数据包末尾包含 CRC16 校验码，需要进行校验；如果为 false，表示数据包末尾不包含 CRC16 校验码，需要计算并返回 CRC16 值
- * @return 如果 has_crc 为 true，返回 1 表示校验通过，返回 0 表示校验失败；如果 has_crc 为 false，返回计算好的 CRC16 校验码
+ * @brief 计算 CRC16/USB（纯数据部分）
+ * @param data  数据首地址
+ * @param len   数据字节数
+ * @return CRC16 校验值（已包含输出异或 0xFFFF）
  */
-uint16_t crc_packing(const uint8_t *data, uint32_t len, bool has_crc)
+uint16_t crc16_usb_calc(const uint8_t *data, size_t len)
 {
-    if (has_crc)
-    {
-        if (len < 2)
-        {
-            return 0;
-        }
-        // uint16_t received_crc = data[len - 2] | (data[len - 1] << 8); // 提取数据包末尾的 CRC16 校验码
-        uint16_t received_crc = (uint16_t)data[len - 1] << 8 | data[len - 2]; // 提取数据包末尾的 CRC16 校验码 小端模式
-        uint16_t calculated_crc = crc16_check(data, len - 2); // 计算数据包前面部分的 CRC16 值
-        return (received_crc == calculated_crc) ? true : false; // 校验通过返回 1，校验失败返回 0
+    if (!crc16_usb_table_ok) {
+        /* 若未调用过 init，则此处自动初始化（不推荐，最好由用户显式调用） */
+        crc16_usb_init_table();
     }
-    else
-    {
-        // 数据包末尾不包含 CRC16 校验码，计算并返回 CRC16 值
-        return crc16_check(data, len);
+    uint16_t crc = 0xFFFF;
+    while (len--) {
+        crc = (crc >> 8) ^ crc16_usb_table[(crc & 0xFF) ^ *data++];
+    }
+    return crc ^ 0xFFFF;   /* 关键：XorOut = 0xFFFF */
+}
+
+/**
+ * @brief 校验/追加 CRC16/USB（兼容您的原接口）
+ * @param data    数据包首地址
+ * @param len     数据包总长度（含 CRC 时为全长，不含时为纯数据长度）
+ * @param has_crc  true: 包末尾带有 CRC（小端序），需要校验；
+ *                 false: 包末尾无 CRC，计算并返回 CRC 值
+ * @return has_crc 为 true  时：1=校验通过，0=校验失败；
+ *         has_crc 为 false 时：返回计算好的 CRC16 值
+ */
+uint16_t crc16_usb_packing(const uint8_t *data, size_t len, bool has_crc)
+{
+    if (has_crc) {
+        if (len < 2) return 0;
+
+        /* 提取包末尾的小端 CRC */
+        uint16_t received_crc = (uint16_t)data[len - 1] << 8 | data[len - 2];
+        uint16_t calculated_crc = crc16_usb_calc(data, len - 2);
+        return (received_crc == calculated_crc) ? 1 : 0;
+    } else {
+        return crc16_usb_calc(data, len);
     }
 }
