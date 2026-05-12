@@ -107,6 +107,17 @@
             </Style.Triggers>
         </Style>
 
+        <Style x:Key="TitleBarActionButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="MinWidth" Value="72" />
+            <Setter Property="Height" Value="22" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Background" Value="#334155" />
+            <Setter Property="BorderBrush" Value="#00000000" />
+            <Setter Property="Foreground" Value="#E2E8F0" />
+        </Style>
+
         <Style TargetType="GroupBox">
             <Setter Property="Margin" Value="0,0,0,8" />
             <Setter Property="Padding" Value="8" />
@@ -527,6 +538,11 @@
                                Text="LCD_HOST_DEVICE" />
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+                        <Button x:Name="FileListDetailButton"
+                                Style="{StaticResource TitleBarActionButtonStyle}"
+                                Content="0x20详情"
+                                Visibility="Collapsed"
+                                Click="ShowFileListDetail_Click" />
                         <Button x:Name="MainMinimizeButton"
                                 Style="{StaticResource TitleBarButtonStyle}"
                                 Content="—"
@@ -557,79 +573,81 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <WrapPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center" ItemHeight="30">
-                        <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
-                            <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="端口" />
-                            <ComboBox x:Name="PortComboBox"
-                                      Style="{StaticResource SerialConfigComboBoxStyle}"
-                                      Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
-                                      ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
-                                      Width="250"
-                                      DisplayMemberPath="DisplayText"
-                                      SelectedValuePath="PortName"
-                                      SelectionChanged="PortComboBox_SelectionChanged" />
-                        </StackPanel>
+                    <DockPanel Grid.Row="0" LastChildFill="True">
+                        <WrapPanel Orientation="Horizontal" VerticalAlignment="Center" ItemHeight="30">
+                            <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                                <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="端口" />
+                                <ComboBox x:Name="PortComboBox"
+                                          Style="{StaticResource SerialConfigComboBoxStyle}"
+                                          Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
+                                          ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
+                                          Width="250"
+                                          DisplayMemberPath="DisplayText"
+                                          SelectedValuePath="PortName"
+                                          SelectionChanged="PortComboBox_SelectionChanged" />
+                            </StackPanel>
 
-                        <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
-                            <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="波特率" />
-                            <ComboBox x:Name="BaudRateComboBox"
-                                      Style="{StaticResource SerialConfigComboBoxStyle}"
-                                      Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
-                                      ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
-                                      ItemTemplate="{DynamicResource SerialConfigDefaultItemTemplate}"
-                                      Width="100" />
-                        </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                                <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="波特率" />
+                                <ComboBox x:Name="BaudRateComboBox"
+                                          Style="{StaticResource SerialConfigComboBoxStyle}"
+                                          Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
+                                          ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
+                                          ItemTemplate="{DynamicResource SerialConfigDefaultItemTemplate}"
+                                          Width="100" />
+                            </StackPanel>
 
-                        <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
-                            <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="数据位" />
-                            <ComboBox x:Name="DataBitsComboBox"
-                                      Style="{StaticResource SerialConfigComboBoxStyle}"
-                                      Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
-                                      ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
-                                      ItemTemplate="{DynamicResource SerialConfigDefaultItemTemplate}"
-                                      Width="80" />
-                        </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                                <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="数据位" />
+                                <ComboBox x:Name="DataBitsComboBox"
+                                          Style="{StaticResource SerialConfigComboBoxStyle}"
+                                          Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
+                                          ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
+                                          ItemTemplate="{DynamicResource SerialConfigDefaultItemTemplate}"
+                                          Width="80" />
+                            </StackPanel>
 
-                        <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
-                            <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="校验位" />
-                            <ComboBox x:Name="ParityComboBox"
-                                      Style="{StaticResource SerialConfigComboBoxStyle}"
-                                      Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
-                                      ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
-                                      DisplayMemberPath="Text"
-                                      Width="92" />
-                        </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                                <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="校验位" />
+                                <ComboBox x:Name="ParityComboBox"
+                                          Style="{StaticResource SerialConfigComboBoxStyle}"
+                                          Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
+                                          ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
+                                          DisplayMemberPath="Text"
+                                          Width="92" />
+                            </StackPanel>
 
-                        <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
-                            <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="停止位" />
-                            <ComboBox x:Name="StopBitsComboBox"
-                                      Style="{StaticResource SerialConfigComboBoxStyle}"
-                                      Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
-                                      ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
-                                      DisplayMemberPath="Text"
-                                      Width="94" />
-                        </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                                <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="停止位" />
+                                <ComboBox x:Name="StopBitsComboBox"
+                                          Style="{StaticResource SerialConfigComboBoxStyle}"
+                                          Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
+                                          ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
+                                          DisplayMemberPath="Text"
+                                          Width="94" />
+                            </StackPanel>
 
-                        <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
-                            <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="流控" />
-                            <ComboBox x:Name="HandshakeComboBox"
-                                      Style="{StaticResource SerialConfigComboBoxStyle}"
-                                      Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
-                                      ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
-                                      DisplayMemberPath="Text"
-                                      Width="138" />
-                        </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                                <TextBlock Style="{StaticResource ParameterLabelStyle}" Text="流控" />
+                                <ComboBox x:Name="HandshakeComboBox"
+                                          Style="{StaticResource SerialConfigComboBoxStyle}"
+                                          Foreground="{DynamicResource SerialConfigComboBoxForegroundBrush}"
+                                          ItemContainerStyle="{StaticResource SerialConfigComboBoxItemStyle}"
+                                          DisplayMemberPath="Text"
+                                          Width="138" />
+                            </StackPanel>
 
-                        <CheckBox x:Name="DtrEnableCheckBox"
-                                  Margin="10,0,0,0"
-                                  VerticalAlignment="Center"
-                                  Content="DTR" />
+                            <CheckBox x:Name="DtrEnableCheckBox"
+                                      Margin="10,0,0,0"
+                                      VerticalAlignment="Center"
+                                      Content="DTR" />
 
-                        <CheckBox x:Name="RtsEnableCheckBox"
-                                  Margin="6,0,0,0"
-                                  VerticalAlignment="Center"
-                                  Content="RTS" />
-                    </WrapPanel>
+                            <CheckBox x:Name="RtsEnableCheckBox"
+                                      Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      Content="RTS" />
+                        </WrapPanel>
+                    </DockPanel>
 
                     <Grid Grid.Row="1" Margin="0,4,0,0">
                         <Grid.ColumnDefinitions>
@@ -800,6 +818,15 @@
                                         <ComboBoxItem Content="\r" />
                                         <ComboBoxItem Content="\n" />
                                         <ComboBoxItem Content="\r\n" />
+                                    </ComboBox>
+                                    <TextBlock FontWeight="SemiBold" Text="发送命令" Height="18" Margin="10,0,6,0" />
+                                    <ComboBox x:Name="SendCommandComboBox" Width="180">
+                                        <ComboBoxItem Content="无命令" IsSelected="True" />
+                                        <ComboBoxItem Content="0x11 大文件" />
+                                        <ComboBoxItem Content="0x45 小文件" />
+                                        <ComboBoxItem Content="0x14 结束下载" />
+                                        <ComboBoxItem Content="0x19 删除文件" />
+                                        <ComboBoxItem Content="0x20 查询列表" />
                                     </ComboBox>
                                 </StackPanel>
 

@@ -1,0 +1,2901 @@
+﻿using Microsoft.Win32;
+using System.Collections.ObjectModel;
+using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.IO;
+using System.IO.Ports;
+using System.Linq;
+using System.Management;
+using System.Text;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
+using System.Windows.Input;
+using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using System.Threading;
+
+namespace lcd_host
+{
+    public partial class MainWindow : Window
+    {
+        private const int LcdWidth = 160;
+        private const int LcdHeight = 80;
+        private const int FramePixels = LcdWidth * LcdHeight;
+        private const int FrameBytes = FramePixels * 2;
+        private const int TailBytes = 4;
+        private const int FrameTotal = FrameBytes + TailBytes;
+        private const int StreamCapacity = 256 * 1024;
+        private const int MaxUiLogBlocks = 400;
+        private const int RxLogChunkChars = 4096;
+        private const int RxAssembleHexMaxLatencyMs = 120;
+        private const int RxPacketHeaderBytes = 5;
+        private const int RxPacketPayloadMaxBytes = 512 * 1024;
+        private const int RxPacketStreamCapacity = 1024 * 1024;
+        private const int FrameDropNoticeIntervalMs = 5000;
+        private const byte RxPacketHead0 = 0xAA;
+        private const byte RxPacketHead1 = 0x55;
+        private const byte RxCommandFrameParse = 0xA0;
+        private const int DefaultRxAssembleTextIdleFlushMs = 90;
+        private const int DefaultRxAssembleTextChunkGapBoundaryMs = 28;
+        private const int MinRxTuneMs = 1;
+        private const int MaxRxTuneMs = 5000;
+        private static readonly int LogFlushBatchSize = 24;
+        private static readonly int LogFlushBurstMultiplier = 4;
+        private static readonly int RxLogDropThreshold = 220;
+        private static readonly int RxLogRealtimeTrimTarget = 60;
+        private static readonly int MaxPendingLogEntries = 600;
+        private static readonly SolidColorBrush TimestampBrush = CreateFrozenBrush("#94A3B8");
+        private static readonly SolidColorBrush MessageBrush = CreateFrozenBrush("#F8FAFC");
+        private static readonly SolidColorBrush RxBrush = CreateFrozenBrush("#34D399");
+        private static readonly SolidColorBrush TxBrush = CreateFrozenBrush("#60A5FA");
+        private static readonly SolidColorBrush SysBrush = CreateFrozenBrush("#FBBF24");
+        private static readonly byte[] FrameTail = [0x0D, 0x00, 0x07, 0x21];
+        private const byte TxCommandHead0 = 0xBB;
+        private const byte TxCommandHead1 = 0x44;
+        private const int TxCommandHeaderBytes = 5;
+        private const int TxCommandCrcBytes = 2;
+        private const int TxCommandPayloadMaxBytes = 512;
+        private const int TxCommandEndFilenameMaxBytes = 16;
+
+        private readonly ObservableCollection<SerialPortInfo> _ports = [];
+        private readonly List<byte> _lcdStream = [];
+        private readonly object _lcdStreamLock = new();
+        private SerialPort? _serialPort;
+        private CancellationTokenSource? _readerCts;
+        private Task? _readerTask;
+        private WriteableBitmap? _lcdBitmap;
+        private ulong _lcdFrameIndex;
+        private string? _selectedFilePath;
+        private volatile bool _lcdDecodeEnabled;
+        private string? _preferredPortName;
+        private readonly string _configFilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "lcd_host", "serial_config.json");
+        private readonly ConcurrentQueue<LogEntry> _logQueue = new();
+        private readonly DispatcherTimer _logFlushTimer;
+        private readonly DispatcherTimer _toastTimer;
+        private readonly Timer _rxAssembleTimer;
+        private readonly SemaphoreSlim _sendLock = new(1, 1);
+        private readonly ConcurrentQueue<TxRequest> _txQueue = new();
+        private readonly SemaphoreSlim _txQueueSignal = new(0);
+        private CancellationTokenSource? _writerCts;
+        private Task? _writerTask;
+        private int _pendingLogCount;
+        private int _pendingTxCount;
+        private int _droppedRxChunkCount;
+        private int _droppedRxByteCount;
+        private long _lcdBytesCounter;
+        private long _lastLcdStatsTick;
+        private int _lcdDecodeSession;
+        private volatile bool _receiveHexMode;
+        private Point? _panelDragStartPoint;
+        private GroupBox? _dragSourceGroupBox;
+        private GridLength _savedLeftMainColumnWidth = new(1.6, GridUnitType.Star);
+        private GridLength _savedRightLcdColumnWidth = new(1, GridUnitType.Star);
+        private double _savedRightLcdMinWidth = 320;
+        private GridLength _savedReceiveRowHeight = new(1.0, GridUnitType.Star);
+        private GridLength _savedSendRowHeight = new(1.28, GridUnitType.Star);
+        private double _savedReceiveRowMinHeight = 70;
+        private double _savedSendRowMinHeight = 126;
+        private bool _hasSavedLayout;
+        private readonly Thickness _receiveMarginNormal = new(0, 0, 0, 2);
+        private readonly Thickness _sendMarginNormal = new(0, 2, 0, 0);
+        private GroupBox? _savedReceiveHostContent;
+        private GroupBox? _savedSendHostContent;
+        private GroupBox? _savedLcdHostContent;
+        private Point? _toastDragStartPoint;
+        private bool _showReceiveTimestamp = true;
+        private const int MaxPendingTxRequests = 512;
+        private readonly object _rxAssembleLock = new();
+        private readonly StringBuilder _rxAssembleBuffer = new();
+        private readonly List<byte> _rxPacketStream = [];
+        private readonly object _rxPacketLock = new();
+        private int _rxAssembleBytes;
+        private bool _rxAssembleHexMode;
+        private long _lastRxAssembleFlushTick;
+        private long _lastRxAssembleAppendTick;
+        private int _logScrollThrottleCounter;
+        private long _lastFrameDropNoticeTick;
+        private int _droppedFramePacketCount;
+        private int _droppedFrameBytes;
+        private bool _showFrameDropNotice = true;
+        private int _rxTextIdleFlushMs = DefaultRxAssembleTextIdleFlushMs;
+        private int _rxTextChunkGapBoundaryMs = DefaultRxAssembleTextChunkGapBoundaryMs;
+        private bool _enableUiAnimations = true;
+        private bool _allowWindowClose;
+        private bool _isWindowCloseAnimationRunning;
+        private bool _isWindowShutdownCompleted;
+
+        private ComboBox PortComboBoxCtl => (ComboBox)FindName("PortComboBox")!;
+        private ComboBox BaudRateComboBoxCtl => (ComboBox)FindName("BaudRateComboBox")!;
+        private ComboBox DataBitsComboBoxCtl => (ComboBox)FindName("DataBitsComboBox")!;
+        private ComboBox ParityComboBoxCtl => (ComboBox)FindName("ParityComboBox")!;
+        private ComboBox StopBitsComboBoxCtl => (ComboBox)FindName("StopBitsComboBox")!;
+        private ComboBox HandshakeComboBoxCtl => (ComboBox)FindName("HandshakeComboBox")!;
+        private ComboBox ReceiveModeComboBoxCtl => (ComboBox)FindName("ReceiveModeComboBox")!;
+        private ComboBox SendModeComboBoxCtl => (ComboBox)FindName("SendModeComboBox")!;
+        private RichTextBox ReceiveRichTextBoxCtl => (RichTextBox)FindName("ReceiveRichTextBox")!;
+        private TextBox SendTextBoxCtl => (TextBox)FindName("SendTextBox")!;
+        private TextBox SelectedFileTextBoxCtl => (TextBox)FindName("SelectedFileTextBox")!;
+        private ComboBox LineEndingComboBoxCtl => (ComboBox)FindName("LineEndingComboBox")!;
+        private CheckBox DtrEnableCheckBoxCtl => (CheckBox)FindName("DtrEnableCheckBox")!;
+        private CheckBox RtsEnableCheckBoxCtl => (CheckBox)FindName("RtsEnableCheckBox")!;
+        private CheckBox EnableLcdDecodeCheckBoxCtl => (CheckBox)FindName("EnableLcdDecodeCheckBox")!;
+        private CheckBox ReceiveTimestampCheckBoxCtl => (CheckBox)FindName("ReceiveTimestampCheckBox")!;
+        private CheckBox EnableUiAnimationCheckBoxCtl => (CheckBox)FindName("EnableUiAnimationCheckBox")!;
+        private ComboBox SendCommandComboBoxCtl => (ComboBox)FindName("SendCommandComboBox")!;
+        private Button OpenButtonCtl => (Button)FindName("OpenButton")!;
+        private Button CloseButtonCtl => (Button)FindName("CloseButton")!;
+        private Button RefreshButtonCtl => (Button)FindName("RefreshButton")!;
+        private TextBlock StatusTextBlockCtl => (TextBlock)FindName("StatusTextBlock")!;
+        private TextBlock PortDetailTextBlockCtl => (TextBlock)FindName("PortDetailTextBlock")!;
+        private TextBlock LcdFrameInfoTextBlockCtl => (TextBlock)FindName("LcdFrameInfoTextBlock")!;
+        private TextBlock LcdSpeedTextBlockCtl => (TextBlock)FindName("LcdSpeedTextBlock")!;
+        private Image LcdPreviewImageCtl => (Image)FindName("LcdPreviewImage")!;
+        private GroupBox ReceiveGroupBoxCtl => (GroupBox)FindName("ReceiveGroupBox")!;
+        private GroupBox SendGroupBoxCtl => (GroupBox)FindName("SendGroupBox")!;
+        private GroupBox LcdPreviewGroupBoxCtl => (GroupBox)FindName("LcdPreviewGroupBox")!;
+        private ContentControl ReceivePanelHostCtl => (ContentControl)FindName("ReceivePanelHost")!;
+        private ContentControl SendPanelHostCtl => (ContentControl)FindName("SendPanelHost")!;
+        private ContentControl LcdPanelHostCtl => (ContentControl)FindName("LcdPanelHost")!;
+        private Grid LeftPaneGridCtl => (Grid)FindName("LeftPaneGrid")!;
+        private Grid RightLcdGridCtl => (Grid)FindName("RightLcdGrid")!;
+        private TranslateTransform LeftPaneTranslateCtl => (TranslateTransform)FindName("LeftPaneTranslate")!;
+        private TranslateTransform RightPaneTranslateCtl => (TranslateTransform)FindName("RightPaneTranslate")!;
+        private RowDefinition LeftReceiveRowCtl => (RowDefinition)FindName("LeftReceiveRow")!;
+        private RowDefinition LeftSplitterRowCtl => (RowDefinition)FindName("LeftSplitterRow")!;
+        private RowDefinition LeftSendRowCtl => (RowDefinition)FindName("LeftSendRow")!;
+        private RowDefinition ReceiveAreaRowCtl => (RowDefinition)FindName("ReceiveAreaRow")!;
+        private RowDefinition LcdSplitterRowCtl => (RowDefinition)FindName("LcdSplitterRow")!;
+        private RowDefinition LcdAreaRowCtl => (RowDefinition)FindName("LcdAreaRow")!;
+        private ColumnDefinition LeftMainColumnCtl => (ColumnDefinition)FindName("LeftMainColumn")!;
+        private ColumnDefinition MiddleSplitterColumnCtl => (ColumnDefinition)FindName("MiddleSplitterColumn")!;
+        private ColumnDefinition RightLcdColumnCtl => (ColumnDefinition)FindName("RightLcdColumn")!;
+        private GridSplitter MainVerticalSplitterCtl => (GridSplitter)FindName("MainVerticalSplitter")!;
+        private Border ToastHostCtl => (Border)FindName("ToastHost")!;
+        private TextBlock ToastTextBlockCtl => (TextBlock)FindName("ToastTextBlock")!;
+        private TranslateTransform ToastTranslateCtl => (TranslateTransform)FindName("ToastTranslate")!;
+        private Border RootFrameBorderCtl => (Border)FindName("RootFrameBorder")!;
+        private TranslateTransform RootFrameTranslateCtl => (TranslateTransform)FindName("RootFrameTranslate")!;
+        private Button MainMaxRestoreButtonCtl => (Button)FindName("MainMaxRestoreButton")!;
+
+        public MainWindow()
+        {
+            InitializeComponent();
+            ApplyApplicationIcon();
+            _logFlushTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(33)
+            };
+            _logFlushTimer.Tick += (_, _) => FlushLogs();
+            _logFlushTimer.Start();
+
+            _toastTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(2200)
+            };
+            _toastTimer.Tick += (_, _) => HideToast(true);
+
+            _rxAssembleTimer = new Timer(_ => FlushRxAssembledLog(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            _lastRxAssembleFlushTick = Environment.TickCount64;
+            _lastRxAssembleAppendTick = _lastRxAssembleFlushTick;
+
+            PortComboBoxCtl.ItemsSource = _ports;
+            InitBaudRates();
+            InitSerialOptions();
+            InitPerformanceTuningOptions();
+            InitLcdPreview();
+            LoadConfig();
+            UpdateUiByConnectionState(false);
+        }
+
+        private void InitPerformanceTuningOptions()
+        {
+            _rxTextIdleFlushMs = DefaultRxAssembleTextIdleFlushMs;
+            _rxTextChunkGapBoundaryMs = DefaultRxAssembleTextChunkGapBoundaryMs;
+            _enableUiAnimations = EnableUiAnimationCheckBoxCtl.IsChecked != false;
+            _showFrameDropNotice = true;
+            EnableUiAnimationCheckBoxCtl.IsChecked = _enableUiAnimations;
+        }
+
+        private void AdvancedRxSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            AnimateUserAction(sender as UIElement);
+            ShowAdvancedRxSettingsDialog();
+        }
+
+        private void ShowAdvancedRxSettingsDialog()
+        {
+            var idleTextBox = new TextBox
+            {
+                Width = 120,
+                Text = _rxTextIdleFlushMs.ToString(),
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            var gapTextBox = new TextBox
+            {
+                Width = 120,
+                Text = _rxTextChunkGapBoundaryMs.ToString(),
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            var dropNoticeCheckBox = new CheckBox
+            {
+                Content = "提示 A0 丢弃（5s 一次）",
+                IsChecked = _showFrameDropNotice,
+                Margin = new Thickness(0, 0, 0, 14),
+                Foreground = Brushes.White
+            };
+
+            var resetButton = new Button
+            {
+                Content = "回到默认",
+                Width = 90,
+                Margin = new Thickness(0, 0, 8, 0),
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#475569")!)
+            };
+            var applyButton = new Button
+            {
+                Content = "应用",
+                Width = 86,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            var cancelButton = new Button
+            {
+                Content = "取消",
+                Width = 86,
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#64748B")!)
+            };
+
+            var dialog = new Window
+            {
+                Owner = this,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ResizeMode = ResizeMode.NoResize,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                MinWidth = 360,
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
+                ShowInTaskbar = false,
+                Background = Brushes.Transparent,
+                Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E2E8F0")!)
+            };
+            ConfigureChildDialogWindow(dialog);
+
+            dialog.Content = new Border
+                {
+                    CornerRadius = new CornerRadius(12),
+                    BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2234475A")!),
+                    BorderThickness = new Thickness(1),
+                    Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0F172A")!),
+                    Child = new StackPanel
+                    {
+                        Children =
+                        {
+                            CreatePopupTitleBar(dialog, "RX 高级参数"),
+                            new StackPanel
+                            {
+                                Margin = new Thickness(16),
+                                Children =
+                                {
+                                    new TextBlock { Text = "文本空闲 Flush (ms)", Margin = new Thickness(0, 0, 0, 4), FontWeight = FontWeights.SemiBold, Foreground = Brushes.White },
+                                    idleTextBox,
+                                    new TextBlock { Text = "Chunk 间隔阈值 (ms)", Margin = new Thickness(0, 0, 0, 4), FontWeight = FontWeights.SemiBold, Foreground = Brushes.White },
+                                    gapTextBox,
+                                    dropNoticeCheckBox,
+                                    new StackPanel
+                                    {
+                                        Orientation = Orientation.Horizontal,
+                                        HorizontalAlignment = HorizontalAlignment.Right,
+                                        Children = { resetButton, applyButton, cancelButton }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+            resetButton.Click += (_, _) =>
+            {
+                idleTextBox.Text = DefaultRxAssembleTextIdleFlushMs.ToString();
+                gapTextBox.Text = DefaultRxAssembleTextChunkGapBoundaryMs.ToString();
+                dropNoticeCheckBox.IsChecked = true;
+            };
+
+            applyButton.Click += (_, _) =>
+            {
+                _rxTextIdleFlushMs = ParseTuneMs(idleTextBox.Text, _rxTextIdleFlushMs);
+                _rxTextChunkGapBoundaryMs = ParseTuneMs(gapTextBox.Text, _rxTextChunkGapBoundaryMs);
+                _showFrameDropNotice = dropNoticeCheckBox.IsChecked == true;
+                if (!_showFrameDropNotice)
+                {
+                    Interlocked.Exchange(ref _droppedFramePacketCount, 0);
+                    Interlocked.Exchange(ref _droppedFrameBytes, 0);
+                }
+
+                ShowToast($"已应用高级参数：Idle={_rxTextIdleFlushMs}ms, Gap={_rxTextChunkGapBoundaryMs}ms");
+                dialog.DialogResult = true;
+                dialog.Close();
+            };
+
+            cancelButton.Click += (_, _) =>
+            {
+                dialog.DialogResult = false;
+                dialog.Close();
+            };
+
+            _ = dialog.ShowDialog();
+        }
+
+        private Border CreatePopupTitleBar(Window dialog, string title)
+        {
+            var titleText = new TextBlock
+            {
+                Text = title,
+                Foreground = Brushes.White,
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var minButton = new Button
+            {
+                Content = "—",
+                Style = (Style)FindResource("PopupTitleButtonStyle"),
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#334155")!)
+            };
+            var closeButton = new Button
+            {
+                Content = "✕",
+                Style = (Style)FindResource("PopupTitleCloseButtonStyle"),
+                Margin = new Thickness(0)
+            };
+
+            minButton.Click += (_, _) => dialog.WindowState = WindowState.Minimized;
+            closeButton.Click += (_, _) => dialog.Close();
+
+            var titleGrid = new Grid();
+            titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            titleGrid.Children.Add(titleText);
+
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            actions.Children.Add(minButton);
+            actions.Children.Add(closeButton);
+            Grid.SetColumn(actions, 1);
+            titleGrid.Children.Add(actions);
+
+            return new Border
+            {
+                Padding = new Thickness(14, 10, 14, 8),
+                BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1F334155")!),
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                CornerRadius = new CornerRadius(12, 12, 0, 0),
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0F172A")!),
+                Child = titleGrid
+            };
+        }
+
+        private void ConfigureChildDialogWindow(Window dialog)
+        {
+            dialog.RenderTransform = new TranslateTransform();
+            if (_enableUiAnimations)
+            {
+                dialog.Opacity = 0;
+                ((TranslateTransform)dialog.RenderTransform).Y = 10;
+            }
+
+            var allowDialogClose = false;
+            var isDialogCloseAnimating = false;
+            var entrancePlayed = false;
+
+            dialog.Loaded += (_, _) =>
+            {
+                if (entrancePlayed)
+                {
+                    return;
+                }
+
+                entrancePlayed = true;
+                PlayChildWindowEntranceAnimation(dialog);
+            };
+            dialog.Closing += (_, args) =>
+            {
+                if (!_enableUiAnimations || allowDialogClose || isDialogCloseAnimating)
+                {
+                    return;
+                }
+
+                args.Cancel = true;
+                isDialogCloseAnimating = true;
+                PlayChildWindowExitAnimation(dialog, () =>
+                {
+                    allowDialogClose = true;
+                    dialog.Close();
+                });
+            };
+
+            dialog.MouseLeftButtonDown += (_, args) =>
+            {
+                if (args.LeftButton == MouseButtonState.Pressed)
+                {
+                    dialog.DragMove();
+                }
+            };
+        }
+
+        private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                return;
+            }
+
+            if (e.ClickCount == 2)
+            {
+                ToggleMainWindowState();
+                return;
+            }
+
+            DragMove();
+        }
+
+        private void MainMinimizeButton_Click(object sender, RoutedEventArgs e)
+        {
+            WindowState = WindowState.Minimized;
+        }
+
+        private void MainMaxRestoreButton_Click(object sender, RoutedEventArgs e)
+        {
+            ToggleMainWindowState();
+        }
+
+        private void MainCloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            AnimateUserAction(sender as UIElement);
+            Close();
+        }
+
+        private void Window_StateChanged(object sender, EventArgs e)
+        {
+            if (!IsLoaded)
+            {
+                return;
+            }
+
+            MainMaxRestoreButtonCtl.Content = WindowState == WindowState.Maximized ? "❐" : "▢";
+            UpdateRootFrameByWindowState();
+        }
+
+        private void ToggleMainWindowState()
+        {
+            WindowState = WindowState == WindowState.Maximized
+                ? WindowState.Normal
+                : WindowState.Maximized;
+        }
+
+        private void EnableUiAnimationCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            AnimateUserAction(EnableUiAnimationCheckBoxCtl);
+            _enableUiAnimations = EnableUiAnimationCheckBoxCtl.IsChecked != false;
+            ShowToast(_enableUiAnimations ? "界面动画：开启" : "界面动画：关闭（性能优先）");
+        }
+
+        private static int ParseTuneMs(string? text, int fallback)
+        {
+            if (!int.TryParse(text, out var value))
+            {
+                value = fallback;
+            }
+
+            return Math.Clamp(value, MinRxTuneMs, MaxRxTuneMs);
+        }
+
+        private void EnableLcdDecodeCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            AnimateUserAction(EnableLcdDecodeCheckBoxCtl);
+            _lcdDecodeEnabled = EnableLcdDecodeCheckBoxCtl.IsChecked == true;
+            Interlocked.Increment(ref _lcdDecodeSession);
+
+            lock (_lcdStreamLock)
+            {
+                _lcdStream.Clear();
+            }
+
+            _lcdBytesCounter = 0;
+            _lastLcdStatsTick = Environment.TickCount64;
+            UpdateLcdPreviewVisibility();
+            ShowToast(_lcdDecodeEnabled ? "已启用 LCD 帧解析" : "已关闭 LCD 帧解析（RX/TX 分栏）");
+        }
+
+        private void ReceiveModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            AnimateUserAction(ReceiveModeComboBoxCtl);
+            FlushRxAssembledLog();
+            _receiveHexMode = GetSelectedModeText(ReceiveModeComboBoxCtl) == "HEX";
+        }
+
+        private void ReceiveTimestampCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            AnimateUserAction(ReceiveTimestampCheckBoxCtl);
+            _showReceiveTimestamp = ReceiveTimestampCheckBoxCtl.IsChecked == true;
+            if (!IsLoaded)
+            {
+                return;
+            }
+
+            ShowToast(_showReceiveTimestamp ? "接收区时间戳：开启" : "接收区时间戳：关闭");
+        }
+
+        private void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            UpdateRootFrameByWindowState();
+            PlayWindowEntranceAnimation();
+            RefreshPorts();
+        }
+
+        private void ApplyApplicationIcon()
+        {
+            try
+            {
+                Icon = Imaging.CreateBitmapSourceFromHIcon(System.Drawing.SystemIcons.Application.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
+        private void UpdateRootFrameByWindowState()
+        {
+            if (WindowState == WindowState.Maximized)
+            {
+                RootFrameBorderCtl.Margin = new Thickness(7);
+                RootFrameBorderCtl.CornerRadius = new CornerRadius(0);
+                return;
+            }
+
+            RootFrameBorderCtl.Margin = new Thickness(0);
+            RootFrameBorderCtl.CornerRadius = new CornerRadius(12);
+        }
+
+        private void PlayWindowEntranceAnimation()
+        {
+            if (!_enableUiAnimations)
+            {
+                RootFrameBorderCtl.Opacity = 1;
+                RootFrameTranslateCtl.Y = 0;
+                return;
+            }
+
+            RootFrameBorderCtl.Opacity = 0;
+            RootFrameTranslateCtl.Y = 18;
+
+            var duration = TimeSpan.FromMilliseconds(280);
+            RootFrameBorderCtl.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, duration)
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+            });
+
+            RootFrameTranslateCtl.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(18, 0, duration)
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+        }
+
+        private void PlayWindowExitAnimation(Action onCompleted)
+        {
+            if (!_enableUiAnimations)
+            {
+                onCompleted();
+                return;
+            }
+
+            var duration = TimeSpan.FromMilliseconds(180);
+            var fade = new DoubleAnimation(1, 0, duration)
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn }
+            };
+            fade.Completed += (_, _) => onCompleted();
+
+            RootFrameBorderCtl.BeginAnimation(OpacityProperty, fade);
+            RootFrameTranslateCtl.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, 12, duration)
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+            });
+        }
+
+        private void PlayChildWindowEntranceAnimation(Window dialog)
+        {
+            if (!_enableUiAnimations)
+            {
+                dialog.Opacity = 1;
+                if (dialog.RenderTransform is TranslateTransform noAnimationTransform)
+                {
+                    noAnimationTransform.Y = 0;
+                }
+
+                return;
+            }
+
+            if (dialog.RenderTransform is TranslateTransform translate)
+            {
+                translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(10, 0, TimeSpan.FromMilliseconds(135))
+                {
+                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseOut }
+                });
+            }
+
+            dialog.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(135))
+            {
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseOut }
+            });
+        }
+
+        private void PlayChildWindowExitAnimation(Window dialog, Action onCompleted)
+        {
+            if (!_enableUiAnimations)
+            {
+                onCompleted();
+                return;
+            }
+
+            var fade = new DoubleAnimation(dialog.Opacity, 0, TimeSpan.FromMilliseconds(120))
+            {
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseIn }
+            };
+            fade.Completed += (_, _) => onCompleted();
+            dialog.BeginAnimation(OpacityProperty, fade);
+
+            if (dialog.RenderTransform is TranslateTransform translate)
+            {
+                translate.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, 8, TimeSpan.FromMilliseconds(120))
+                {
+                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseIn }
+                });
+            }
+        }
+
+        private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+        {
+            if (!_allowWindowClose && !_isWindowCloseAnimationRunning && _enableUiAnimations)
+            {
+                e.Cancel = true;
+                _isWindowCloseAnimationRunning = true;
+                PlayWindowExitAnimation(() =>
+                {
+                    _allowWindowClose = true;
+                    Close();
+                });
+                return;
+            }
+
+            if (_isWindowShutdownCompleted)
+            {
+                return;
+            }
+
+            _isWindowShutdownCompleted = true;
+            _rxAssembleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            FlushRxAssembledLog();
+            _rxAssembleTimer.Dispose();
+            CloseSerialPort();
+            SaveConfig();
+            _logFlushTimer.Stop();
+        }
+
+        private void InitBaudRates()
+        {
+            int[] baudRates =
+            [
+                110,
+                300,
+                600,
+                1200,
+                2400,
+                4800,
+                9600,
+                14400,
+                19200,
+                28800,
+                38400,
+                56000,
+                57600,
+                76800,
+                115200,
+                128000,
+                153600,
+                230400,
+                256000,
+                460800,
+                500000,
+                576000,
+                921600,
+                1000000,
+                1152000,
+                1500000,
+                2000000
+            ];
+            foreach (var baudRate in baudRates)
+            {
+                BaudRateComboBoxCtl.Items.Add(baudRate);
+            }
+
+            BaudRateComboBoxCtl.SelectedItem = 115200;
+        }
+
+        private void InitSerialOptions()
+        {
+            DataBitsComboBoxCtl.Items.Add(5);
+            DataBitsComboBoxCtl.Items.Add(6);
+            DataBitsComboBoxCtl.Items.Add(7);
+            DataBitsComboBoxCtl.Items.Add(8);
+            DataBitsComboBoxCtl.SelectedItem = 8;
+
+            AddEnumOption(ParityComboBoxCtl, Parity.None, "None");
+            AddEnumOption(ParityComboBoxCtl, Parity.Odd, "Odd");
+            AddEnumOption(ParityComboBoxCtl, Parity.Even, "Even");
+            AddEnumOption(ParityComboBoxCtl, Parity.Mark, "Mark");
+            AddEnumOption(ParityComboBoxCtl, Parity.Space, "Space");
+            ParityComboBoxCtl.SelectedIndex = 0;
+
+            AddEnumOption(StopBitsComboBoxCtl, StopBits.One, "1");
+            AddEnumOption(StopBitsComboBoxCtl, StopBits.OnePointFive, "1.5");
+            AddEnumOption(StopBitsComboBoxCtl, StopBits.Two, "2");
+            StopBitsComboBoxCtl.SelectedIndex = 0;
+
+            AddEnumOption(HandshakeComboBoxCtl, Handshake.None, "None");
+            AddEnumOption(HandshakeComboBoxCtl, Handshake.XOnXOff, "XOnXOff");
+            AddEnumOption(HandshakeComboBoxCtl, Handshake.RequestToSend, "RTS/CTS");
+            AddEnumOption(HandshakeComboBoxCtl, Handshake.RequestToSendXOnXOff, "RTS/CTS + XOnXOff");
+            HandshakeComboBoxCtl.SelectedIndex = 0;
+
+            DtrEnableCheckBoxCtl.IsChecked = true;
+            RtsEnableCheckBoxCtl.IsChecked = true;
+            _lcdDecodeEnabled = EnableLcdDecodeCheckBoxCtl.IsChecked == true;
+            _receiveHexMode = GetSelectedModeText(ReceiveModeComboBoxCtl) == "HEX";
+            _showReceiveTimestamp = ReceiveTimestampCheckBoxCtl.IsChecked == true;
+            LineEndingComboBoxCtl.SelectedIndex = 0;
+        }
+
+        private static void AddEnumOption<T>(ComboBox comboBox, T value, string text) where T : struct
+        {
+            comboBox.Items.Add(new SerialOption<T>(value, text));
+        }
+
+        private void RefreshButton_Click(object sender, RoutedEventArgs e)
+        {
+            AnimateUserAction(RefreshButtonCtl);
+            RefreshPorts();
+            ShowToast("串口列表已刷新");
+        }
+
+        private void RefreshPorts()
+        {
+            var selectedPortName = (PortComboBoxCtl.SelectedItem as SerialPortInfo)?.PortName;
+            _ports.Clear();
+
+            foreach (var port in GetSerialPortInfos())
+            {
+                _ports.Add(port);
+            }
+
+            if (_ports.Count == 0)
+            {
+                StatusTextBlockCtl.Text = "状态：未发现可用串口";
+                PortComboBoxCtl.SelectedIndex = -1;
+                return;
+            }
+
+            var previous = _ports.FirstOrDefault(p => p.PortName == selectedPortName);
+            var preferred = _ports.FirstOrDefault(p => string.Equals(p.PortName, _preferredPortName, StringComparison.OrdinalIgnoreCase));
+            PortComboBoxCtl.SelectedItem = previous ?? preferred ?? _ports[0];
+            UpdatePortDetail();
+            StatusTextBlockCtl.Text = "状态：串口列表已刷新";
+        }
+
+        private void PortComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            AnimateUserAction(PortComboBoxCtl);
+            UpdatePortDetail();
+        }
+
+        private void UpdatePortDetail()
+        {
+            if (PortComboBoxCtl.SelectedItem is not SerialPortInfo selectedPort)
+            {
+                PortDetailTextBlockCtl.Text = "端口详情：未选择";
+                return;
+            }
+
+            PortDetailTextBlockCtl.Text = $"端口详情：{selectedPort.DisplayText}";
+        }
+
+        private void InitLcdPreview()
+        {
+            _lcdBitmap = new WriteableBitmap(LcdWidth, LcdHeight, 96, 96, PixelFormats.Bgra32, null);
+            LcdPreviewImageCtl.Source = _lcdBitmap;
+            LcdFrameInfoTextBlockCtl.Text = "LCD帧：0";
+            LcdSpeedTextBlockCtl.Text = "速率：0.0 KB/s";
+            UpdateLcdPreviewVisibility();
+        }
+
+        private void UpdateLcdPreviewVisibility()
+        {
+            var visible = _lcdDecodeEnabled;
+            if (visible)
+            {
+                RestoreLcdLayout();
+            }
+            else
+            {
+                if (LcdPanelHostCtl.Content == LcdPreviewGroupBoxCtl)
+                {
+                    SaveCurrentLcdLayout();
+                }
+                ArrangeLayoutWithoutLcd();
+            }
+
+            LcdPreviewGroupBoxCtl.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            ReceiveAreaRowCtl.Height = new GridLength(0);
+            LcdSplitterRowCtl.Height = new GridLength(0);
+            LcdAreaRowCtl.Height = new GridLength(1, GridUnitType.Star);
+
+            LeftMainColumnCtl.MinWidth = 360;
+            MainVerticalSplitterCtl.IsEnabled = true;
+            MainVerticalSplitterCtl.Visibility = Visibility.Visible;
+
+            PlayLayoutAnimation(visible);
+
+            if (!visible)
+            {
+                LcdSpeedTextBlockCtl.Text = "速率：0.0 KB/s";
+            }
+        }
+
+        private void PlayLayoutAnimation(bool showLcd)
+        {
+            if (!_enableUiAnimations)
+            {
+                LeftPaneTranslateCtl.X = 0;
+                LeftPaneTranslateCtl.Y = 0;
+                RightPaneTranslateCtl.X = 0;
+                RightPaneTranslateCtl.Y = 0;
+                LeftPaneGridCtl.Opacity = 1.0;
+                RightLcdGridCtl.Opacity = 1.0;
+                return;
+            }
+
+            var duration = TimeSpan.FromMilliseconds(220);
+            var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+
+            LeftPaneTranslateCtl.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(showLcd ? -10 : -5, 0, duration)
+                {
+                    EasingFunction = easing
+                });
+
+            LeftPaneTranslateCtl.BeginAnimation(TranslateTransform.YProperty,
+                new DoubleAnimation(showLcd ? 5 : 2, 0, duration)
+                {
+                    EasingFunction = easing
+                });
+
+            RightPaneTranslateCtl.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(showLcd ? -8 : -4, 0, duration)
+                {
+                    EasingFunction = easing
+                });
+
+            RightPaneTranslateCtl.BeginAnimation(TranslateTransform.YProperty,
+                new DoubleAnimation(showLcd ? 4 : 2, 0, duration)
+                {
+                    EasingFunction = easing
+                });
+
+            AnimatePanelScale(LeftPaneGridCtl, showLcd ? 0.994 : 0.997, duration);
+            AnimatePanelScale(RightLcdGridCtl, showLcd ? 0.992 : 0.996, duration);
+
+            RightLcdGridCtl.BeginAnimation(OpacityProperty,
+                new DoubleAnimation(0.9, 1.0, duration)
+                {
+                    EasingFunction = easing
+                });
+
+            LeftPaneGridCtl.BeginAnimation(OpacityProperty,
+                new DoubleAnimation(0.94, 1.0, duration)
+                {
+                    EasingFunction = easing
+                });
+        }
+
+        private static void AnimatePanelScale(UIElement element, double from, TimeSpan duration)
+        {
+            ScaleTransform scale;
+            if (element.RenderTransform is ScaleTransform s)
+            {
+                scale = s;
+            }
+            else if (element.RenderTransform is TransformGroup g)
+            {
+                scale = g.Children.OfType<ScaleTransform>().FirstOrDefault() ?? new ScaleTransform(1, 1);
+                if (!g.Children.Contains(scale))
+                {
+                    g.Children.Insert(0, scale);
+                }
+            }
+            else
+            {
+                var group = new TransformGroup();
+                scale = new ScaleTransform(1, 1);
+                if (element.RenderTransform != null && element.RenderTransform != Transform.Identity)
+                {
+                    group.Children.Add(element.RenderTransform);
+                }
+
+                group.Children.Insert(0, scale);
+                element.RenderTransform = group;
+            }
+
+            element.RenderTransformOrigin = new Point(0.5, 0.5);
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(from, 1.0, duration)
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(from, 1.0, duration)
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+        }
+
+        private void SaveCurrentLcdLayout()
+        {
+            if (RightLcdColumnCtl.Width.Value <= 0)
+            {
+                return;
+            }
+
+            _savedLeftMainColumnWidth = LeftMainColumnCtl.Width;
+            _savedRightLcdColumnWidth = RightLcdColumnCtl.Width;
+            _savedRightLcdMinWidth = RightLcdColumnCtl.MinWidth;
+            _savedReceiveRowHeight = LeftReceiveRowCtl.Height;
+            _savedSendRowHeight = LeftSendRowCtl.Height;
+            _savedReceiveRowMinHeight = LeftReceiveRowCtl.MinHeight;
+            _savedSendRowMinHeight = LeftSendRowCtl.MinHeight;
+            _savedReceiveHostContent = ReceivePanelHostCtl.Content as GroupBox;
+            _savedSendHostContent = SendPanelHostCtl.Content as GroupBox;
+            _savedLcdHostContent = LcdPanelHostCtl.Content as GroupBox;
+            _hasSavedLayout = true;
+        }
+
+        private void RestoreLcdLayout()
+        {
+            ReceivePanelHostCtl.Content = _hasSavedLayout && _savedReceiveHostContent != null ? _savedReceiveHostContent : ReceiveGroupBoxCtl;
+            SendPanelHostCtl.Content = _hasSavedLayout && _savedSendHostContent != null ? _savedSendHostContent : SendGroupBoxCtl;
+            LcdPanelHostCtl.Content = _hasSavedLayout && _savedLcdHostContent != null ? _savedLcdHostContent : LcdPreviewGroupBoxCtl;
+            ReceiveGroupBoxCtl.Margin = _receiveMarginNormal;
+            SendGroupBoxCtl.Margin = _sendMarginNormal;
+            LcdPreviewGroupBoxCtl.Margin = new Thickness(0, 0, 0, 8);
+
+            LeftReceiveRowCtl.Height = _hasSavedLayout ? _savedReceiveRowHeight : new GridLength(1.0, GridUnitType.Star);
+            LeftSplitterRowCtl.Height = new GridLength(4);
+            LeftSendRowCtl.Height = _hasSavedLayout ? _savedSendRowHeight : new GridLength(1.28, GridUnitType.Star);
+            LeftReceiveRowCtl.MinHeight = _hasSavedLayout ? _savedReceiveRowMinHeight : 70;
+            LeftSendRowCtl.MinHeight = _hasSavedLayout ? _savedSendRowMinHeight : 126;
+
+            LeftMainColumnCtl.Width = _hasSavedLayout ? _savedLeftMainColumnWidth : new GridLength(1.6, GridUnitType.Star);
+            MiddleSplitterColumnCtl.Width = new GridLength(4);
+            RightLcdColumnCtl.MinWidth = _hasSavedLayout ? _savedRightLcdMinWidth : 320;
+            RightLcdColumnCtl.Width = _hasSavedLayout ? _savedRightLcdColumnWidth : new GridLength(1, GridUnitType.Star);
+
+            SendGroupBoxCtl.Visibility = Visibility.Visible;
+            ReceiveGroupBoxCtl.Visibility = Visibility.Visible;
+        }
+
+        private void ArrangeLayoutWithoutLcd()
+        {
+            ReceivePanelHostCtl.Content = ReceiveGroupBoxCtl;
+            LcdPanelHostCtl.Content = SendGroupBoxCtl;
+            SendPanelHostCtl.Content = LcdPreviewGroupBoxCtl;
+            ReceiveGroupBoxCtl.Margin = new Thickness(0);
+            SendGroupBoxCtl.Margin = new Thickness(0);
+
+            LeftReceiveRowCtl.Height = new GridLength(1, GridUnitType.Star);
+            LeftSplitterRowCtl.Height = new GridLength(0);
+            LeftSendRowCtl.Height = new GridLength(0);
+            LeftReceiveRowCtl.MinHeight = 0;
+            LeftSendRowCtl.MinHeight = 0;
+
+            LeftMainColumnCtl.Width = new GridLength(1, GridUnitType.Star);
+            MiddleSplitterColumnCtl.Width = new GridLength(4);
+            RightLcdColumnCtl.MinWidth = 0;
+            RightLcdColumnCtl.Width = new GridLength(1, GridUnitType.Star);
+            LcdPreviewGroupBoxCtl.Margin = new Thickness(0);
+
+            SendGroupBoxCtl.Visibility = Visibility.Visible;
+            ReceiveGroupBoxCtl.Visibility = Visibility.Visible;
+        }
+
+        private void GridSplitter_DragCompleted(object sender, DragCompletedEventArgs e)
+        {
+            if (sender is not GridSplitter splitter)
+            {
+                return;
+            }
+
+            if (!_enableUiAnimations)
+            {
+                if (_lcdDecodeEnabled)
+                {
+                    SaveCurrentLcdLayout();
+                }
+                return;
+            }
+
+            var duration = TimeSpan.FromMilliseconds(260);
+            if (splitter.Name == "MainVerticalSplitter")
+            {
+                LeftPaneTranslateCtl.BeginAnimation(TranslateTransform.XProperty, CreateSpringAnimation(0, 9, duration));
+                if (RightLcdColumnCtl.Width.Value > 0)
+                {
+                    RightPaneTranslateCtl.BeginAnimation(TranslateTransform.XProperty, CreateSpringAnimation(0, -9, duration));
+                }
+            }
+            else
+            {
+                LeftPaneTranslateCtl.BeginAnimation(TranslateTransform.YProperty, CreateSpringAnimation(0, 8, duration));
+            }
+
+            LeftPaneGridCtl.BeginAnimation(OpacityProperty,
+                new DoubleAnimation(0.92, 1.0, duration)
+                {
+                    EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+                });
+            if (RightLcdColumnCtl.Width.Value > 0)
+            {
+                RightLcdGridCtl.BeginAnimation(OpacityProperty,
+                    new DoubleAnimation(0.9, 1.0, duration)
+                    {
+                        EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+                    });
+            }
+
+            if (_lcdDecodeEnabled)
+            {
+                SaveCurrentLcdLayout();
+            }
+        }
+
+        private void PanelDrag_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not GroupBox groupBox)
+            {
+                return;
+            }
+
+            if (e.GetPosition(groupBox).Y > 34)
+            {
+                _panelDragStartPoint = null;
+                _dragSourceGroupBox = null;
+                return;
+            }
+
+            var source = e.OriginalSource as DependencyObject;
+            if (FindVisualParent<TextBoxBase>(source) != null || FindVisualParent<Button>(source) != null || FindVisualParent<ComboBox>(source) != null)
+            {
+                _panelDragStartPoint = null;
+                _dragSourceGroupBox = null;
+                return;
+            }
+
+            _panelDragStartPoint = e.GetPosition(this);
+            _dragSourceGroupBox = groupBox;
+        }
+
+        private void PanelDrag_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            _panelDragStartPoint = null;
+            _dragSourceGroupBox = null;
+        }
+
+        private void PanelDrag_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (_panelDragStartPoint == null || _dragSourceGroupBox == null || e.LeftButton != MouseButtonState.Pressed)
+            {
+                return;
+            }
+
+            var current = e.GetPosition(this);
+            var offset = current - _panelDragStartPoint.Value;
+            if (Math.Abs(offset.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(offset.Y) < SystemParameters.MinimumVerticalDragDistance)
+            {
+                return;
+            }
+
+            var sourceGroupBox = _dragSourceGroupBox;
+            _panelDragStartPoint = null;
+            _dragSourceGroupBox = null;
+            DragDrop.DoDragDrop(sourceGroupBox, sourceGroupBox, DragDropEffects.Move);
+        }
+
+        private void PanelDrop_DragOver(object sender, DragEventArgs e)
+        {
+            if (sender is GroupBox targetGroupBox && e.Data.GetData(typeof(GroupBox)) is GroupBox sourceGroupBox && sourceGroupBox != targetGroupBox)
+            {
+                e.Effects = DragDropEffects.Move;
+            }
+            else
+            {
+                e.Effects = DragDropEffects.None;
+            }
+
+            e.Handled = true;
+        }
+
+        private void PanelDrop_Drop(object sender, DragEventArgs e)
+        {
+            if (sender is not GroupBox targetGroupBox || e.Data.GetData(typeof(GroupBox)) is not GroupBox sourceGroupBox || sourceGroupBox == targetGroupBox)
+            {
+                return;
+            }
+
+            SwapPanelGroupBox(sourceGroupBox, targetGroupBox);
+            if (_lcdDecodeEnabled)
+            {
+                SaveCurrentLcdLayout();
+            }
+            AnimateUserAction(targetGroupBox);
+            e.Handled = true;
+        }
+
+        private void AnimateUserAction(UIElement? element)
+        {
+            if (element == null || !_enableUiAnimations)
+            {
+                return;
+            }
+
+            ScaleTransform scale;
+            if (element.RenderTransform is ScaleTransform existingScale)
+            {
+                scale = existingScale;
+            }
+            else if (element.RenderTransform is TransformGroup transformGroup)
+            {
+                scale = transformGroup.Children.OfType<ScaleTransform>().FirstOrDefault() ?? new ScaleTransform(1, 1);
+                if (!transformGroup.Children.Contains(scale))
+                {
+                    transformGroup.Children.Insert(0, scale);
+                }
+            }
+            else
+            {
+                var group = new TransformGroup();
+                scale = new ScaleTransform(1, 1);
+                if (element.RenderTransform != null && element.RenderTransform != Transform.Identity)
+                {
+                    group.Children.Add(element.RenderTransform);
+                }
+
+                group.Children.Insert(0, scale);
+                element.RenderTransform = group;
+            }
+
+            element.RenderTransformOrigin = new Point(0.5, 0.5);
+
+            var duration = TimeSpan.FromMilliseconds(130);
+            var keyframesX = new DoubleAnimationUsingKeyFrames { Duration = duration };
+            keyframesX.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromPercent(0.0)));
+            keyframesX.KeyFrames.Add(new EasingDoubleKeyFrame(0.985, KeyTime.FromPercent(0.5))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+            });
+            keyframesX.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromPercent(1.0))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn }
+            });
+
+            var keyframesY = keyframesX.Clone();
+
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, keyframesX);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, keyframesY);
+            element.BeginAnimation(OpacityProperty, new DoubleAnimation(0.93, 1, duration)
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+            });
+        }
+
+        private static void SwapPanelGroupBox(GroupBox first, GroupBox second)
+        {
+            if (first.Parent is not ContentControl firstHost || second.Parent is not ContentControl secondHost || firstHost == secondHost)
+            {
+                return;
+            }
+
+            var firstContent = firstHost.Content;
+            firstHost.Content = secondHost.Content;
+            secondHost.Content = firstContent;
+        }
+
+        private static DoubleAnimationUsingKeyFrames CreateSpringAnimation(double center, double offset, TimeSpan duration)
+        {
+            var animation = new DoubleAnimationUsingKeyFrames { Duration = duration };
+            animation.KeyFrames.Add(new EasingDoubleKeyFrame(center, KeyTime.FromPercent(0.0)));
+            animation.KeyFrames.Add(new EasingDoubleKeyFrame(center + offset, KeyTime.FromPercent(0.28))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+            animation.KeyFrames.Add(new EasingDoubleKeyFrame(center - offset * 0.45, KeyTime.FromPercent(0.62))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
+            });
+            animation.KeyFrames.Add(new EasingDoubleKeyFrame(center, KeyTime.FromPercent(1.0))
+            {
+                EasingFunction = new BounceEase { Bounces = 1, Bounciness = 2.2, EasingMode = EasingMode.EaseOut }
+            });
+            return animation;
+        }
+
+        private static T? FindVisualParent<T>(DependencyObject? dependencyObject) where T : DependencyObject
+        {
+            var current = dependencyObject;
+            while (current != null)
+            {
+                if (current is T typed)
+                {
+                    return typed;
+                }
+
+                current = VisualTreeHelper.GetParent(current);
+            }
+
+            return null;
+        }
+
+        private static IEnumerable<SerialPortInfo> GetSerialPortInfos()
+        {
+            var list = new List<SerialPortInfo>();
+
+            try
+            {
+                using var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_PnPEntity WHERE Name LIKE '%(COM%'");
+                foreach (var obj in searcher.Get())
+                {
+                    var name = obj["Name"]?.ToString();
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        continue;
+                    }
+
+                    var start = name.LastIndexOf("(COM", StringComparison.OrdinalIgnoreCase);
+                    var end = name.LastIndexOf(')');
+                    if (start < 0 || end <= start)
+                    {
+                        continue;
+                    }
+
+                    var portName = name.Substring(start + 1, end - start - 1);
+                    list.Add(new SerialPortInfo(portName, name));
+                }
+            }
+            catch
+            {
+                foreach (var port in SerialPort.GetPortNames())
+                {
+                    list.Add(new SerialPortInfo(port, $"{port} (无详细描述)"));
+                }
+            }
+
+            foreach (var port in SerialPort.GetPortNames())
+            {
+                if (list.All(p => !string.Equals(p.PortName, port, StringComparison.OrdinalIgnoreCase)))
+                {
+                    list.Add(new SerialPortInfo(port, $"{port} (无详细描述)"));
+                }
+            }
+
+            return list
+                .OrderBy(p => p.PortName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private void OpenButton_Click(object sender, RoutedEventArgs e)
+        {
+            AnimateUserAction(sender as UIElement);
+            if (_serialPort?.IsOpen == true)
+            {
+                return;
+            }
+
+            if (PortComboBoxCtl.SelectedItem is not SerialPortInfo selectedPort)
+            {
+                MessageBox.Show("请先选择串口。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (BaudRateComboBoxCtl.SelectedItem is not int baudRate)
+            {
+                MessageBox.Show("请先选择波特率。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (DataBitsComboBoxCtl.SelectedItem is not int dataBits)
+            {
+                MessageBox.Show("请先选择数据位。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var parity = GetSelectedEnum(ParityComboBoxCtl, Parity.None);
+            var stopBits = GetSelectedEnum(StopBitsComboBoxCtl, StopBits.One);
+            var handshake = GetSelectedEnum(HandshakeComboBoxCtl, Handshake.None);
+            var dtr = DtrEnableCheckBoxCtl.IsChecked == true;
+            var rts = RtsEnableCheckBoxCtl.IsChecked == true;
+
+            try
+            {
+                _serialPort = new SerialPort(selectedPort.PortName, baudRate, parity, dataBits, stopBits)
+                {
+                    Encoding = Encoding.ASCII,
+                    ReadTimeout = 1000,
+                    WriteTimeout = 1000,
+                    Handshake = handshake,
+                    DtrEnable = dtr,
+                    RtsEnable = rts
+                };
+
+                _serialPort.Open();
+                StartSerialReader(_serialPort);
+                StartSerialWriter(_serialPort);
+                lock (_lcdStreamLock)
+                {
+                    _lcdStream.Clear();
+                }
+                while (_txQueue.TryDequeue(out _))
+                {
+                }
+                _pendingTxCount = 0;
+                _lcdFrameIndex = 0;
+                _lcdBytesCounter = 0;
+                _lastLcdStatsTick = Environment.TickCount64;
+                Interlocked.Increment(ref _lcdDecodeSession);
+                _ = Dispatcher.InvokeAsync(() =>
+                {
+                    LcdFrameInfoTextBlockCtl.Text = "LCD帧：0";
+                    _lcdBitmap?.WritePixels(new Int32Rect(0, 0, LcdWidth, LcdHeight), new byte[FramePixels * 4], LcdWidth * 4, 0);
+                });
+
+                UpdateUiByConnectionState(true);
+                StatusTextBlockCtl.Text = $"状态：已连接 {selectedPort.PortName} @ {baudRate} {dataBits}{GetParityShortName(parity)}{GetStopBitsShortName(stopBits)} | Flow={handshake} DTR={(dtr ? "On" : "Off")} RTS={(rts ? "On" : "Off")}";
+                AppendSystemLog($"打开串口成功：{selectedPort.DisplayText}");
+                ShowToast($"串口已打开：{selectedPort.PortName}");
+                _preferredPortName = selectedPort.PortName;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"打开串口失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                CloseSerialPort();
+            }
+        }
+
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            AnimateUserAction(sender as UIElement);
+            CloseSerialPort();
+        }
+
+        private void CloseSerialPort()
+        {
+            if (_serialPort == null)
+            {
+                FlushRxAssembledLog();
+                UpdateUiByConnectionState(false);
+                StatusTextBlockCtl.Text = "状态：未连接";
+                return;
+            }
+
+            try
+            {
+                _readerCts?.Cancel();
+                _writerCts?.Cancel();
+                _txQueueSignal.Release();
+                var readerTask = _readerTask;
+                if (readerTask != null && !readerTask.IsCompleted)
+                {
+                    readerTask.Wait(500);
+                }
+
+                var writerTask = _writerTask;
+                if (writerTask != null && !writerTask.IsCompleted)
+                {
+                    writerTask.Wait(500);
+                }
+
+                if (_serialPort.IsOpen)
+                {
+                    _serialPort.Close();
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+            finally
+            {
+                FlushRxAssembledLog();
+                _serialPort.Dispose();
+                _serialPort = null;
+                _readerCts?.Dispose();
+                _readerCts = null;
+                _readerTask = null;
+                _writerCts?.Dispose();
+                _writerCts = null;
+                _writerTask = null;
+                while (_txQueue.TryDequeue(out _))
+                {
+                }
+                _pendingTxCount = 0;
+                UpdateUiByConnectionState(false);
+                StatusTextBlockCtl.Text = "状态：已断开";
+                AppendSystemLog("串口已关闭");
+                ShowToast("串口已关闭");
+            }
+        }
+
+        private void StartSerialWriter(SerialPort port)
+        {
+            _writerCts?.Cancel();
+            _writerCts?.Dispose();
+            _writerCts = new CancellationTokenSource();
+            var token = _writerCts.Token;
+
+            _writerTask = Task.Run(async () =>
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await _txQueueSignal.WaitAsync(token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+
+                    while (_txQueue.TryDequeue(out var request))
+                    {
+                        Interlocked.Decrement(ref _pendingTxCount);
+                        if (token.IsCancellationRequested)
+                        {
+                            break;
+                        }
+
+                        try
+                        {
+                            await Dispatcher.InvokeAsync(() => AppendTxLog(request.LogText));
+                            await _sendLock.WaitAsync(token);
+                            try
+                            {
+                                await port.BaseStream.WriteAsync(request.Bytes.AsMemory(0, request.Bytes.Length), token);
+                                await port.BaseStream.FlushAsync(token);
+                            }
+                            finally
+                            {
+                                _sendLock.Release();
+                            }
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            return;
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            return;
+                        }
+                        catch (Exception ex)
+                        {
+                            await Dispatcher.InvokeAsync(() =>
+                            {
+                                AppendSystemLog($"[错误] 发送失败：{ex.Message}");
+                            });
+                        }
+                    }
+                }
+            }, token);
+        }
+
+        private void StartSerialReader(SerialPort port)
+        {
+            _readerCts?.Cancel();
+            _readerCts?.Dispose();
+            _readerCts = new CancellationTokenSource();
+            var token = _readerCts.Token;
+
+            _readerTask = Task.Run(async () =>
+            {
+                var buffer = new byte[4096];
+
+                while (!token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        var read = await port.BaseStream.ReadAsync(buffer.AsMemory(0, buffer.Length), token);
+                        if (read <= 0)
+                        {
+                            continue;
+                        }
+
+                        var incoming = new byte[read];
+                        Buffer.BlockCopy(buffer, 0, incoming, 0, read);
+                        HandleIncomingBytes(incoming);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            AppendSystemLog($"[错误] 接收数据异常：{ex.Message}");
+                        });
+                    }
+                }
+            }, token);
+        }
+
+        private void HandleIncomingBytes(byte[] buffer)
+        {
+            var session = _lcdDecodeSession;
+            List<RxPacket> packets = [];
+
+            lock (_rxPacketLock)
+            {
+                if (buffer.Length > RxPacketStreamCapacity)
+                {
+                    buffer = buffer[^RxPacketStreamCapacity..];
+                }
+
+                if (_rxPacketStream.Count + buffer.Length > RxPacketStreamCapacity)
+                {
+                    var keep = Math.Min(RxPacketHeaderBytes - 1, _rxPacketStream.Count);
+                    if (_rxPacketStream.Count > keep)
+                    {
+                        _rxPacketStream.RemoveRange(0, _rxPacketStream.Count - keep);
+                    }
+                }
+
+                _rxPacketStream.AddRange(buffer);
+
+                while (_rxPacketStream.Count >= RxPacketHeaderBytes)
+                {
+                    var start = FindRxPacketStart(_rxPacketStream);
+                    if (start < 0)
+                    {
+                        var keep = Math.Min(RxPacketHeaderBytes - 1, _rxPacketStream.Count);
+                        if (_rxPacketStream.Count > keep)
+                        {
+                            _rxPacketStream.RemoveRange(0, _rxPacketStream.Count - keep);
+                        }
+
+                        break;
+                    }
+
+                    if (start > 0)
+                    {
+                        _rxPacketStream.RemoveRange(0, start);
+                    }
+
+                    if (_rxPacketStream.Count < RxPacketHeaderBytes)
+                    {
+                        break;
+                    }
+
+                    var command = _rxPacketStream[2];
+                    var payloadLength = _rxPacketStream[3] | (_rxPacketStream[4] << 8);
+                    if (payloadLength > RxPacketPayloadMaxBytes)
+                    {
+                        _rxPacketStream.RemoveAt(0);
+                        continue;
+                    }
+
+                    var packetBytes = RxPacketHeaderBytes + payloadLength;
+                    if (_rxPacketStream.Count < packetBytes)
+                    {
+                        break;
+                    }
+
+                    var payload = payloadLength == 0
+                        ? []
+                        : _rxPacketStream.GetRange(RxPacketHeaderBytes, payloadLength).ToArray();
+
+                    packets.Add(new RxPacket(command, payload));
+                    _rxPacketStream.RemoveRange(0, packetBytes);
+                }
+            }
+
+            foreach (var packet in packets)
+            {
+                ProcessRxPacket(packet, session);
+            }
+        }
+
+        private static int FindRxPacketStart(List<byte> stream)
+        {
+            for (var i = 0; i + RxPacketHeaderBytes <= stream.Count; i++)
+            {
+                if (stream[i] == RxPacketHead0 && stream[i + 1] == RxPacketHead1)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private void ProcessRxPacket(RxPacket packet, int session)
+        {
+            if (packet.Command == RxCommandFrameParse)
+            {
+                if (_lcdDecodeEnabled)
+                {
+                    FeedLcdBytes(packet.Payload, session);
+                    _lcdBytesCounter += packet.Payload.Length;
+                    var now = Environment.TickCount64;
+                    if (now - _lastLcdStatsTick >= 1000)
+                    {
+                        var bytes = _lcdBytesCounter;
+                        _lcdBytesCounter = 0;
+                        _lastLcdStatsTick = now;
+                        _ = Dispatcher.InvokeAsync(() =>
+                        {
+                            if (_lcdDecodeEnabled && session == _lcdDecodeSession)
+                            {
+                                LcdSpeedTextBlockCtl.Text = $"速率：{bytes / 1024.0:F1} KB/s";
+                            }
+                        });
+                    }
+                }
+                else
+                {
+                    RecordDroppedFramePacket(packet.Payload.Length);
+                }
+
+                return;
+            }
+
+            if (packet.Command == 0x20)
+            {
+                AppendFileListPacketLog(packet.Payload);
+                return;
+            }
+
+            if (packet.Payload.Length > 0)
+            {
+                AppendRxPacketLog(packet.Command, packet.Payload);
+            }
+        }
+
+        private void AppendFileListPacketLog(byte[] payload)
+        {
+            if (payload.Length < 2)
+            {
+                AppendRxLogWithBackpressure("[cmd:0x20] 无效的文件列表数据", payload.Length);
+                return;
+            }
+
+            var validSmallCount = payload[0];
+            var validLargeCount = payload[1];
+            var entries = (payload.Length - 2) / 25;
+            var sb = new StringBuilder();
+            sb.Append($"[cmd:0x20] 小文件:{validSmallCount} 大文件:{validLargeCount} 列表项:{entries}");
+
+            var offset = 2;
+            for (var i = 0; i < entries; i++)
+            {
+                if (offset + 25 > payload.Length)
+                {
+                    break;
+                }
+
+                var fileType = payload[offset];
+                var nameBytes = new byte[TxCommandEndFilenameMaxBytes];
+                Buffer.BlockCopy(payload, offset + 1, nameBytes, 0, TxCommandEndFilenameMaxBytes);
+                var name = Encoding.ASCII.GetString(nameBytes).TrimEnd('\0');
+                var start = BitConverter.ToUInt32(payload, offset + 17);
+                var size = BitConverter.ToUInt32(payload, offset + 21);
+                sb.Append($" | [{i + 1}] 类型=0x{fileType:X2} 名称={name} 起始={start} 大小={size}");
+                offset += 25;
+            }
+
+            AppendRxLogWithBackpressure(sb.ToString(), payload.Length);
+        }
+
+        private void ShowFileListHelp_Click(object sender, RoutedEventArgs e)
+        {
+            var message = "0x20 查询列表返回格式：\n"
+                          + "[0] 小文件有效数量(1B)\n"
+                          + "[1] 大文件有效数量(1B)\n"
+                          + "[2..] 每个文件项25字节：\n"
+                          + "  - 文件类型(1B)：0x11大文件/0x45小文件\n"
+                          + "  - 文件名(16B，ASCII，未用字节填0)\n"
+                          + "  - 起始地址/扇区(4B，小端)\n"
+                          + "  - 文件大小(4B，小端)";
+
+            MessageBox.Show(message, "0x20 返回数据说明", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void AppendRxPacketLog(byte command, byte[] payload)
+        {
+            if (Volatile.Read(ref _pendingLogCount) >= RxLogDropThreshold)
+            {
+                DropRxDataForRealtime(payload.Length);
+                return;
+            }
+
+            var prefix = $"[cmd:0x{command:X2}] ";
+            string text;
+            if (_receiveHexMode)
+            {
+                var sb = new StringBuilder(prefix.Length + payload.Length * 3 + 8);
+                sb.Append(prefix);
+                AppendHexChunk(sb, payload, false);
+                text = sb.ToString();
+            }
+            else
+            {
+                text = prefix + Encoding.ASCII.GetString(payload);
+            }
+
+            AppendRxLogWithBackpressure(text, payload.Length);
+        }
+
+        private void RecordDroppedFramePacket(int payloadLength)
+        {
+            if (!_showFrameDropNotice)
+            {
+                return;
+            }
+
+            Interlocked.Increment(ref _droppedFramePacketCount);
+            Interlocked.Add(ref _droppedFrameBytes, payloadLength);
+
+            var now = Environment.TickCount64;
+            if (now - Interlocked.Read(ref _lastFrameDropNoticeTick) < FrameDropNoticeIntervalMs)
+            {
+                return;
+            }
+
+            Interlocked.Exchange(ref _lastFrameDropNoticeTick, now);
+            var droppedPackets = Interlocked.Exchange(ref _droppedFramePacketCount, 0);
+            var droppedBytes = Interlocked.Exchange(ref _droppedFrameBytes, 0);
+            if (droppedPackets > 0)
+            {
+                AppendSystemLog($"已忽略 {droppedPackets} 条 0xA0 帧包（{droppedBytes} bytes），开启 LCD 解析可显示图像。");
+            }
+        }
+
+        private void AppendRxChunkAssembled(byte[] buffer)
+        {
+            if (Volatile.Read(ref _pendingLogCount) >= RxLogDropThreshold)
+            {
+                DropRxDataForRealtime(buffer.Length);
+                return;
+            }
+
+            var isHexMode = _receiveHexMode;
+            var chunk = isHexMode ? null : Encoding.ASCII.GetString(buffer);
+            var hasLineEnding = chunk != null && chunk.IndexOfAny(['\r', '\n']) >= 0;
+
+            string? flushText = null;
+            var flushBytes = 0;
+            string? immediateFlushText = null;
+            var immediateFlushBytes = 0;
+            var now = Environment.TickCount64;
+
+            lock (_rxAssembleLock)
+            {
+                if (_rxAssembleBuffer.Length > 0 && _rxAssembleHexMode != isHexMode)
+                {
+                    flushText = _rxAssembleBuffer.ToString();
+                    flushBytes = _rxAssembleBytes;
+                    _rxAssembleBuffer.Clear();
+                    _rxAssembleBytes = 0;
+                }
+
+                if (!isHexMode && _rxAssembleBuffer.Length > 0)
+                {
+                    var appendGap = now - Interlocked.Read(ref _lastRxAssembleAppendTick);
+                    if (appendGap >= _rxTextChunkGapBoundaryMs)
+                    {
+                        flushText = _rxAssembleBuffer.ToString();
+                        flushBytes = _rxAssembleBytes;
+                        _rxAssembleBuffer.Clear();
+                        _rxAssembleBytes = 0;
+                    }
+                }
+
+                if (isHexMode)
+                {
+                    AppendHexChunk(_rxAssembleBuffer, buffer, _rxAssembleBuffer.Length > 0);
+                }
+                else
+                {
+                    _rxAssembleBuffer.Append(chunk);
+                }
+                _rxAssembleBytes += buffer.Length;
+                _rxAssembleHexMode = isHexMode;
+                Interlocked.Exchange(ref _lastRxAssembleAppendTick, now);
+
+                var shouldFlushByLatency = isHexMode && (now - Interlocked.Read(ref _lastRxAssembleFlushTick) >= RxAssembleHexMaxLatencyMs);
+                if (_rxAssembleBuffer.Length >= RxLogChunkChars || shouldFlushByLatency || hasLineEnding)
+                {
+                    immediateFlushText = _rxAssembleBuffer.ToString();
+                    immediateFlushBytes = _rxAssembleBytes;
+                    _rxAssembleBuffer.Clear();
+                    _rxAssembleBytes = 0;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(flushText))
+            {
+                PublishRxAssembledLog(flushText, flushBytes);
+            }
+
+            if (!string.IsNullOrEmpty(immediateFlushText))
+            {
+                PublishRxAssembledLog(immediateFlushText, immediateFlushBytes);
+            }
+            else
+            {
+                var timerDelayMs = isHexMode
+                    ? RxAssembleHexMaxLatencyMs
+                    : _rxTextIdleFlushMs;
+                _rxAssembleTimer.Change(TimeSpan.FromMilliseconds(timerDelayMs), Timeout.InfiniteTimeSpan);
+            }
+        }
+
+        private static void AppendHexChunk(StringBuilder builder, byte[] buffer, bool leadingSpace)
+        {
+            var prependSpace = leadingSpace;
+            for (var i = 0; i < buffer.Length; i++)
+            {
+                if (prependSpace)
+                {
+                    builder.Append(' ');
+                }
+
+                var b = buffer[i];
+                builder.Append(ToHexUpper((b >> 4) & 0x0F));
+                builder.Append(ToHexUpper(b & 0x0F));
+                prependSpace = true;
+            }
+        }
+
+        private static char ToHexUpper(int value)
+        {
+            return (char)(value < 10 ? '0' + value : 'A' + (value - 10));
+        }
+
+        private void FlushRxAssembledLog()
+        {
+            string? text;
+            int bytes;
+            lock (_rxAssembleLock)
+            {
+                if (_rxAssembleBuffer.Length == 0)
+                {
+                    return;
+                }
+
+                text = _rxAssembleBuffer.ToString();
+                bytes = _rxAssembleBytes;
+                _rxAssembleBuffer.Clear();
+                _rxAssembleBytes = 0;
+            }
+
+            PublishRxAssembledLog(text, bytes);
+        }
+
+        private void PublishRxAssembledLog(string text, int bytes)
+        {
+            Interlocked.Exchange(ref _lastRxAssembleFlushTick, Environment.TickCount64);
+            AppendRxLogWithBackpressure(text, bytes);
+        }
+
+        private void DropRxDataForRealtime(int incomingBytes)
+        {
+            var droppedBytes = incomingBytes;
+            var droppedChunks = 1;
+
+            lock (_rxAssembleLock)
+            {
+                if (_rxAssembleBytes > 0)
+                {
+                    droppedBytes += _rxAssembleBytes;
+                    _rxAssembleBuffer.Clear();
+                    _rxAssembleBytes = 0;
+                    droppedChunks++;
+                }
+            }
+
+            Interlocked.Add(ref _droppedRxByteCount, droppedBytes);
+            Interlocked.Add(ref _droppedRxChunkCount, droppedChunks);
+        }
+
+        private void AppendRxLogWithBackpressure(string text, int bytes)
+        {
+            TrimQueuedLogsForRealtime();
+
+            if (Volatile.Read(ref _pendingLogCount) >= RxLogDropThreshold)
+            {
+                Interlocked.Increment(ref _droppedRxChunkCount);
+                Interlocked.Add(ref _droppedRxByteCount, bytes);
+                return;
+            }
+
+            var droppedChunks = Interlocked.Exchange(ref _droppedRxChunkCount, 0);
+            var droppedBytes = Interlocked.Exchange(ref _droppedRxByteCount, 0);
+            if (droppedChunks > 0)
+            {
+                var suffix = droppedBytes > 0 ? $"（约 {droppedBytes} 字节）" : string.Empty;
+                EnqueueLog("[sys]", $"为保证实时性，已丢弃 {droppedChunks} 条过旧接收日志{suffix}。", "#FBBF24");
+            }
+
+            AppendRxLog(text);
+        }
+
+        private void TrimQueuedLogsForRealtime()
+        {
+            if (Volatile.Read(ref _pendingLogCount) < RxLogDropThreshold)
+            {
+                return;
+            }
+
+            var dropped = 0;
+            while (Volatile.Read(ref _pendingLogCount) > RxLogRealtimeTrimTarget && _logQueue.TryDequeue(out _))
+            {
+                Interlocked.Decrement(ref _pendingLogCount);
+                dropped++;
+            }
+
+            if (dropped > 0)
+            {
+                Interlocked.Add(ref _droppedRxChunkCount, dropped);
+            }
+        }
+
+        private void FeedLcdBytes(byte[] data, int session)
+        {
+            List<byte[]> frames = [];
+
+            lock (_lcdStreamLock)
+            {
+                if (data.Length > StreamCapacity)
+                {
+                    data = data[^StreamCapacity..];
+                }
+
+                if (_lcdStream.Count + data.Length > StreamCapacity)
+                {
+                    var keep = Math.Min(FrameTotal - 1, _lcdStream.Count);
+                    if (_lcdStream.Count > keep)
+                    {
+                        _lcdStream.RemoveRange(0, _lcdStream.Count - keep);
+                    }
+                }
+
+                _lcdStream.AddRange(data);
+
+                while (_lcdStream.Count >= FrameTotal)
+                {
+                    var found = FindFrameStart(_lcdStream);
+                    if (found < 0)
+                    {
+                        var keep = Math.Min(FrameTotal - 1, _lcdStream.Count);
+                        if (_lcdStream.Count > keep)
+                        {
+                            _lcdStream.RemoveRange(0, _lcdStream.Count - keep);
+                        }
+
+                        break;
+                    }
+
+                    var frame = _lcdStream.GetRange(found, FrameBytes).ToArray();
+                    frames.Add(frame);
+                    _lcdStream.RemoveRange(0, found + FrameTotal);
+                }
+            }
+
+            if (frames.Count > 0)
+            {
+                DecodeAndRenderFrame(frames[^1], frames.Count, session);
+            }
+        }
+
+        private static int FindFrameStart(List<byte> stream)
+        {
+            for (var i = 0; i + FrameTotal <= stream.Count; i++)
+            {
+                var tailIndex = i + FrameBytes;
+                var matched = true;
+                for (var j = 0; j < TailBytes; j++)
+                {
+                    if (stream[tailIndex + j] != FrameTail[j])
+                    {
+                        matched = false;
+                        break;
+                    }
+                }
+
+                if (matched)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private void DecodeAndRenderFrame(byte[] frame, int extractedFrameCount, int session)
+        {
+            var bgra = new byte[FramePixels * 4];
+
+            for (var i = 0; i < FramePixels; i++)
+            {
+                var raw = (ushort)((frame[i * 2] << 8) | frame[i * 2 + 1]);
+
+                var r5 = (raw >> 11) & 0x1F;
+                var g6 = (raw >> 5) & 0x3F;
+                var b5 = raw & 0x1F;
+
+                var r = (byte)((r5 * 255 + 15) / 31);
+                var g = (byte)((g6 * 255 + 31) / 63);
+                var b = (byte)((b5 * 255 + 15) / 31);
+
+                var idx = i * 4;
+                bgra[idx] = b;
+                bgra[idx + 1] = g;
+                bgra[idx + 2] = r;
+                bgra[idx + 3] = 255;
+            }
+
+            _ = Dispatcher.InvokeAsync(() =>
+            {
+                if (_lcdBitmap == null || !_lcdDecodeEnabled || session != _lcdDecodeSession)
+                {
+                    return;
+                }
+
+                _lcdBitmap.WritePixels(new Int32Rect(0, 0, LcdWidth, LcdHeight), bgra, LcdWidth * 4, 0);
+                _lcdFrameIndex += (ulong)Math.Max(1, extractedFrameCount);
+                LcdFrameInfoTextBlockCtl.Text = $"LCD帧：{_lcdFrameIndex}";
+
+            });
+        }
+
+        private void ClearReceiveButton_Click(object sender, RoutedEventArgs e)
+        {
+            AnimateUserAction(sender as UIElement);
+            ReceiveRichTextBoxCtl.Document.Blocks.Clear();
+            ShowToast("接收区已清空");
+        }
+
+        private void SendButton_Click(object sender, RoutedEventArgs e)
+        {
+            AnimateUserAction(sender as UIElement);
+            if (_serialPort?.IsOpen != true)
+            {
+                MessageBox.Show("串口未打开。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var input = SendTextBoxCtl.Text;
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                return;
+            }
+
+            try
+            {
+                var command = GetSelectedModeText(SendCommandComboBoxCtl);
+                if (command != "无命令")
+                {
+                    var payload = BuildCommandPayload(command, input);
+                    var packet = BuildCommandPacket(command, payload);
+                    EnqueueTx(packet, BuildCommandLog(command, payload));
+                    return;
+                }
+
+                var mode = GetSelectedModeText(SendModeComboBoxCtl);
+                if (mode == "HEX")
+                {
+                    var bytes = ParseHexString(input);
+                    EnqueueTx(bytes, BitConverter.ToString(bytes).Replace("-", " "));
+                }
+                else
+                {
+                    input += GetSelectedLineEnding();
+                    var bytes = (_serialPort?.Encoding ?? Encoding.ASCII).GetBytes(input);
+                    EnqueueTx(bytes, input);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"发送失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void SendFileButton_Click(object sender, RoutedEventArgs e)
+        {
+            AnimateUserAction(sender as UIElement);
+            if (_serialPort?.IsOpen != true)
+            {
+                MessageBox.Show("串口未打开。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            ShowSendFileDialog();
+        }
+
+        private void ShowSendFileDialog()
+        {
+            var filePathTextBox = new TextBox
+            {
+                IsReadOnly = true,
+                Text = string.IsNullOrWhiteSpace(_selectedFilePath) ? "(未选择文件)" : _selectedFilePath,
+                Margin = new Thickness(0, 0, 0, 10),
+                MinWidth = 420,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                TextWrapping = TextWrapping.NoWrap
+            };
+            var fileTypeComboBox = new ComboBox
+            {
+                Width = 160
+            };
+            fileTypeComboBox.Items.Add(new ComboBoxItem { Content = "0x11 大文件", IsSelected = true });
+            fileTypeComboBox.Items.Add(new ComboBoxItem { Content = "0x45 小文件" });
+            var fileNameTextBox = new TextBox
+            {
+                MinWidth = 240,
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+
+            var chooseButton = new Button
+            {
+                Content = "选择文件",
+                Width = 90,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            var sendButton = new Button
+            {
+                Content = "发送文件",
+                Width = 90,
+                Margin = new Thickness(0, 0, 8, 0),
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#00A870")!)
+            };
+            var closeButton = new Button
+            {
+                Content = "关闭",
+                Width = 90,
+                Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#64748B")!)
+            };
+
+            var dialog = new Window
+            {
+                Owner = this,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ResizeMode = ResizeMode.NoResize,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                MinWidth = 560,
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
+                ShowInTaskbar = false,
+                Background = Brushes.Transparent,
+                Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E2E8F0")!)
+            };
+            ConfigureChildDialogWindow(dialog);
+
+            dialog.Content = new Border
+                {
+                    CornerRadius = new CornerRadius(12),
+                    BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2234475A")!),
+                    BorderThickness = new Thickness(1),
+                    Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0F172A")!),
+                    Child = new StackPanel
+                    {
+                        Children =
+                        {
+                            CreatePopupTitleBar(dialog, "TX 文件发送"),
+                            new StackPanel
+                            {
+                                Margin = new Thickness(16),
+                                Children =
+                                {
+                                    new TextBlock { Text = "当前文件", Margin = new Thickness(0, 0, 0, 4), Foreground = Brushes.White, FontWeight = FontWeights.SemiBold },
+                                    filePathTextBox,
+                                    new TextBlock { Text = "文件类型", Margin = new Thickness(0, 0, 0, 4), Foreground = Brushes.White, FontWeight = FontWeights.SemiBold },
+                                    fileTypeComboBox,
+                                    new TextBlock { Text = "文件名(<=16B)", Margin = new Thickness(0, 10, 0, 4), Foreground = Brushes.White, FontWeight = FontWeights.SemiBold },
+                                    fileNameTextBox,
+                                    new StackPanel
+                                    {
+                                        Orientation = Orientation.Horizontal,
+                                        HorizontalAlignment = HorizontalAlignment.Right,
+                                        Children = { chooseButton, sendButton, closeButton }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+            chooseButton.Click += (_, _) =>
+            {
+                if (TrySelectFile(forceOpenDialog: true))
+                {
+                    filePathTextBox.Text = _selectedFilePath ?? "(未选择文件)";
+                    var fallbackName = Path.GetFileNameWithoutExtension(_selectedFilePath);
+                    fileNameTextBox.Text = fallbackName;
+                }
+            };
+
+            sendButton.Click += (_, _) =>
+            {
+                try
+                {
+                    if (!TrySelectFile())
+                    {
+                        return;
+                    }
+
+                    var bytes = File.ReadAllBytes(_selectedFilePath!);
+                    var fileName = Path.GetFileName(_selectedFilePath);
+                    var command = GetSelectedModeText(fileTypeComboBox);
+                    var nameInput = string.IsNullOrWhiteSpace(fileNameTextBox.Text)
+                        ? Path.GetFileNameWithoutExtension(_selectedFilePath)
+                        : fileNameTextBox.Text;
+                    var offset = 0;
+                    var chunkIndex = 0;
+                    while (offset < bytes.Length)
+                    {
+                        var remaining = bytes.Length - offset;
+                        var chunkSize = Math.Min(TxCommandPayloadMaxBytes, remaining);
+                        var chunk = new byte[chunkSize];
+                        Buffer.BlockCopy(bytes, offset, chunk, 0, chunkSize);
+                        var payloadPacket = BuildCommandPacket(command, chunk);
+                        EnqueueTx(payloadPacket, $"[file cmd {command}] {fileName} part {++chunkIndex} ({chunkSize} bytes)");
+                        offset += chunkSize;
+                    }
+                    var endPayload = BuildEndCommandPayload(nameInput);
+                    var endPacket = BuildCommandPacket("0x14 结束下载", endPayload);
+                    EnqueueTx(endPacket, $"[file end] {nameInput}");
+                    dialog.DialogResult = true;
+                    dialog.Close();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"发送文件失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            };
+
+            closeButton.Click += (_, _) =>
+            {
+                dialog.DialogResult = false;
+                dialog.Close();
+            };
+
+            _ = dialog.ShowDialog();
+        }
+
+        private void EnqueueTx(byte[] bytes, string logText)
+        {
+            if (_serialPort?.IsOpen != true)
+            {
+                throw new InvalidOperationException("串口未打开。");
+            }
+
+            if (Interlocked.Increment(ref _pendingTxCount) > MaxPendingTxRequests)
+            {
+                Interlocked.Decrement(ref _pendingTxCount);
+                throw new InvalidOperationException("发送队列已满，请稍后重试。");
+            }
+
+            _txQueue.Enqueue(new TxRequest(bytes, logText));
+            _txQueueSignal.Release();
+        }
+
+        private void SelectFileButton_Click(object sender, RoutedEventArgs e)
+        {
+            AnimateUserAction(sender as UIElement);
+            _ = TrySelectFile(forceOpenDialog: true);
+        }
+
+        private bool TrySelectFile(bool forceOpenDialog = false)
+        {
+            if (!forceOpenDialog && !string.IsNullOrWhiteSpace(_selectedFilePath) && File.Exists(_selectedFilePath))
+            {
+                return true;
+            }
+
+            var dialog = new OpenFileDialog
+            {
+                Filter = "所有文件|*.*",
+                Title = "选择要打开的文件"
+            };
+
+            if (dialog.ShowDialog(this) != true)
+            {
+                return false;
+            }
+
+            UpdateSelectedFilePath(dialog.FileName);
+            AppendSystemLog($"已选择文件：{Path.GetFileName(dialog.FileName)}");
+            ShowToast($"已选择文件：{Path.GetFileName(dialog.FileName)}");
+            return true;
+        }
+
+        private void ShowToast(string message)
+        {
+            return;
+        }
+
+        private void HideToast(bool animate)
+        {
+            return;
+        }
+
+        private void ToastHost_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            HideToast(true);
+            e.Handled = true;
+        }
+
+        private void ToastHost_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            _toastDragStartPoint = e.GetPosition(ToastHostCtl);
+        }
+
+        private void ToastHost_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            _toastDragStartPoint = null;
+        }
+
+        private void ToastHost_PreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (_toastDragStartPoint == null || e.LeftButton != MouseButtonState.Pressed)
+            {
+                return;
+            }
+
+            var current = e.GetPosition(ToastHostCtl);
+            var dx = current.X - _toastDragStartPoint.Value.X;
+            var dy = current.Y - _toastDragStartPoint.Value.Y;
+            if (dx > 64 && Math.Abs(dx) > Math.Abs(dy) * 1.2)
+            {
+                _toastDragStartPoint = null;
+                HideToast(true);
+            }
+        }
+
+        private void UpdateSelectedFilePath(string? filePath)
+        {
+            _selectedFilePath = filePath;
+            SelectedFileTextBoxCtl.Text = string.IsNullOrWhiteSpace(filePath) ? "(未选择文件)" : filePath;
+        }
+
+        private void LoadConfig()
+        {
+            try
+            {
+                if (!File.Exists(_configFilePath))
+                {
+                    UpdateSelectedFilePath(null);
+                    return;
+                }
+
+                var json = File.ReadAllText(_configFilePath);
+                var config = JsonSerializer.Deserialize<UiConfig>(json);
+                if (config == null)
+                {
+                    UpdateSelectedFilePath(null);
+                    return;
+                }
+
+                _preferredPortName = config.PortName;
+                if (config.BaudRate > 0)
+                {
+                    BaudRateComboBoxCtl.SelectedItem = config.BaudRate;
+                }
+
+                if (config.DataBits is 5 or 6 or 7 or 8)
+                {
+                    DataBitsComboBoxCtl.SelectedItem = config.DataBits;
+                }
+
+                SelectEnumOption(ParityComboBoxCtl, config.Parity, Parity.None);
+                SelectEnumOption(StopBitsComboBoxCtl, config.StopBits, StopBits.One);
+                SelectEnumOption(HandshakeComboBoxCtl, config.Handshake, Handshake.None);
+
+                DtrEnableCheckBoxCtl.IsChecked = config.DtrEnable;
+                RtsEnableCheckBoxCtl.IsChecked = config.RtsEnable;
+                EnableLcdDecodeCheckBoxCtl.IsChecked = config.LcdDecodeEnabled;
+                ReceiveTimestampCheckBoxCtl.IsChecked = config.ReceiveTimestampEnabled;
+                _showFrameDropNotice = config.ShowFrameDropNotice;
+                EnableUiAnimationCheckBoxCtl.IsChecked = config.EnableUiAnimation;
+                _enableUiAnimations = config.EnableUiAnimation;
+                _rxTextIdleFlushMs = Math.Clamp(config.TextIdleFlushMs <= 0 ? DefaultRxAssembleTextIdleFlushMs : config.TextIdleFlushMs, MinRxTuneMs, MaxRxTuneMs);
+                _rxTextChunkGapBoundaryMs = Math.Clamp(config.ChunkGapThresholdMs <= 0 ? DefaultRxAssembleTextChunkGapBoundaryMs : config.ChunkGapThresholdMs, MinRxTuneMs, MaxRxTuneMs);
+
+                SelectTextOption(ReceiveModeComboBoxCtl, config.ReceiveMode, "ABC");
+                SelectTextOption(SendModeComboBoxCtl, config.SendMode, "ABC");
+                SelectTextOption(LineEndingComboBoxCtl, config.LineEndingMode, "无");
+                SelectTextOption(SendCommandComboBoxCtl, config.SendCommandMode, "无命令");
+                _receiveHexMode = GetSelectedModeText(ReceiveModeComboBoxCtl) == "HEX";
+                _lcdDecodeEnabled = EnableLcdDecodeCheckBoxCtl.IsChecked == true;
+                _showReceiveTimestamp = ReceiveTimestampCheckBoxCtl.IsChecked == true;
+                UpdateLcdPreviewVisibility();
+
+                UpdateSelectedFilePath(File.Exists(config.SelectedFilePath) ? config.SelectedFilePath : null);
+            }
+            catch
+            {
+                UpdateSelectedFilePath(null);
+            }
+        }
+
+        private void SaveConfig()
+        {
+            try
+            {
+                var config = new UiConfig
+                {
+                    PortName = (PortComboBoxCtl.SelectedItem as SerialPortInfo)?.PortName,
+                    BaudRate = BaudRateComboBoxCtl.SelectedItem as int? ?? 115200,
+                    DataBits = DataBitsComboBoxCtl.SelectedItem as int? ?? 8,
+                    Parity = GetSelectedEnum(ParityComboBoxCtl, Parity.None),
+                    StopBits = GetSelectedEnum(StopBitsComboBoxCtl, StopBits.One),
+                    Handshake = GetSelectedEnum(HandshakeComboBoxCtl, Handshake.None),
+                    DtrEnable = DtrEnableCheckBoxCtl.IsChecked == true,
+                    RtsEnable = RtsEnableCheckBoxCtl.IsChecked == true,
+                    LcdDecodeEnabled = EnableLcdDecodeCheckBoxCtl.IsChecked == true,
+                    ReceiveTimestampEnabled = ReceiveTimestampCheckBoxCtl.IsChecked == true,
+                    ShowFrameDropNotice = _showFrameDropNotice,
+                    EnableUiAnimation = EnableUiAnimationCheckBoxCtl.IsChecked != false,
+                    TextIdleFlushMs = _rxTextIdleFlushMs,
+                    ChunkGapThresholdMs = _rxTextChunkGapBoundaryMs,
+                    ReceiveMode = GetSelectedModeText(ReceiveModeComboBoxCtl),
+                    SendMode = GetSelectedModeText(SendModeComboBoxCtl),
+                    LineEndingMode = GetSelectedModeText(LineEndingComboBoxCtl),
+                    SendCommandMode = GetSelectedModeText(SendCommandComboBoxCtl),
+                    SelectedFilePath = _selectedFilePath ?? string.Empty
+                };
+
+                var folder = Path.GetDirectoryName(_configFilePath);
+                if (!string.IsNullOrWhiteSpace(folder))
+                {
+                    Directory.CreateDirectory(folder);
+                }
+
+                var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(_configFilePath, json);
+            }
+            catch
+            {
+                // ignore config write failure
+            }
+        }
+
+        private static void SelectEnumOption<T>(ComboBox comboBox, T value, T fallback) where T : struct
+        {
+            var selected = comboBox.Items.OfType<SerialOption<T>>().FirstOrDefault(i => EqualityComparer<T>.Default.Equals(i.Value, value));
+            comboBox.SelectedItem = selected ?? comboBox.Items.OfType<SerialOption<T>>().FirstOrDefault(i => EqualityComparer<T>.Default.Equals(i.Value, fallback));
+        }
+
+        private static void SelectTextOption(ComboBox comboBox, string? text, string fallback)
+        {
+            var target = string.IsNullOrWhiteSpace(text) ? fallback : text;
+            var selected = comboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(i => string.Equals(i.Content?.ToString(), target, StringComparison.OrdinalIgnoreCase));
+            comboBox.SelectedItem = selected ?? comboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(i => string.Equals(i.Content?.ToString(), fallback, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private void UpdateUiByConnectionState(bool isConnected)
+        {
+            OpenButtonCtl.IsEnabled = !isConnected;
+            CloseButtonCtl.IsEnabled = isConnected;
+            PortComboBoxCtl.IsEnabled = !isConnected;
+            BaudRateComboBoxCtl.IsEnabled = !isConnected;
+            DataBitsComboBoxCtl.IsEnabled = !isConnected;
+            ParityComboBoxCtl.IsEnabled = !isConnected;
+            StopBitsComboBoxCtl.IsEnabled = !isConnected;
+            HandshakeComboBoxCtl.IsEnabled = !isConnected;
+            DtrEnableCheckBoxCtl.IsEnabled = !isConnected;
+            RtsEnableCheckBoxCtl.IsEnabled = !isConnected;
+            RefreshButtonCtl.IsEnabled = !isConnected;
+        }
+
+        private static T GetSelectedEnum<T>(ComboBox comboBox, T fallback) where T : struct
+        {
+            return comboBox.SelectedItem is SerialOption<T> selected ? selected.Value : fallback;
+        }
+
+        private static string GetParityShortName(Parity parity)
+        {
+            return parity switch
+            {
+                Parity.None => "N",
+                Parity.Odd => "O",
+                Parity.Even => "E",
+                Parity.Mark => "M",
+                Parity.Space => "S",
+                _ => "N"
+            };
+        }
+
+        private static string GetStopBitsShortName(StopBits stopBits)
+        {
+            return stopBits switch
+            {
+                StopBits.One => "1",
+                StopBits.OnePointFive => "1.5",
+                StopBits.Two => "2",
+                _ => "1"
+            };
+        }
+
+        private static string GetSelectedModeText(ComboBox comboBox)
+        {
+            return (comboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "ABC";
+        }
+
+        private string GetSelectedLineEnding()
+        {
+            return GetSelectedModeText(LineEndingComboBoxCtl) switch
+            {
+                "\\r" => "\r",
+                "\\n" => "\n",
+                "\\r\\n" => "\r\n",
+                _ => string.Empty
+            };
+        }
+
+        private static byte[] ParseHexString(string input)
+        {
+            var cleaned = input.Replace(" ", string.Empty)
+                               .Replace("\r", string.Empty)
+                               .Replace("\n", string.Empty);
+
+            if (cleaned.Length % 2 != 0)
+            {
+                throw new FormatException("HEX 数据长度必须为偶数。例：0A FF 1C");
+            }
+
+            var bytes = new byte[cleaned.Length / 2];
+            for (var i = 0; i < bytes.Length; i++)
+            {
+                bytes[i] = Convert.ToByte(cleaned.Substring(i * 2, 2), 16);
+            }
+
+            return bytes;
+        }
+
+        private void AppendTxLog(string text)
+        {
+            EnqueueLog("[tx]", text, "#60A5FA");
+        }
+
+        private static byte[] BuildCommandPayload(string command, string input)
+        {
+            return command switch
+            {
+                "0x11 大文件" or "0x45 小文件" => ParseHexString(input),
+                "0x14 结束下载" => BuildEndCommandPayload(input),
+                "0x19 删除文件" => BuildDeleteCommandPayload(input),
+                "0x20 查询列表" => [],
+                _ => ParseHexString(input)
+            };
+        }
+
+        private static byte[] BuildEndCommandPayload(string input)
+        {
+            var trimmed = input.Replace("\r", string.Empty).Replace("\n", string.Empty).Trim();
+            var nameBytes = Encoding.ASCII.GetBytes(trimmed);
+            if (nameBytes.Length > TxCommandEndFilenameMaxBytes)
+            {
+                throw new FormatException($"结束命令文件名不能超过 {TxCommandEndFilenameMaxBytes} 字节。");
+            }
+
+            return nameBytes;
+        }
+
+        private static byte[] BuildDeleteCommandPayload(string input)
+        {
+            var cleaned = input.Replace(" ", string.Empty).Replace("\r", string.Empty).Replace("\n", string.Empty);
+            if (cleaned.Length != 4)
+            {
+                throw new FormatException("删除命令需要2字节HEX（文件类型+文件索引），例如 11 00。");
+            }
+
+            return ParseHexString(cleaned);
+        }
+
+        private static byte[] BuildCommandPacket(string command, byte[] payload)
+        {
+            var cmd = command switch
+            {
+                "0x11 大文件" => (byte)0x11,
+                "0x45 小文件" => (byte)0x45,
+                "0x14 结束下载" => (byte)0x14,
+                "0x19 删除文件" => (byte)0x19,
+                "0x20 查询列表" => (byte)0x20,
+                _ => throw new FormatException("未知命令类型。")
+            };
+
+            if (payload.Length > TxCommandPayloadMaxBytes)
+            {
+                throw new FormatException($"Payload长度不能超过 {TxCommandPayloadMaxBytes} 字节。");
+            }
+
+            var payloadLen = payload.Length + TxCommandCrcBytes;
+            var packet = new byte[TxCommandHeaderBytes + payloadLen];
+            packet[0] = TxCommandHead0;
+            packet[1] = TxCommandHead1;
+            packet[2] = cmd;
+            packet[3] = (byte)(payloadLen & 0xFF);
+            packet[4] = (byte)(payloadLen >> 8);
+            if (payload.Length > 0)
+            {
+                Buffer.BlockCopy(payload, 0, packet, TxCommandHeaderBytes, payload.Length);
+            }
+
+            var crc = CalcCrc16Usb(packet.AsSpan(0, TxCommandHeaderBytes + payload.Length));
+            packet[TxCommandHeaderBytes + payload.Length] = (byte)(crc & 0xFF);
+            packet[TxCommandHeaderBytes + payload.Length + 1] = (byte)(crc >> 8);
+            return packet;
+        }
+
+        private static string BuildCommandLog(string command, byte[] payload)
+        {
+            var bytes = payload.Length > 0 ? BitConverter.ToString(payload).Replace("-", " ") : "(无payload)";
+            return $"[cmd {command}] {bytes}";
+        }
+
+        private static ushort CalcCrc16Usb(ReadOnlySpan<byte> data)
+        {
+            ushort crc = 0xFFFF;
+            foreach (var b in data)
+            {
+                crc ^= b;
+                for (var i = 0; i < 8; i++)
+                {
+                    if ((crc & 1) != 0)
+                    {
+                        crc = (ushort)((crc >> 1) ^ 0xA001);
+                    }
+                    else
+                    {
+                        crc >>= 1;
+                    }
+                }
+            }
+
+            return (ushort)(crc ^ 0xFFFF);
+        }
+
+        private void AppendRxLog(string text)
+        {
+            EnqueueLog("[rx]", text, "#34D399");
+        }
+
+        private void AppendSystemLog(string text)
+        {
+            EnqueueLog("[sys]", text, "#FBBF24");
+        }
+
+        private void EnqueueLog(string tag, string text, string hexColor)
+        {
+            var normalized = text;
+            if (!string.Equals(tag, "[rx]", StringComparison.Ordinal) && normalized.Length > 2000)
+            {
+                normalized = normalized[..2000] + " ...";
+            }
+
+            if (Interlocked.Increment(ref _pendingLogCount) > MaxPendingLogEntries)
+            {
+                Interlocked.Decrement(ref _pendingLogCount);
+                return;
+            }
+
+            _logQueue.Enqueue(new LogEntry(tag, normalized, hexColor, DateTime.Now));
+        }
+
+        private void FlushLogs()
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                return;
+            }
+
+            var added = false;
+            var pendingSnapshot = Volatile.Read(ref _pendingLogCount);
+            var batchSize = pendingSnapshot > RxLogDropThreshold
+                ? LogFlushBatchSize * LogFlushBurstMultiplier
+                : LogFlushBatchSize;
+            var lightweightUiMode = pendingSnapshot > RxLogDropThreshold;
+
+            var enableFadeAnimation = pendingSnapshot <= RxLogDropThreshold && batchSize <= LogFlushBatchSize;
+            ReceiveRichTextBoxCtl.BeginChange();
+            try
+            {
+                for (var i = 0; i < batchSize; i++)
+                {
+                    if (!_logQueue.TryDequeue(out var entry))
+                    {
+                        break;
+                    }
+
+                    Interlocked.Decrement(ref _pendingLogCount);
+                    added = true;
+
+                    var paragraph = new Paragraph { Margin = new Thickness(0) };
+                    if (lightweightUiMode)
+                    {
+                        var timestamp = _showReceiveTimestamp ? $"[{entry.Time:HH:mm:ss.fff}] " : string.Empty;
+                        paragraph.Inlines.Add(new Run($"{timestamp}{entry.Tag} {entry.Message}")
+                        {
+                            Foreground = MessageBrush
+                        });
+                    }
+                    else
+                    {
+                        if (_showReceiveTimestamp)
+                        {
+                            paragraph.Inlines.Add(new Run($"[{entry.Time:HH:mm:ss.fff}] ")
+                            {
+                                Foreground = TimestampBrush
+                            });
+                        }
+                        paragraph.Inlines.Add(new Run($"{entry.Tag} ")
+                        {
+                            Foreground = GetTagBrush(entry.ColorHex),
+                            FontWeight = FontWeights.SemiBold
+                        });
+                        paragraph.Inlines.Add(new Run(entry.Message)
+                        {
+                            Foreground = MessageBrush
+                        });
+                    }
+
+                    ReceiveRichTextBoxCtl.Document.Blocks.Add(paragraph);
+                }
+
+                while (ReceiveRichTextBoxCtl.Document.Blocks.Count > MaxUiLogBlocks)
+                {
+                    ReceiveRichTextBoxCtl.Document.Blocks.Remove(ReceiveRichTextBoxCtl.Document.Blocks.FirstBlock);
+                }
+            }
+            finally
+            {
+                ReceiveRichTextBoxCtl.EndChange();
+            }
+
+            if (added)
+            {
+                if (_enableUiAnimations && enableFadeAnimation)
+                {
+                    ReceiveRichTextBoxCtl.BeginAnimation(OpacityProperty, new DoubleAnimation(0.94, 1.0, TimeSpan.FromMilliseconds(120))
+                    {
+                        EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+                    });
+                }
+
+                if (!lightweightUiMode || (++_logScrollThrottleCounter & 0x3) == 0)
+                {
+                    ReceiveRichTextBoxCtl.CaretPosition = ReceiveRichTextBoxCtl.Document.ContentEnd;
+                    ReceiveRichTextBoxCtl.ScrollToEnd();
+                }
+            }
+        }
+
+        private sealed class SerialPortInfo(string portName, string displayText)
+        {
+            public string PortName { get; } = portName;
+            public string DisplayText { get; } = displayText;
+        }
+
+        private sealed class SerialOption<T>(T value, string text)
+        {
+            public T Value { get; } = value;
+            public string Text { get; } = text;
+            public override string ToString() => Text;
+        }
+
+        private sealed class UiConfig
+        {
+            public string? PortName { get; set; }
+            public int BaudRate { get; set; } = 115200;
+            public int DataBits { get; set; } = 8;
+            public Parity Parity { get; set; } = Parity.None;
+            public StopBits StopBits { get; set; } = StopBits.One;
+            public Handshake Handshake { get; set; } = Handshake.None;
+            public bool DtrEnable { get; set; } = true;
+            public bool RtsEnable { get; set; } = true;
+            public bool LcdDecodeEnabled { get; set; }
+            public bool ReceiveTimestampEnabled { get; set; } = true;
+            public bool ShowFrameDropNotice { get; set; } = true;
+            public bool EnableUiAnimation { get; set; } = true;
+            public int TextIdleFlushMs { get; set; } = DefaultRxAssembleTextIdleFlushMs;
+            public int ChunkGapThresholdMs { get; set; } = DefaultRxAssembleTextChunkGapBoundaryMs;
+            public string? ReceiveMode { get; set; } = "ABC";
+            public string? SendMode { get; set; } = "ABC";
+            public string? LineEndingMode { get; set; } = "无";
+            public string? SendCommandMode { get; set; } = "无命令";
+            public string? SelectedFilePath { get; set; }
+        }
+
+        private sealed class LogEntry(string tag, string message, string colorHex, DateTime time)
+        {
+            public string Tag { get; } = tag;
+            public string Message { get; } = message;
+            public string ColorHex { get; } = colorHex;
+            public DateTime Time { get; } = time;
+        }
+
+        private sealed class TxRequest(byte[] bytes, string logText)
+        {
+            public byte[] Bytes { get; } = bytes;
+            public string LogText { get; } = logText;
+        }
+
+        private readonly struct RxPacket(byte command, byte[] payload)
+        {
+            public byte Command { get; } = command;
+            public byte[] Payload { get; } = payload;
+        }
+
+        private static SolidColorBrush CreateFrozenBrush(string hex)
+        {
+            var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)!);
+            brush.Freeze();
+            return brush;
+        }
+
+        private static Brush GetTagBrush(string colorHex)
+        {
+            return colorHex switch
+            {
+                "#34D399" => RxBrush,
+                "#60A5FA" => TxBrush,
+                "#FBBF24" => SysBrush,
+                _ => MessageBrush
+            };
+        }
+    }
+}

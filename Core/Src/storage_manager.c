@@ -147,6 +147,19 @@ bool get_large_file_info(uint8_t file_id, large_file_info_t *info) // 返回大�
 
 #pragma endregion
 
+// 清空大文件区，通常在格式化或者初始化时调用
+void clear_large_file(void)
+{
+    for (uint32_t i = AREA_LARGE_START_SECTOR; i < AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS; i++)
+    {
+        w25q_erase_sector(i);
+    }
+    storage_fat_init_default();
+    storage_fat_save();
+}
+
+
+
 #pragma region 分配器核心
 
 /**
@@ -204,6 +217,7 @@ typedef enum
 #pragma region 协议解析缓冲区与下载状态
 
 static host_cmd_state_t host_state = STATE_WAIT_HEAD0;
+static uint32_t host_state_tick = 0;
 static uint8_t host_cmd;
 static uint16_t host_payload_len; // 数据部分的长度，包括CRC16的2字节，但不包括帧头、命令和长度字段本身
 static uint16_t host_payload_idx; // 当前已接收的payload字节数，索引从0开始，对应host_payload[FRAME_HDR_SIZE]起始位置
@@ -225,6 +239,19 @@ static uint32_t current_sector_count = 0;
 static uint32_t small_file_start_addr = 0;
 static uint8_t error_payload = 0x00;
 static uint32_t small_last_erased_sector = 0xFFFFFFFF;
+static bool pending_error = false;
+static uint8_t pending_error_payload = 0x00;
+static uint16_t pending_continue_count = 0;
+static uint8_t store_op_state = 0;
+static uint32_t store_erase_cur = 0;
+static uint32_t store_erase_end = 0;
+static bool store_op_is_small = false;
+static uint32_t store_wr_addr = 0;
+static uint16_t store_wr_len = 0;
+static uint8_t store_wr_buf[512];
+static bool pending_finalize = false;
+static char finalize_filename[MAX_FILENAME_LEN];
+
 
 #pragma endregion
 
@@ -241,27 +268,47 @@ static inline void erase_sector(uint32_t sector)
 static void send_error(uint8_t error_type)
 {
     error_payload = error_type;
-    usb_controller_send(&g_usb_controller, RETRY_SEND_ERROR_CODE, &error_payload, 1); // 发送错误代码和一个字节的错误类型
+    usb_send_status_t status = usb_controller_send(&g_usb_controller, RETRY_SEND_ERROR_CODE, &error_payload, 1);
+    if (status == USB_SEND_BUSY_REJECTED)
+    {
+        pending_error = true;
+        pending_error_payload = error_payload;
+    }
 }
 static void send_continue(void)
 {
-    usb_controller_send(&g_usb_controller, CONTINUE_SEND_CODE, NULL, 0); // TODO: 可以在payload中返回当前已接收的文件大小等信息，供主机端显示进度
+    usb_send_status_t status = usb_controller_send(&g_usb_controller, CONTINUE_SEND_CODE, NULL, 0);
+    if (status == USB_SEND_BUSY_REJECTED)
+    {
+        if (pending_continue_count < UINT16_MAX)
+        {
+            pending_continue_count++;
+        }
+    }
 }
 /**
  * @brief 以DMA方式写入flash数据，若DMA失败则回退到同步写入
  */
+#define DMA_WAIT_TIMEOUT_MS 100U
+#define HOST_STATE_TIMEOUT_MS 500U
+
 static bool flash_write_dma(uint32_t addr, const uint8_t *data, uint32_t size)
 {
+    uint32_t wait_start = HAL_GetTick();
     while (w25q_dma_is_busy())
     {
         w25q_dma_task();
+        usb_controller_task(&g_usb_controller);
+        if (HAL_GetTick() - wait_start >= DMA_WAIT_TIMEOUT_MS)
+        {
+            return false;
+        }
     }
     memcpy(dma_write_buf, data, size);
     if (w25q_write_data_dma(addr, dma_write_buf, size))
     {
         return true;
     }
-    // DMA启动失败，回退到同步写入
     w25q_write_data(addr, dma_write_buf, size);
     return true;
 }
@@ -326,18 +373,18 @@ static void process_host_command(void)
     {
         if (!is_downloading)
             return;
-        // 等待DMA写入完成后再注册文件
-        while (w25q_dma_is_busy())
+
+        memcpy(finalize_filename, (char *)&host_payload[FRAME_HDR_SIZE],
+               (actual_data_len < MAX_FILENAME_LEN) ? actual_data_len : MAX_FILENAME_LEN);
+
+        if (store_op_state != 0)
         {
-            w25q_dma_task();
-        }
-        if (actual_data_len < MAX_FILENAME_LEN)
-        {
-            memset(&host_payload[FRAME_HDR_SIZE + actual_data_len], 0x00, MAX_FILENAME_LEN - actual_data_len); // 确保文件名部分多余的字节被清零
+            pending_finalize = true;
+            return;
         }
 
-        memcpy(current_filename, (char *)&host_payload[FRAME_HDR_SIZE], MAX_FILENAME_LEN); // 如果超过了,也只取前16字节
-        if (current_file_type == 0x11)                                                     // 大文件注册
+        memcpy(current_filename, finalize_filename, MAX_FILENAME_LEN);
+        if (current_file_type == 0x11)
         {
             if (global_fat.large_file_count < MAX_LARGE_FILES)
             {
@@ -352,7 +399,7 @@ static void process_host_command(void)
                 storage_fat_save();
             }
         }
-        else if (current_file_type == 0x45) // 小文件注册
+        else if (current_file_type == 0x45)
         {
             if (global_fat.small_file_count < MAX_SMALL_FILES)
             {
@@ -367,12 +414,19 @@ static void process_host_command(void)
             }
         }
         is_downloading = false;
+        send_continue();
         return;
     }
     // ==================== 0x11 / 0x45: 下载数据 ====================
     if (host_cmd == 0x11 || host_cmd == 0x45)
     {
-        // ---------- 首次进入下载：初始化状态 ----------
+        if (store_op_state != 0)
+            return;
+
+        uint32_t erase_start_sector = 0;
+        uint32_t erase_end_sector = 0;
+        bool need_erase = false;
+
         if (!is_downloading)
         {
             is_downloading = true;
@@ -385,29 +439,30 @@ static void process_host_command(void)
             current_write_addr = 0;
             memset(current_filename, 0x00, sizeof(current_filename));
 
-            if (host_cmd == 0x11) // 大文件
+            if (host_cmd == 0x11)
             {
                 uint32_t allocated_first_sector = allocate_large_sectors(1);
                 if (allocated_first_sector == 0xFFFFFFFF)
                 {
                     is_downloading = false;
-                    send_error(0x03); // 扇区分配失败
+                    send_error(0x03);
                     return;
                 }
                 current_start_sector = allocated_first_sector;
                 current_write_addr = allocated_first_sector * W25Q_SECTOR_SIZE;
                 current_sector_count = 1;
                 current_allocated_size = W25Q_SECTOR_SIZE;
-                // 擦除首扇区，确保写入前扇区是干净的
-                erase_sector(allocated_first_sector);
+                erase_start_sector = allocated_first_sector;
+                erase_end_sector = allocated_first_sector + 1;
+                need_erase = true;
             }
-            else if (host_cmd == 0x45) // 小文件
+            else
             {
                 uint32_t allocated_addr = allocate_small_space(256);
                 if (allocated_addr == 0xFFFFFFFF)
                 {
                     is_downloading = false;
-                    send_error(0x04); // 空间分配失败
+                    send_error(0x04);
                     return;
                 }
                 small_file_start_addr = allocated_addr;
@@ -416,140 +471,152 @@ static void process_host_command(void)
                 uint32_t sector = allocated_addr / W25Q_SECTOR_SIZE;
                 if (sector > small_last_erased_sector)
                 {
-                    erase_sector(sector);
-                    small_last_erased_sector = sector;
+                    erase_start_sector = small_last_erased_sector + 1;
+                    erase_end_sector = sector + 1;
+                    need_erase = true;
                 }
             }
-            // 写入首段数据
-            if (actual_data_len > 0)
-            {
-                flash_write_dma(current_write_addr, &host_payload[FRAME_HDR_SIZE], actual_data_len);
-            }
-            send_continue();
-            current_write_addr += actual_data_len;
-            current_file_size += actual_data_len;
+        }
+        else if (current_file_type != host_cmd)
+        {
+            is_downloading = false;
+            send_error(0x05);
             return;
         }
-        // ---------- 下载中收到不同类型命令：冲突 ----------
-        if (current_file_type != host_cmd)
+        else
         {
-            is_downloading = false; // 直接退出下载状态，丢弃当前未完成的文件数据
-            send_error(0x05);       // 命令类型冲突
-            return;
-        }
-        // ---------- 下载中：续传数据 ----------
-        if (host_cmd == 0x11) // 大文件扩展检查
-        {
-            uint32_t needed_size = current_write_addr + actual_data_len - (current_start_sector * W25Q_SECTOR_SIZE); // 注意的是,这里计算的是从当前大文件起始扇区到当前写入位置+新数据末尾的总需求大小,也就是目前所接受到的文件大小加上新数据的大小,与当前已分配的大小进行比较,如果超过了就需要扩展分配新的扇区
-            if (needed_size > current_allocated_size)
+            if (host_cmd == 0x11)
             {
-                uint32_t new_sectors_needed = (needed_size + W25Q_SECTOR_SIZE - 1) / W25Q_SECTOR_SIZE; // 这里向上取整计算需要的扇区数
-                if (new_sectors_needed > current_sector_count)
+                uint32_t needed_size = current_write_addr + actual_data_len - (current_start_sector * W25Q_SECTOR_SIZE);
+                if (needed_size > current_allocated_size)
                 {
-                    uint32_t extend_end = current_start_sector + new_sectors_needed; // 注意这里返回的是需要扩展到的扇区末尾,也就是所是下一个可用的扇区号,而不是需要扩展的扇区数.
-                    if (extend_end > AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS)
+                    uint32_t new_sectors_needed = (needed_size + W25Q_SECTOR_SIZE - 1) / W25Q_SECTOR_SIZE;
+                    if (new_sectors_needed > current_sector_count)
+                    {
+                        uint32_t extend_end = current_start_sector + new_sectors_needed;
+                        if (extend_end > AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS)
+                        {
+                            is_downloading = false;
+                            send_error(0x06);
+                            return;
+                        }
+                        erase_start_sector = current_start_sector + current_sector_count;
+                        erase_end_sector = extend_end;
+                        need_erase = true;
+                        global_fat.large_next_sector = extend_end;
+                        current_sector_count = new_sectors_needed;
+                        current_allocated_size = new_sectors_needed * W25Q_SECTOR_SIZE;
+                    }
+                }
+            }
+            else
+            {
+                uint32_t needed_total = current_write_addr + actual_data_len - small_file_start_addr;
+                if (needed_total > current_allocated_size)
+                {
+                    uint32_t additional_bytes = needed_total - current_allocated_size;
+                    additional_bytes = ((additional_bytes + 255) / 256) * 256;
+                    if (global_fat.small_next_addr + additional_bytes <= AREA_SMALL_END_ADDR)
+                    {
+                        global_fat.small_next_addr += additional_bytes;
+                        current_allocated_size += additional_bytes;
+                    }
+                    else
                     {
                         is_downloading = false;
-                        send_error(0x06); // 扇区超出范围
+                        send_error(0x07);
                         return;
                     }
-                    // 擦除新增的扇区
-                    for (uint32_t s = current_start_sector + current_sector_count; s < extend_end; s++)
-                    {
-                        erase_sector(s);
-                    }
-                    global_fat.large_next_sector = extend_end;
-                    current_sector_count = new_sectors_needed;
-                    current_allocated_size = new_sectors_needed * W25Q_SECTOR_SIZE;
+                }
+                uint32_t new_end_sector = (small_file_start_addr + current_allocated_size - 1) / W25Q_SECTOR_SIZE;
+                if (small_last_erased_sector < new_end_sector)
+                {
+                    erase_start_sector = small_last_erased_sector + 1;
+                    erase_end_sector = new_end_sector + 1;
+                    need_erase = true;
                 }
             }
         }
-        else if (host_cmd == 0x45) // 小文件扩展检查
-        {
-            uint32_t needed_total = current_write_addr + actual_data_len - small_file_start_addr;
-            if (needed_total > current_allocated_size)
-            {
-                uint32_t additional_bytes = needed_total - current_allocated_size;
-                additional_bytes = ((additional_bytes + 255) / 256) * 256; // 按256字节对齐
-                if (global_fat.small_next_addr + additional_bytes <= AREA_SMALL_END_ADDR)
-                {
-                    global_fat.small_next_addr += additional_bytes;
-                    current_allocated_size += additional_bytes;
-                }
-                else
-                {
-                    is_downloading = false;
-                    send_error(0x07); // 小文件空间不足
-                    return;
-                }
-            }
-            uint32_t new_end_sector = (small_file_start_addr + current_allocated_size - 1) / W25Q_SECTOR_SIZE;
-            for (uint32_t s = small_last_erased_sector + 1; s <= new_end_sector; s++)
-            {
-                erase_sector(s);
-                small_last_erased_sector = s;
-            }
-        }
-        // 以DMA方式写入数据
+
         if (actual_data_len > 0)
         {
-            flash_write_dma(current_write_addr, &host_payload[FRAME_HDR_SIZE], actual_data_len);
+            uint16_t copy_len = actual_data_len;
+            if (copy_len > sizeof(store_wr_buf)) copy_len = sizeof(store_wr_buf);
+            memcpy(store_wr_buf, &host_payload[FRAME_HDR_SIZE], copy_len);
         }
-        send_continue();
-        // 推进游标
+        store_wr_len = actual_data_len;
+        store_wr_addr = current_write_addr;
         current_write_addr += actual_data_len;
         current_file_size += actual_data_len;
+
+        if (need_erase)
+        {
+            store_erase_cur = erase_start_sector;
+            store_erase_end = erase_end_sector;
+            store_op_is_small = (host_cmd == 0x45);
+            store_op_state = 1;
+        }
+        else if (actual_data_len > 0)
+        {
+            store_op_state = 2;
+        }
+        else
+        {
+            store_op_state = 4;
+        }
         return;
     }
-    // ==================== 0x20: 查询文件列表 ====================
+    // ==================== 0x20: 查询文件列表 (TLV格式) ====================
+    // 帧格式: [entry_count(1B)] [record_1] [record_2] ...
+    // 每条记录: [record_len(1B)] [tag(1B)] [file_index(1B)] [name_len(1B)] [filename(NB)] [addr/sector(4B LE)] [size(4B LE)]
+    // tag: bit7=zone(0=small,1=large) | bit6~0=file_type
+    // record_len 包含自身, = 12 + name_len
     if (host_cmd == 0x20)
     {
-        uint8_t file_list_buffer[256];
-        uint16_t idx = 0;
-        uint8_t valid_small_count = 0;
-        uint8_t valid_large_count = 0;
+        static uint8_t file_list_buffer[1024];
+        uint16_t idx = 1;
+        uint8_t entry_count = 0;
         for (uint16_t i = 0; i < global_fat.small_file_count; i++)
         {
-            if (global_fat.small_files[i].is_valid)
-                valid_small_count++;
+            if (!global_fat.small_files[i].is_valid)
+                continue;
+            uint8_t namelen = (uint8_t)strlen(global_fat.small_files[i].filename);
+            uint8_t record_len = 12 + namelen;
+            if (idx + record_len > sizeof(file_list_buffer))
+                break;
+            file_list_buffer[idx++] = record_len;
+            file_list_buffer[idx++] = (0 << 7) | (global_fat.small_files[i].file_type & 0x7F);
+            file_list_buffer[idx++] = i;
+            file_list_buffer[idx++] = namelen;
+            memcpy(&file_list_buffer[idx], global_fat.small_files[i].filename, namelen);
+            idx += namelen;
+            memcpy(&file_list_buffer[idx], &global_fat.small_files[i].start_address, 4);
+            idx += 4;
+            memcpy(&file_list_buffer[idx], &global_fat.small_files[i].size, 4);
+            idx += 4;
+            entry_count++;
         }
         for (uint16_t i = 0; i < global_fat.large_file_count; i++)
         {
-            if (global_fat.large_files[i].is_valid)
-                valid_large_count++;
+            if (!global_fat.large_files[i].is_valid)
+                continue;
+            uint8_t namelen = (uint8_t)strlen(global_fat.large_files[i].filename);
+            uint8_t record_len = 12 + namelen;
+            if (idx + record_len > sizeof(file_list_buffer))
+                break;
+            file_list_buffer[idx++] = record_len;
+            file_list_buffer[idx++] = (1 << 7) | (global_fat.large_files[i].file_type & 0x7F);
+            file_list_buffer[idx++] = i;
+            file_list_buffer[idx++] = namelen;
+            memcpy(&file_list_buffer[idx], global_fat.large_files[i].filename, namelen);
+            idx += namelen;
+            memcpy(&file_list_buffer[idx], &global_fat.large_files[i].start_sector, 4);
+            idx += 4;
+            memcpy(&file_list_buffer[idx], &global_fat.large_files[i].size, 4);
+            idx += 4;
+            entry_count++;
         }
-        file_list_buffer[idx++] = valid_small_count;
-        file_list_buffer[idx++] = valid_large_count;
-        for (uint8_t i = 0; i < global_fat.small_file_count && idx < 240; i++)
-        {
-            if (global_fat.small_files[i].is_valid)
-            {
-                if (idx + 25 > sizeof(file_list_buffer))
-                    break;
-                file_list_buffer[idx++] = global_fat.small_files[i].file_type;
-                memcpy(&file_list_buffer[idx], global_fat.small_files[i].filename, MAX_FILENAME_LEN);
-                idx += MAX_FILENAME_LEN;
-                memcpy(&file_list_buffer[idx], &global_fat.small_files[i].start_address, 4);
-                idx += 4;
-                memcpy(&file_list_buffer[idx], &global_fat.small_files[i].size, 4);
-                idx += 4;
-            }
-        }
-        for (uint8_t i = 0; i < global_fat.large_file_count && idx < 240; i++)
-        {
-            if (global_fat.large_files[i].is_valid)
-            {
-                if (idx + 25 > sizeof(file_list_buffer))
-                    break;
-                file_list_buffer[idx++] = global_fat.large_files[i].file_type;
-                memcpy(&file_list_buffer[idx], global_fat.large_files[i].filename, MAX_FILENAME_LEN);
-                idx += MAX_FILENAME_LEN;
-                memcpy(&file_list_buffer[idx], &global_fat.large_files[i].start_sector, 4);
-                idx += 4;
-                memcpy(&file_list_buffer[idx], &global_fat.large_files[i].size, 4);
-                idx += 4;
-            }
-        }
+        file_list_buffer[0] = entry_count;
         usb_controller_send(&g_usb_controller, 0x20, file_list_buffer, idx);
         return;
     }
@@ -570,6 +637,7 @@ static void storage_manager_process_host_byte(uint8_t byte)
         {
             host_payload[0] = byte;
             host_state = STATE_WAIT_HEAD1;
+            host_state_tick = HAL_GetTick();
         }
         break;
     case STATE_WAIT_HEAD1:
@@ -577,14 +645,17 @@ static void storage_manager_process_host_byte(uint8_t byte)
         {
             host_payload[1] = byte;
             host_state = STATE_WAIT_CMD;
+            host_state_tick = HAL_GetTick();
         }
         else if (byte == HOST_FRAME_HEAD_0)
         {
-            host_state = STATE_WAIT_HEAD1; // 应对重叠 0xBB 0xBB 0x44 的情况
+            host_state = STATE_WAIT_HEAD1;
+            host_state_tick = HAL_GetTick();
         }
         else
         {
             host_state = STATE_WAIT_HEAD0;
+            host_state_tick = HAL_GetTick();
             clear_host_payload();
         }
         break;
@@ -592,11 +663,13 @@ static void storage_manager_process_host_byte(uint8_t byte)
         host_cmd = byte;
         host_payload[2] = byte;
         host_state = STATE_WAIT_LEN_L;
+        host_state_tick = HAL_GetTick();
         break;
     case STATE_WAIT_LEN_L:
         host_payload_len = byte;
         host_payload[3] = byte;
         host_state = STATE_WAIT_LEN_H;
+        host_state_tick = HAL_GetTick();
         break;
     case STATE_WAIT_LEN_H:
         host_payload_len |= ((uint16_t)byte << 8);
@@ -604,17 +677,20 @@ static void storage_manager_process_host_byte(uint8_t byte)
         if (host_payload_len > sizeof(host_payload) - FRAME_HDR_SIZE)
         {
             host_state = STATE_WAIT_HEAD0;
+            host_state_tick = HAL_GetTick();
             clear_host_payload();
         }
         else if (host_payload_len < 2)
         {
             host_state = STATE_WAIT_HEAD0;
+            host_state_tick = HAL_GetTick();
             clear_host_payload();
         }
         else
         {
             host_payload_idx = 0;
             host_state = STATE_WAIT_PAYLOAD;
+            host_state_tick = HAL_GetTick();
         }
         break;
     case STATE_WAIT_PAYLOAD:
@@ -624,6 +700,7 @@ static void storage_manager_process_host_byte(uint8_t byte)
         {
             process_host_command();
             host_state = STATE_WAIT_HEAD0;
+            host_state_tick = HAL_GetTick();
             clear_host_payload();
         }
         break;
@@ -636,6 +713,8 @@ static void storage_manager_process_host_byte(uint8_t byte)
 bool storage_manager_init(void)
 {
     clear_host_payload();
+    host_state = STATE_WAIT_HEAD0;
+    host_state_tick = HAL_GetTick();
     bool fat_ok = storage_fat_load();
     small_last_erased_sector = (global_fat.small_next_addr > 0) ? ((global_fat.small_next_addr - 1) / W25Q_SECTOR_SIZE) : (AREA_SMALL_START_ADDR / W25Q_SECTOR_SIZE - 1);
     if (!fat_ok)
@@ -649,12 +728,128 @@ bool storage_manager_init(void)
 
 void storage_manager_task(void)
 {
+    usb_controller_task(&g_usb_controller);
+
+    if (pending_error)
+    {
+        usb_send_status_t status = usb_controller_send(&g_usb_controller, RETRY_SEND_ERROR_CODE, &pending_error_payload, 1);
+        if (status != USB_SEND_BUSY_REJECTED)
+        {
+            pending_error = false;
+        }
+    }
+
+    if (!pending_error && pending_continue_count > 0)
+    {
+        usb_send_status_t status = usb_controller_send(&g_usb_controller, CONTINUE_SEND_CODE, NULL, 0);
+        if (status != USB_SEND_BUSY_REJECTED)
+        {
+            pending_continue_count--;
+        }
+    }
+
+    if (host_state != STATE_WAIT_HEAD0 && HAL_GetTick() - host_state_tick >= HOST_STATE_TIMEOUT_MS)
+    {
+        host_state = STATE_WAIT_HEAD0;
+        clear_host_payload();
+        host_state_tick = HAL_GetTick();
+        usb_controller_receive(&g_usb_controller, rx_buffer, sizeof(rx_buffer));
+    }
+
+    if (store_op_state == 1)
+    {
+        if (store_erase_cur < store_erase_end)
+        {
+            if (!w25q_dma_is_busy())
+            {
+                // erase_sector(store_erase_cur);
+                store_erase_cur++;
+                if (store_op_is_small)
+                {
+                    small_last_erased_sector = store_erase_cur - 1;
+                }
+            }
+        }
+        if (store_erase_cur >= store_erase_end)
+        {
+            store_op_state = (store_wr_len > 0) ? 2U : 4U;
+        }
+    }
+
+    if (store_op_state == 2)
+    {
+        if (flash_write_dma(store_wr_addr, store_wr_buf, store_wr_len))
+        {
+            store_op_state = 3;
+        }
+        else
+        {
+            is_downloading = false;
+            send_error(0x0A);
+            store_op_state = 0;
+        }
+    }
+
+    if (store_op_state == 3)
+    {
+        if (!w25q_dma_is_busy())
+        {
+            store_op_state = 4;
+        }
+    }
+
+    if (store_op_state == 4)
+    {
+        uint16_t free_space = usb_controller_get_rx_free_space();
+        if (free_space >= USB_RECEIVE_BUFFER_SIZE - 1 || free_space >= 512)
+        {
+            send_continue();
+            store_op_state = 0;
+        }
+    }
+
+    if (store_op_state == 0 && pending_finalize)
+    {
+        memcpy(current_filename, finalize_filename, MAX_FILENAME_LEN);
+        if (current_file_type == 0x11)
+        {
+            if (global_fat.large_file_count < MAX_LARGE_FILES)
+            {
+                large_file_info_t *fi = &global_fat.large_files[global_fat.large_file_count];
+                fi->is_valid = 1;
+                fi->file_type = current_file_type;
+                fi->start_sector = current_start_sector;
+                fi->size = current_file_size;
+                fi->sector_count = current_sector_count;
+                memcpy(fi->filename, current_filename, MAX_FILENAME_LEN);
+                global_fat.large_file_count++;
+                storage_fat_save();
+            }
+        }
+        else if (current_file_type == 0x45)
+        {
+            if (global_fat.small_file_count < MAX_SMALL_FILES)
+            {
+                small_file_info_t *fi = &global_fat.small_files[global_fat.small_file_count];
+                fi->is_valid = 1;
+                fi->file_type = current_file_type;
+                fi->start_address = small_file_start_addr;
+                fi->size = current_file_size;
+                memcpy(fi->filename, current_filename, MAX_FILENAME_LEN);
+                global_fat.small_file_count++;
+                storage_fat_save();
+            }
+        }
+        is_downloading = false;
+        send_continue();
+        pending_finalize = false;
+    }
+
     uint16_t rx_len = usb_controller_receive(&g_usb_controller, rx_buffer, sizeof(rx_buffer));
     for (uint16_t i = 0; i < rx_len;)
     {
         if (host_state == STATE_WAIT_PAYLOAD)
         {
-            // 批量拷贝模式：直接从rx_buffer批量拷贝payload数据到host_payload
             uint16_t need_len = host_payload_len - host_payload_idx;
             uint16_t valid_len = rx_len - i;
             uint16_t copy_len = (need_len < valid_len) ? need_len : valid_len;
@@ -665,6 +860,7 @@ void storage_manager_task(void)
             {
                 process_host_command();
                 host_state = STATE_WAIT_HEAD0;
+                host_state_tick = HAL_GetTick();
                 clear_host_payload();
             }
         }
@@ -677,3 +873,8 @@ void storage_manager_task(void)
 }
 
 #pragma endregion
+
+bool storage_is_downloading(void)
+{
+    return is_downloading;
+}
