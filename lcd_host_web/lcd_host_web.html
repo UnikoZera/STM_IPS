@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STM IPS Host</title>
+<style>
+:root {
+  --bg:#0d1117; --surface:#161b22; --surface2:#21262d;
+  --accent:#ff6b6b; --accent2:#8b5cf6; --text:#e6e6e6; --text2:#8b949e;
+  --green:#3fb950; --yellow:#d29922; --red:#f85149;
+  --border:#30363d; --radius:8px;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+  font-family:'Segoe UI',system-ui,sans-serif;
+  background:var(--bg);color:var(--text);
+  min-height:100vh;display:flex;flex-direction:column;
+  overflow:hidden;
+}
+/* Header */
+header{
+  background:linear-gradient(135deg,var(--surface),#1a1025);
+  border-bottom:1px solid var(--border);
+  padding:14px 24px;
+  display:flex;align-items:center;justify-content:space-between;
+  flex-wrap:wrap;gap:12px;z-index:10;
+}
+header h1{
+  font-size:20px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  font-weight:700;letter-spacing:-.5px;
+}
+.status-badge{
+  display:flex;align-items:center;gap:8px;
+  background:var(--surface2);padding:6px 14px;border-radius:20px;
+  border:1px solid var(--border);font-size:12px;
+  transition:all .3s;
+}
+.status-badge.connected{border-color:var(--green);box-shadow:0 0 12px rgba(63,185,80,.2);}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--red);transition:all .3s;}
+.status-dot.on{background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{box-shadow:0 0 4px var(--green)}50%{box-shadow:0 0 16px var(--green)}}
+
+/* Layout */
+main{
+  flex:1;display:grid;
+  grid-template-columns:300px 1fr 340px;
+  grid-template-rows:1fr;
+  gap:1px;background:var(--border);overflow:hidden;
+}
+.panel{background:var(--bg);display:flex;flex-direction:column;overflow:hidden;}
+.panel-header{
+  background:var(--surface);padding:10px 16px;
+  font-size:11px;font-weight:600;color:var(--accent2);
+  border-bottom:1px solid var(--border);
+  text-transform:uppercase;letter-spacing:1.5px;
+  display:flex;align-items:center;gap:8px;
+  flex-shrink:0;
+}
+.panel-header::before{content:'';width:3px;height:14px;background:linear-gradient(180deg,var(--accent),var(--accent2));border-radius:2px;}
+.panel-body{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;min-height:0;}
+
+/* Cards */
+.card{
+  background:var(--surface);border-radius:var(--radius);
+  padding:12px 14px;border:1px solid var(--border);
+  transition:border-color .2s,box-shadow .2s;
+}
+.card:hover{border-color:var(--accent2);box-shadow:0 0 20px rgba(139,92,246,.1);}
+.card label{
+  display:block;font-size:10px;color:var(--text2);
+  margin-bottom:6px;text-transform:uppercase;
+  letter-spacing:.8px;font-weight:600;
+}
+.card input[type=text],.card input[type=number],.card select{
+  width:100%;padding:8px 10px;
+  background:var(--bg);border:1px solid var(--border);
+  border-radius:4px;color:var(--text);
+  font-family:inherit;font-size:13px;outline:none;
+  transition:border-color .2s,box-shadow .2s;
+}
+.card input:focus,.card select:focus{border-color:var(--accent2);box-shadow:0 0 8px rgba(139,92,246,.2);}
+
+/* Buttons */
+.btn{
+  display:block;width:100%;
+  padding:10px 14px;border:none;border-radius:6px;
+  font-family:inherit;font-size:12px;font-weight:600;
+  cursor:pointer;text-transform:uppercase;
+  letter-spacing:.5px;transition:all .2s;
+  position:relative;overflow:hidden;
+}
+.btn::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,transparent 40%,rgba(255,255,255,.06));pointer-events:none;}
+.btn:active{transform:scale(.96)}.btn:hover{filter:brightness(1.15)}
+.btn:disabled{opacity:.35;cursor:not-allowed;filter:none}
+.btn-connect{background:var(--green);color:#000;}
+.btn-disconnect{background:var(--red);color:#fff;}
+.btn-send{background:linear-gradient(135deg,var(--accent),#e55);color:#fff;}
+.btn-query{background:var(--surface2);color:var(--text);border:1px solid var(--border);}
+.btn-retry{background:linear-gradient(135deg,var(--yellow),#c80);color:#000;}
+.btn-cancel{background:var(--red);color:#fff;}
+.btn-danger{background:var(--red);color:#fff;font-size:10px;padding:4px 10px;}
+.file-upload{position:relative;overflow:hidden;}
+.file-upload input[type=file]{position:absolute;top:0;right:0;min-width:100%;min-height:100%;opacity:0;cursor:pointer;}
+
+/* Progress */
+.progress-wrap{margin-top:4px;}
+.progress-bar{width:100%;height:8px;background:var(--surface2);border-radius:4px;overflow:hidden;}
+.progress-fill{height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));border-radius:4px;transition:width .3s;position:relative;}
+.progress-fill::after{content:'';position:absolute;right:0;top:0;bottom:0;width:20px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.3));animation:shimmer 1s infinite;}
+@keyframes shimmer{0%{opacity:0}50%{opacity:1}100%{opacity:0}}
+.progress-text{font-size:11px;color:var(--text2);margin-top:4px;display:flex;justify-content:space-between;}
+
+/* Log */
+#log{font-size:11.5px;line-height:1.7;white-space:pre-wrap;word-break:break-all;font-family:'Cascadia Code',Consolas,monospace;}
+#log .log-line{padding:2px 6px;border-radius:3px;}
+.log-time{color:#555;}.log-send{color:#7b9;}.log-recv{color:#7cb;}
+.log-error{color:var(--red);}.log-info{color:var(--yellow);}.log-warn{color:#f80;}
+.log-header{color:var(--accent2);font-weight:600;}
+
+/* File list */
+.file-item{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:10px 12px;
+  display:flex;flex-direction:column;gap:4px;
+  transition:border-color .2s,transform .2s;
+  animation:fadeIn .3s ease;
+}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.file-item:hover{border-color:var(--accent2);transform:translateX(2px);}
+.file-item-name{font-size:13px;font-weight:600;color:var(--accent);}
+.file-item-meta{font-size:10px;color:var(--text2);display:flex;flex-wrap:wrap;gap:6px;}
+.file-item .tag{display:inline-block;padding:2px 7px;border-radius:3px;font-size:9px;font-weight:600;}
+.tag-large{background:rgba(255,107,107,.2);color:var(--accent);}
+.tag-small{background:rgba(139,92,246,.2);color:var(--accent2);}
+.empty-state{text-align:center;padding:40px 20px;color:var(--text2);opacity:.6;}
+.empty-state .icon{font-size:48px;margin-bottom:12px;display:block;}
+
+/* Toast */
+.toast{
+  position:fixed;top:20px;right:20px;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:12px 18px;
+  font-size:12px;z-index:100;
+  animation:slideIn .3s ease;
+  max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.5);
+}
+.toast.error{border-color:var(--red);}
+.toast.success{border-color:var(--green);}
+@keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+
+/* Spinner */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--text2);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;}
+
+/* Status line */
+#sendStatus{font-size:11px;color:var(--accent);margin-top:2px;min-height:16px;}
+
+@media(max-width:900px){main{grid-template-columns:1fr;}}
+::-webkit-scrollbar{width:5px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
+::-webkit-scrollbar-thumb:hover{background:var(--text2);}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>STM IPS Host</h1>
+  <div class="status-badge" id="statusBadge">
+    <span class="status-dot off" id="statusDot"></span>
+    <span id="statusText">脱机</span>
+    <span style="color:var(--text2);font-size:10px;" id="portInfo"></span>
+  </div>
+</header>
+
+<main>
+  <!-- Left: Controls -->
+  <div class="panel">
+    <div class="panel-header">控制面板</div>
+    <div class="panel-body">
+
+      <div class="card">
+        <label>串口连接</label>
+        <button class="btn btn-connect" id="btnConnect" onclick="connectSerial()">连接串口</button>
+        <button class="btn btn-disconnect" id="btnDisconnect" onclick="disconnectSerial()" style="display:none;">断开连接</button>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <input type="number" id="baudRate" value="921600" step="100" min="9600" style="flex:1;padding:6px;font-size:11px;">
+          <span style="font-size:10px;color:var(--text2);line-height:32px;">bps</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <label>文件类型</label>
+        <select id="fileType">
+          <option value="0x11">大文件 0x11 (扇区对齐)</option>
+          <option value="0x45">小文件 0x45 (紧凑存储)</option>
+        </select>
+      </div>
+
+      <div class="card">
+        <label>选择本地文件</label>
+        <button class="btn btn-send file-upload">+ 选择文件<input type="file" id="fileInput" onchange="onFileSelected(this)"></button>
+        <div id="fileInfo" style="font-size:10px;color:var(--text2);margin-top:4px;word-break:break-all;">未选择文件</div>
+      </div>
+
+      <div class="card">
+        <label>设备端文件名 (最多16字节 ASCII)</label>
+        <div style="display:flex;gap:6px;">
+          <input type="text" id="fileNameInput" value="" maxlength="16" placeholder="设备端保存的文件名" style="flex:1;">
+          <span id="nameByteCount" style="font-size:10px;color:var(--text2);line-height:32px;min-width:36px;">0/16</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <label>数据块大小 (字节)</label>
+        <input type="number" id="chunkSize" value="512" min="16" max="512" step="16">
+      </div>
+
+      <div class="card" style="border-color:var(--accent);">
+        <button class="btn btn-send" id="btnStartSend" onclick="userStartSend()" disabled>开始发送</button>
+        <button class="btn btn-cancel" id="btnCancelSend" onclick="cancelSend()" style="display:none;margin-top:6px;">取消发送</button>
+        <button class="btn btn-retry" id="btnRetrySend" onclick="retrySend()" style="display:none;margin-top:6px;">重新发送</button>
+        <div id="sendStatus"></div>
+        <div class="progress-wrap">
+          <div class="progress-bar"><div class="progress-fill" id="progressBar"></div></div>
+          <div class="progress-text">
+            <span id="progressPct"></span><span id="progressBytes" style="color:var(--text2);"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <button class="btn btn-query" onclick="queryFileList()">查询文件列表</button>
+      </div>
+
+      <div class="card">
+        <label>删除文件</label>
+        <div style="display:flex;gap:4px;">
+          <select id="deleteFileType" style="width:80px;padding:6px;font-size:11px;">
+            <option value="0x11">大文件</option><option value="0x45">小文件</option>
+          </select>
+          <input type="number" id="deleteFileIndex" value="0" min="0" max="255" style="width:52px;padding:6px;font-size:11px;">
+          <button class="btn btn-danger" onclick="deleteFile()" style="width:auto;">删除</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Center: Log -->
+  <div class="panel">
+    <div class="panel-header">通信日志</div>
+    <div class="panel-body">
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <!-- Right: File List -->
+  <div class="panel">
+    <div class="panel-header">设备文件列表</div>
+    <div class="panel-body">
+      <div id="fileList">
+        <div class="empty-state"><span class="icon">&#9783;</span>点击"查询文件列表"获取</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="toastContainer"></div>
+
+<script>
+'use strict';
+
+// ============= CRC16 USB (MODBUS) =============
+const CRC16_TABLE = new Uint16Array(256);
+for (let i=0;i<256;i++) { let c=i; for (let j=0;j<8;j++) c=(c&1)?((c>>>1)^0xA001):(c>>>1); CRC16_TABLE[i]=c; }
+function crc16(data,off,len) { let c=0xFFFF; for (let i=0;i<len;i++) c=(c>>>8)^CRC16_TABLE[(c&0xFF)^data[off+i]]; return c^0xFFFF; }
+
+// ============= Constants =============
+const H0=0xBB,H1=0x44,HS=5;
+const C_L=0x11,C_S=0x45,C_END=0x14,C_DEL=0x19,C_QRY=0x20;
+const UH0=0xAA,UH1=0x55,UHS=5;
+const R_CONT=0xA1,R_ERR=0xE0;
+const ERRMSG={1:'CRC',2:'未知类型',3:'大文件满',4:'小文件满',5:'类型不匹配',6:'大文件扩展失败',7:'小文件扩展失败',8:'索引无效',9:'未知命令',10:'DMA失败'};
+const CHUNK_MAX=512, WRITE_TIMEOUT=8000, SEND_TIMEOUT=15000;
+const ST_INIT=0, ST_SENDING=1, ST_WAIT_ACK=2, ST_DONE=3, ST_ERR=4;
+
+// ============= DOM refs =============
+const $=id=>document.getElementById(id);
+const elLog=$('log'), elProg=$('progressBar'), elPct=$('progressPct'), elBytes=$('progressBytes');
+const elStatus=$('sendStatus'), elBtnSend=$('btnStartSend'), elBtnCancel=$('btnCancelSend'), elBtnRetry=$('btnRetrySend');
+const elFileInfo=$('fileInfo'), elFileList=$('fileList'), elToast=$('toastContainer');
+const elName=$('fileNameInput'), elNameCnt=$('nameByteCount');
+
+// ============= Globals =============
+let port=null, reader=null, readLoop=false;
+let fileData=null, fileOff=0, fileCmd=0, fileName='';
+let selFile=null, sendState=ST_INIT;
+let contResolve=null, contPending=0;
+let writeTimer=null, sendTimer=null;
+
+// ============= Frame builder =============
+function frame(cmd,data) {
+  const dL=data?data.length:0, pL=dL+2, total=HS+dL+2;
+  const f=new Uint8Array(total);
+  f[0]=H0;f[1]=H1;f[2]=cmd;f[3]=pL&0xFF;f[4]=(pL>>>8)&0xFF;
+  if(data&&dL)f.set(data,HS);
+  const crc=crc16(f,0,HS+dL);
+  f[HS+dL]=crc&0xFF;f[HS+dL+1]=(crc>>>8)&0xFF;
+  return f;
+}
+
+// ============= RX: USB frame parser =============
+let rxBuf=new Uint8Array(0);
+function feedRx(data) {
+  let c=new Uint8Array(rxBuf.length+data.length);c.set(rxBuf);c.set(data,rxBuf.length);rxBuf=c;
+  while(rxBuf.length>=UHS){
+    let hi=-1;
+    for(let i=0;i<=rxBuf.length-2;i++){if(rxBuf[i]===UH0&&rxBuf[i+1]===UH1){hi=i;break;}}
+    if(hi<0){rxBuf=rxBuf.length>1?rxBuf.slice(rxBuf.length-1):rxBuf;return;}
+    if(hi>0)rxBuf=rxBuf.slice(hi);
+    if(rxBuf.length<UHS)return;
+    const cmd=rxBuf[2],pLen=rxBuf[3]|(rxBuf[4]<<8),fLen=UHS+pLen;
+    if(pLen>4096){rxBuf=rxBuf.slice(1);log('无效帧长度 '+pLen,'error');continue;}
+    if(rxBuf.length<fLen)return;
+    handleResp(cmd,rxBuf.slice(UHS,fLen));
+    rxBuf=rxBuf.slice(fLen);
+  }
+}
+
+function handleResp(cmd,payload){
+  if(cmd===R_CONT){log('MCU -> 就绪 (0xA1)','recv');signalCont();}
+  else if(cmd===R_ERR){
+    const code=payload.length>0?payload[0]:0;
+    log('MCU -> 错误 0x'+code.toString(16).toUpperCase().padStart(2,'0')+' '+ (ERRMSG[code]||'未知'),'error');
+    if(sendState===ST_SENDING||sendState===ST_WAIT_ACK) doAbort('错误: '+(ERRMSG[code]||'0x'+code.toString(16)));
+  }
+  else if(cmd===C_QRY){log('MCU -> 文件列表 (0x20)','recv');parseList(payload);}
+  else{let h='';for(let i=0;i<Math.min(payload.length,24);i++)h+=('0'+payload[i].toString(16).toUpperCase()).slice(-2)+' ';log('MCU -> 0x'+cmd.toString(16).toUpperCase().padStart(2,'0')+' '+h,'recv');}
+}
+
+// ============= Continuation =============
+function signalCont(){contPending++;if(contResolve){const r=contResolve;contResolve=null;contPending--;r();}}
+function waitCont(){
+  if(contPending>0){contPending--;return Promise.resolve();}
+  return new Promise(function(r){contResolve=r;});
+}
+function resetCont(){
+  if(contResolve){const r=contResolve;contResolve=null;contPending=0;r();}else{contPending=0;}
+  if(writeTimer){clearTimeout(writeTimer);writeTimer=null;}
+  if(sendTimer){clearTimeout(sendTimer);sendTimer=null;}
+}
+
+// ============= File List =============
+function parseList(payload){
+  if(payload.length<1)return;
+  const cnt=payload[0];
+  let h='<div style="font-size:11px;color:var(--text2);margin-bottom:8px;">共 <b style="color:var(--accent);">'+cnt+'</b> 个文件</div>';
+  let idx=1,parsed=0;
+  for(let i=0;i<cnt;i++){
+    if(idx>=payload.length)break;
+    const rLen=payload[idx];if(rLen<12||idx+rLen>payload.length)break;
+    const tag=payload[idx+1],fi=payload[idx+2],nLen=payload[idx+3];
+    if(nLen>16||idx+12+nLen>payload.length)break;
+    const zn=(tag&0x80)?'large':'small',fType=tag&0x7F;
+    const name=new TextDecoder('ascii').decode(payload.slice(idx+4,idx+4+nLen)).replace(/\0/g,'');
+    const addr=new DataView(payload.buffer,payload.byteOffset+idx+4+nLen,4).getUint32(0,true);
+    const size=new DataView(payload.buffer,payload.byteOffset+idx+8+nLen,4).getUint32(0,true);
+    const sz=size<1024?size+'B':size<1048576?(size/1024).toFixed(1)+'K':(size/1048576).toFixed(2)+'M';
+    const tc=zn==='large'?'tag-large':'tag-small',zl=zn==='large'?'大文件':'小文件';
+    const tl=fType===0x11?'大文件':fType===0x45?'小文件':('0x'+fType.toString(16));
+    h+='<div class="file-item"><div class="file-item-name">['+fi+'] '+(name||'(无名)')+'</div>'
+      +'<div class="file-item-meta"><span class="tag '+tc+'">'+zl+'</span>'
+      +'<span>类型:'+tl+'</span><span>大小:'+sz+'</span><span>地址:0x'+addr.toString(16).toUpperCase()+'</span></div>'
+      +'<button class="btn btn-danger" onclick="delFI('+fType+','+fi+')">删除</button></div>';
+    idx+=rLen;parsed++;
+  }
+  if(!parsed)h+='<div class="empty-state"><span class="icon">&#9744;</span>设备中没有文件</div>';
+  elFileList.innerHTML=h;
+}
+
+// ============= Send =============
+function onFileSelected(input){
+  const f=input.files[0];if(!f)return;
+  selFile=f;
+  const sz=f.size<1024?f.size+'B':f.size<1048576?(f.size/1024).toFixed(1)+'K':(f.size/1048576).toFixed(2)+'M';
+  elFileInfo.textContent=f.name+' ('+sz+')';
+  elName.value=f.name.replace(/\.[^.]+$/,'').slice(0,16);updateNBC();
+  elBtnSend.disabled=false;
+}
+elName.addEventListener('input',updateNBC);
+function updateNBC(){
+  const b=new TextEncoder().encode(elName.value).length;
+  elNameCnt.textContent=b+'/16';elNameCnt.style.color=b>16?'var(--red)':'var(--text2)';
+}
+
+async function userStartSend(){
+  if(!selFile){toast('请选择文件','error');return;}
+  const cmd=parseInt(document.getElementById('fileType').value);
+  let fn=elName.value.trim();if(!fn)fn=selFile.name.replace(/\.[^.]+$/,'').slice(0,16);
+  if(new TextEncoder().encode(fn).length>16){toast('文件名编码超16字节','error');return;}
+  const sz=selFile.size<1024?selFile.size+'B':(selFile.size/1024).toFixed(1)+'K';
+  const cn=cmd===C_L?'大文件':'小文件';
+  if(!confirm('发送:\n  本地: '+selFile.name+'\n  设备名: '+fn+'\n  类型: '+cn+' ('+sz+')?\n\n确认'))return;
+  await doSend(selFile,cmd,fn);
+}
+
+async function doSend(file,cmd,fn){
+  if(!port||!port.writable){toast('未连接串口','error');return;}
+  if(sendState!==ST_INIT&&sendState!==ST_DONE&&sendState!==ST_ERR){toast('正在发送中','error');return;}
+
+  fileData=new Uint8Array(await file.arrayBuffer());
+  fileOff=0;fileCmd=cmd;fileName=fn;
+  sendState=ST_SENDING;resetCont();
+  log('--- 开始发送: '+fn+' ('+(file.size<1024?file.size+'B':(file.size/1024).toFixed(1)+'K')+') ---','info');
+  setUI('sending');
+  updateProg(0,0,fileData.length);
+
+  try{await sendLoop();}
+  catch(e){log('发送异常: '+e.message,'error');doFinish(false);}
+}
+
+async function sendLoop(){
+  while(sendState===ST_SENDING){
+    if(fileOff>=fileData.length){await sendEndFrame();return;}
+    const cs=chunkSz(),len=Math.min(fileData.length-fileOff,cs);
+    const chunk=fileData.slice(fileOff,fileOff+len);
+    const frm=frame(fileCmd,chunk);
+
+    const ok=await writeSer(frm);
+    if(!ok){doAbort('写入失败');return;}
+
+    fileOff+=len;updateProg(fileOff/fileData.length*100,fileOff,fileData.length);
+    log('主机 -> 数据 0x'+fileCmd.toString(16).toUpperCase()+' '+fileOff+'/'+fileData.length+' ('+(fileOff/fileData.length*100).toFixed(1)+'%)','send');
+
+    if(fileOff>=fileData.length)break;
+
+    sendState=ST_WAIT_ACK;elStatus.innerHTML='<span class="spinner"></span> 等待MCU就绪...';
+    sendTimer=setTimeout(function(){
+      if(sendState===ST_WAIT_ACK)doAbort('等待MCU回应超时');
+    },SEND_TIMEOUT);
+
+    await waitCont();
+    if(sendTimer){clearTimeout(sendTimer);sendTimer=null;}
+    if(sendState!==ST_WAIT_ACK)return;
+    sendState=ST_SENDING;elStatus.textContent='';
+  }
+}
+
+async function sendEndFrame(){
+  const enc=new TextEncoder(),nb=enc.encode(fileName),pn=new Uint8Array(16);
+  pn.set(nb.slice(0,16));
+  const frm=frame(C_END,pn);
+  const ok=await writeSer(frm);
+  if(ok){log('主机 -> 结束帧 文件名='+fileName,'send');}
+  sendState=ST_WAIT_ACK;elStatus.innerHTML='<span class="spinner"></span> 等待确认...';
+  sendTimer=setTimeout(function(){if(sendState===ST_WAIT_ACK)signalCont();},3000);
+  await waitCont();
+  if(sendTimer){clearTimeout(sendTimer);sendTimer=null;}
+  doFinish(true);
+}
+
+function doFinish(ok){
+  if(sendState===ST_DONE)return;
+  sendState=ST_DONE;
+  if(ok){log('--- 发送完成 ---','info');updateProg(100,fileData?fileData.length:0,fileData?fileData.length:1);toast('发送完成: '+fileName,'success');}
+  else{log('--- 发送中止 ---','error');updateProg(0,0,0);}
+  fileData=null;fileOff=0;fileName='';
+  resetCont();
+  setUI('idle');
+  if(!ok)setUI('error');
+}
+
+function doAbort(reason){
+  log('中止: '+reason,'error');toast('传输中止: '+reason,'error');
+  resetCont();
+  sendState=ST_ERR;
+  fileData=null;fileOff=0;fileName='';
+  updateProg(0,0,0);
+  setUI('error');
+}
+
+function cancelSend(){
+  if(sendState===ST_INIT||sendState===ST_DONE||sendState===ST_ERR)return;
+  log('用户取消','warn');
+  doAbort('用户取消');
+}
+
+async function retrySend(){
+  const f=selFile;let fn=elName.value.trim();
+  if(!f){for(let i=0;i<99;i++){if(!selFile)break;}toast('请重新选择文件','error');return;}
+  if(!fn)fn=f.name.replace(/\.[^.]+$/,'').slice(0,16);
+  const cmd=parseInt(document.getElementById('fileType').value);
+  sendState=ST_INIT;
+  elBtnRetry.style.display='none';elBtnSend.style.display='block';
+  await doSend(f,cmd,fn);
+}
+
+function setUI(state){
+  if(state==='sending'){elBtnSend.style.display='none';elBtnCancel.style.display='block';elBtnRetry.style.display='none';}
+  else if(state==='error'){elBtnSend.style.display='none';elBtnCancel.style.display='none';elBtnRetry.style.display='block';elStatus.textContent='';}
+  else{elBtnSend.style.display='block';elBtnCancel.style.display='none';elBtnRetry.style.display='none';elBtnSend.disabled=true;elStatus.textContent='';elFileInfo.textContent='未选择文件';}
+}
+
+function chunkSz(){return Math.max(16,Math.min(CHUNK_MAX,parseInt(document.getElementById('chunkSize').value)||512));}
+function updateProg(pct,done,total){
+  elProg.style.width=pct+'%';elPct.textContent=pct>0?pct.toFixed(1)+'%':'';
+  if(total>0){const ds=done<1024?done+'B':done<1048576?(done/1024).toFixed(1)+'K':(done/1048576).toFixed(2)+'M',ts=total<1024?total+'B':total<1048576?(total/1024).toFixed(1)+'K':(total/1048576).toFixed(2)+'M';elBytes.textContent=ds+' / '+ts;}
+  else elBytes.textContent='';
+}
+
+// ============= Serial =============
+async function connectSerial(){
+  try{
+    port=await navigator.serial.requestPort();
+    const br=parseInt(document.getElementById('baudRate').value)||921600;
+    await port.open({baudRate:br,dataBits:8,stopBits:1,parity:'none',flowControl:'none'});
+    $('statusDot').className='status-dot on';$('statusText').textContent='在线';$('portInfo').textContent='@ '+br;
+    $('statusBadge').classList.add('connected');
+    $('btnConnect').style.display='none';$('btnDisconnect').style.display='block';
+    log('串口连接 @ '+br+' bps','info');startRead();
+  }catch(e){log('连接失败: '+e.message,'error');toast('连接失败','error');}
+}
+
+async function disconnectSerial(){
+  sendState=ST_DONE;resetCont();
+  if(reader){try{await reader.cancel()}catch(e){}try{reader.releaseLock()}catch(e){}reader=null;}
+  readLoop=false;
+  if(port){try{await port.close()}catch(e){}port=null;}
+  $('statusDot').className='status-dot off';$('statusText').textContent='脱机';$('portInfo').textContent='';
+  $('statusBadge').classList.remove('connected');
+  $('btnConnect').style.display='block';$('btnDisconnect').style.display='none';
+  setUI('idle');log('串口断开','info');
+}
+
+async function startRead(){
+  readLoop=true;
+  while(port&&port.readable&&readLoop){
+    try{
+      reader=port.readable.getReader();
+      while(true){const{value,done}=await reader.read();if(done)break;if(value&&value.length)feedRx(value);}
+    }catch(e){if(readLoop)log('读错误: '+e.message,'error');}
+    finally{if(reader){try{reader.releaseLock()}catch(e){}reader=null;}}
+    if(!readLoop)break;
+    await new Promise(r=>setTimeout(r,200));
+  }
+}
+
+async function writeSer(data){
+  if(!port||!port.writable)return false;
+  let w=null;
+  try{
+    w=port.writable.getWriter();
+    await Promise.race([
+      w.write(data),
+      new Promise(function(_,reject){writeTimer=setTimeout(function(){reject(new Error('写超时'));},WRITE_TIMEOUT);})
+    ]);
+    return true;
+  }catch(e){
+    log('写错误: '+e.message,(e.message==='写超时'?'warn':'error'));
+    if(e.message==='写超时')toast('USB写入超时, 可能MCU繁忙','error');
+    return false;
+  }finally{
+    if(writeTimer){clearTimeout(writeTimer);writeTimer=null;}
+    if(w){try{w.releaseLock()}catch(e){}}
+  }
+}
+
+// ============= Commands =============
+async function queryFileList(){
+  if(!port){toast('未连接','error');return;}
+  await writeSer(frame(C_QRY,new Uint8Array(0)));
+  log('主机 -> 查询文件列表','send');
+}
+async function deleteFile(){
+  if(!port){toast('未连接','error');return;}
+  const ft=parseInt(document.getElementById('deleteFileType').value),fi=parseInt(document.getElementById('deleteFileIndex').value)||0;
+  if(!confirm('删除 '+(ft===C_L?'大':'小')+'文件 #'+fi+'?'))return;
+  await delFI(ft,fi);
+}
+async function delFI(ft,fi){
+  if(!port)return;
+  const d=new Uint8Array([ft&0xFF,fi&0xFF]);
+  await writeSer(frame(C_DEL,d));
+  log('主机 -> 删除 类型=0x'+ft.toString(16).toUpperCase()+' 索引='+fi,'send');
+}
+window.delFI=delFI;
+
+// ============= Log =============
+function log(msg,cls){
+  const t=new Date().toLocaleTimeString();
+  const cm={send:'log-send',recv:'log-recv',error:'log-error',info:'log-info',warn:'log-warn'};
+  const container=elLog.parentElement;
+  const atBottom=container.scrollHeight-container.scrollTop-container.clientHeight<40;
+  const div=document.createElement('div');div.className='log-line';
+  div.innerHTML='<span class="log-time">['+t+']</span> <span class="'+(cm[cls]||'')+'">'+esc(msg)+'</span>';
+  elLog.appendChild(div);
+  if(atBottom)container.scrollTop=container.scrollHeight;
+}
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+
+// ============= Toast =============
+function toast(msg,type){
+  const d=document.createElement('div');d.className='toast '+(type||'');d.textContent=msg;elToast.appendChild(d);
+  setTimeout(function(){d.style.opacity='0';d.style.transition='opacity .3s';setTimeout(function(){if(d.parentNode)d.parentNode.removeChild(d);},300);},3500);
+}
+
+// ============= Init =============
+window.addEventListener('beforeunload',function(){
+  sendState=ST_DONE;resetCont();readLoop=false;
+  if(port){try{port.close()}catch(e){}}
+});
+if(!('serial' in navigator)){$('btnConnect').disabled=true;$('btnConnect').textContent='需Chrome/Edge';toast('请用Chrome/Edge浏览器','error');}
+</script>
+</body>
+</html>

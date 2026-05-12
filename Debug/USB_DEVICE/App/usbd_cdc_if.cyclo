@@ -2,6 +2,6 @@
 ../USB_DEVICE/App/usbd_cdc_if.c:167:15:CDC_DeInit_FS	1
 ../USB_DEVICE/App/usbd_cdc_if.c:181:15:CDC_Control_FS	1
 ../USB_DEVICE/App/usbd_cdc_if.c:262:15:CDC_Receive_FS	2
-../USB_DEVICE/App/usbd_cdc_if.c:289:9:CDC_Transmit_FS	6
-../USB_DEVICE/App/usbd_cdc_if.c:327:15:CDC_TransmitCplt_FS	1
-../USB_DEVICE/App/usbd_cdc_if.c:341:9:CDC_ReceiveCallback	1
+../USB_DEVICE/App/usbd_cdc_if.c:292:9:CDC_Transmit_FS	6
+../USB_DEVICE/App/usbd_cdc_if.c:330:15:CDC_TransmitCplt_FS	1
+../USB_DEVICE/App/usbd_cdc_if.c:344:9:CDC_ReceiveCallback	1

@@ -43,6 +43,7 @@ int16_t find_large_file_by_name(const char *name);
 bool get_small_file_info(uint8_t file_id, small_file_info_t *info);
 bool get_large_file_info(uint8_t file_id, large_file_info_t *info);
 void clear_large_file(void);
+void clear_small_file(void);
 bool storage_is_downloading(void);
 
 #endif /* INC_STORAGE_MANAGER_H_ */

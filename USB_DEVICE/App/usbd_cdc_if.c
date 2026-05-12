@@ -95,7 +95,7 @@ uint8_t UserRxBufferFS[APP_RX_DATA_SIZE];
 uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];
 
 /* USER CODE BEGIN PRIVATE_VARIABLES */
-
+extern volatile bool g_usb_rx_paused;
 /* USER CODE END PRIVATE_VARIABLES */
 
 /**
@@ -263,15 +263,18 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
   usb_controller_on_rx_received(Buf, *Len);
-  
-  if (usb_controller_get_rx_free_space() >= 64U) { 
-    USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
-    USBD_CDC_ReceivePacket(&hUsbDeviceFS);
-    return (USBD_OK);
-  } else {
-    // 空间不足，暂不开启下一次接收，底层 USB 端点会自动对主机回复 NAK。
-    return (USBD_BUSY);
+
+  if (usb_controller_get_rx_free_space() >= 64)
+  {
+      USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
+      USBD_CDC_ReceivePacket(&hUsbDeviceFS);
   }
+  else
+  {
+      g_usb_rx_paused = true;
+  }
+
+  return (USBD_OK);
   /* USER CODE END 6 */
 }
 

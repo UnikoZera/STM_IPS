@@ -158,7 +158,16 @@ void clear_large_file(void)
     storage_fat_save();
 }
 
-
+void clear_small_file(void)
+{
+    // 小文件区不需要物理擦除，直接重置分配指针和文件信息即可
+    global_fat.small_next_addr = AREA_SMALL_START_ADDR;
+    for (uint16_t i = 0; i < MAX_SMALL_FILES; i++)
+    {
+        global_fat.small_files[i].is_valid = 0;
+    }
+    storage_fat_save();
+}
 
 #pragma region 分配器核心
 
@@ -239,19 +248,6 @@ static uint32_t current_sector_count = 0;
 static uint32_t small_file_start_addr = 0;
 static uint8_t error_payload = 0x00;
 static uint32_t small_last_erased_sector = 0xFFFFFFFF;
-static bool pending_error = false;
-static uint8_t pending_error_payload = 0x00;
-static uint16_t pending_continue_count = 0;
-static uint8_t store_op_state = 0;
-static uint32_t store_erase_cur = 0;
-static uint32_t store_erase_end = 0;
-static bool store_op_is_small = false;
-static uint32_t store_wr_addr = 0;
-static uint16_t store_wr_len = 0;
-static uint8_t store_wr_buf[512];
-static bool pending_finalize = false;
-static char finalize_filename[MAX_FILENAME_LEN];
-
 
 #pragma endregion
 
@@ -268,23 +264,11 @@ static inline void erase_sector(uint32_t sector)
 static void send_error(uint8_t error_type)
 {
     error_payload = error_type;
-    usb_send_status_t status = usb_controller_send(&g_usb_controller, RETRY_SEND_ERROR_CODE, &error_payload, 1);
-    if (status == USB_SEND_BUSY_REJECTED)
-    {
-        pending_error = true;
-        pending_error_payload = error_payload;
-    }
+    usb_controller_send(&g_usb_controller, RETRY_SEND_ERROR_CODE, &error_payload, 1);
 }
 static void send_continue(void)
 {
-    usb_send_status_t status = usb_controller_send(&g_usb_controller, CONTINUE_SEND_CODE, NULL, 0);
-    if (status == USB_SEND_BUSY_REJECTED)
-    {
-        if (pending_continue_count < UINT16_MAX)
-        {
-            pending_continue_count++;
-        }
-    }
+    usb_controller_send(&g_usb_controller, CONTINUE_SEND_CODE, NULL, 0);
 }
 /**
  * @brief 以DMA方式写入flash数据，若DMA失败则回退到同步写入
@@ -319,17 +303,10 @@ static bool flash_write_dma(uint32_t addr, const uint8_t *data, uint32_t size)
 
 static void process_host_command(void)
 {
-    // CRC校验：对所有帧进行校验（帧长>=2时才可校验）
-    if (host_payload_len >= 2)
+    if (host_payload_len < 2) return;
+    if (!crc16_usb_packing(host_payload, FRAME_HDR_SIZE + host_payload_len, true))
     {
-        if (!(crc16_usb_packing(host_payload, FRAME_HDR_SIZE + host_payload_len, true)))
-        {
-            send_error(0x01); // CRC错误
-            return;
-        }
-    }
-    else
-    {
+        send_error(0x01);
         return;
     }
 
@@ -374,16 +351,8 @@ static void process_host_command(void)
         if (!is_downloading)
             return;
 
-        memcpy(finalize_filename, (char *)&host_payload[FRAME_HDR_SIZE],
+        memcpy(current_filename, (char *)&host_payload[FRAME_HDR_SIZE],
                (actual_data_len < MAX_FILENAME_LEN) ? actual_data_len : MAX_FILENAME_LEN);
-
-        if (store_op_state != 0)
-        {
-            pending_finalize = true;
-            return;
-        }
-
-        memcpy(current_filename, finalize_filename, MAX_FILENAME_LEN);
         if (current_file_type == 0x11)
         {
             if (global_fat.large_file_count < MAX_LARGE_FILES)
@@ -420,9 +389,6 @@ static void process_host_command(void)
     // ==================== 0x11 / 0x45: 下载数据 ====================
     if (host_cmd == 0x11 || host_cmd == 0x45)
     {
-        if (store_op_state != 0)
-            return;
-
         uint32_t erase_start_sector = 0;
         uint32_t erase_end_sector = 0;
         bool need_erase = false;
@@ -458,7 +424,7 @@ static void process_host_command(void)
             }
             else
             {
-                uint32_t allocated_addr = allocate_small_space(256);
+                uint32_t allocated_addr = allocate_small_space(actual_data_len);
                 if (allocated_addr == 0xFFFFFFFF)
                 {
                     is_downloading = false;
@@ -467,12 +433,12 @@ static void process_host_command(void)
                 }
                 small_file_start_addr = allocated_addr;
                 current_write_addr = allocated_addr;
-                current_allocated_size = 256;
-                uint32_t sector = allocated_addr / W25Q_SECTOR_SIZE;
-                if (sector > small_last_erased_sector)
+                current_allocated_size = actual_data_len;
+                uint32_t end_sector = (allocated_addr + actual_data_len - 1) / W25Q_SECTOR_SIZE;
+                if (end_sector > small_last_erased_sector)
                 {
                     erase_start_sector = small_last_erased_sector + 1;
-                    erase_end_sector = sector + 1;
+                    erase_end_sector = end_sector + 1;
                     need_erase = true;
                 }
             }
@@ -515,7 +481,6 @@ static void process_host_command(void)
                 if (needed_total > current_allocated_size)
                 {
                     uint32_t additional_bytes = needed_total - current_allocated_size;
-                    additional_bytes = ((additional_bytes + 255) / 256) * 256;
                     if (global_fat.small_next_addr + additional_bytes <= AREA_SMALL_END_ADDR)
                     {
                         global_fat.small_next_addr += additional_bytes;
@@ -538,32 +503,34 @@ static void process_host_command(void)
             }
         }
 
+        if (need_erase)
+        {
+            for (uint32_t s = erase_start_sector; s < erase_end_sector; s++)
+            {
+                w25q_erase_sector(s * W25Q_SECTOR_SIZE);
+                if (host_cmd == 0x45)
+                {
+                    small_last_erased_sector = s;
+                }
+            }
+        }
+
         if (actual_data_len > 0)
         {
             uint16_t copy_len = actual_data_len;
-            if (copy_len > sizeof(store_wr_buf)) copy_len = sizeof(store_wr_buf);
-            memcpy(store_wr_buf, &host_payload[FRAME_HDR_SIZE], copy_len);
+            uint8_t tmp_buf[512];
+            if (copy_len > sizeof(tmp_buf)) copy_len = sizeof(tmp_buf);
+            memcpy(tmp_buf, &host_payload[FRAME_HDR_SIZE], copy_len);
+            if (!flash_write_dma(current_write_addr, tmp_buf, copy_len))
+            {
+                is_downloading = false;
+                send_error(0x0A);
+                return;
+            }
         }
-        store_wr_len = actual_data_len;
-        store_wr_addr = current_write_addr;
         current_write_addr += actual_data_len;
         current_file_size += actual_data_len;
-
-        if (need_erase)
-        {
-            store_erase_cur = erase_start_sector;
-            store_erase_end = erase_end_sector;
-            store_op_is_small = (host_cmd == 0x45);
-            store_op_state = 1;
-        }
-        else if (actual_data_len > 0)
-        {
-            store_op_state = 2;
-        }
-        else
-        {
-            store_op_state = 4;
-        }
+        send_continue();
         return;
     }
     // ==================== 0x20: 查询文件列表 (TLV格式) ====================
@@ -674,13 +641,7 @@ static void storage_manager_process_host_byte(uint8_t byte)
     case STATE_WAIT_LEN_H:
         host_payload_len |= ((uint16_t)byte << 8);
         host_payload[4] = byte;
-        if (host_payload_len > sizeof(host_payload) - FRAME_HDR_SIZE)
-        {
-            host_state = STATE_WAIT_HEAD0;
-            host_state_tick = HAL_GetTick();
-            clear_host_payload();
-        }
-        else if (host_payload_len < 2)
+        if (host_payload_len > sizeof(host_payload) - FRAME_HDR_SIZE || host_payload_len < 2)
         {
             host_state = STATE_WAIT_HEAD0;
             host_state_tick = HAL_GetTick();
@@ -730,119 +691,12 @@ void storage_manager_task(void)
 {
     usb_controller_task(&g_usb_controller);
 
-    if (pending_error)
-    {
-        usb_send_status_t status = usb_controller_send(&g_usb_controller, RETRY_SEND_ERROR_CODE, &pending_error_payload, 1);
-        if (status != USB_SEND_BUSY_REJECTED)
-        {
-            pending_error = false;
-        }
-    }
-
-    if (!pending_error && pending_continue_count > 0)
-    {
-        usb_send_status_t status = usb_controller_send(&g_usb_controller, CONTINUE_SEND_CODE, NULL, 0);
-        if (status != USB_SEND_BUSY_REJECTED)
-        {
-            pending_continue_count--;
-        }
-    }
-
     if (host_state != STATE_WAIT_HEAD0 && HAL_GetTick() - host_state_tick >= HOST_STATE_TIMEOUT_MS)
     {
         host_state = STATE_WAIT_HEAD0;
         clear_host_payload();
         host_state_tick = HAL_GetTick();
         usb_controller_receive(&g_usb_controller, rx_buffer, sizeof(rx_buffer));
-    }
-
-    if (store_op_state == 1)
-    {
-        if (store_erase_cur < store_erase_end)
-        {
-            if (!w25q_dma_is_busy())
-            {
-                // erase_sector(store_erase_cur);
-                store_erase_cur++;
-                if (store_op_is_small)
-                {
-                    small_last_erased_sector = store_erase_cur - 1;
-                }
-            }
-        }
-        if (store_erase_cur >= store_erase_end)
-        {
-            store_op_state = (store_wr_len > 0) ? 2U : 4U;
-        }
-    }
-
-    if (store_op_state == 2)
-    {
-        if (flash_write_dma(store_wr_addr, store_wr_buf, store_wr_len))
-        {
-            store_op_state = 3;
-        }
-        else
-        {
-            is_downloading = false;
-            send_error(0x0A);
-            store_op_state = 0;
-        }
-    }
-
-    if (store_op_state == 3)
-    {
-        if (!w25q_dma_is_busy())
-        {
-            store_op_state = 4;
-        }
-    }
-
-    if (store_op_state == 4)
-    {
-        uint16_t free_space = usb_controller_get_rx_free_space();
-        if (free_space >= USB_RECEIVE_BUFFER_SIZE - 1 || free_space >= 512)
-        {
-            send_continue();
-            store_op_state = 0;
-        }
-    }
-
-    if (store_op_state == 0 && pending_finalize)
-    {
-        memcpy(current_filename, finalize_filename, MAX_FILENAME_LEN);
-        if (current_file_type == 0x11)
-        {
-            if (global_fat.large_file_count < MAX_LARGE_FILES)
-            {
-                large_file_info_t *fi = &global_fat.large_files[global_fat.large_file_count];
-                fi->is_valid = 1;
-                fi->file_type = current_file_type;
-                fi->start_sector = current_start_sector;
-                fi->size = current_file_size;
-                fi->sector_count = current_sector_count;
-                memcpy(fi->filename, current_filename, MAX_FILENAME_LEN);
-                global_fat.large_file_count++;
-                storage_fat_save();
-            }
-        }
-        else if (current_file_type == 0x45)
-        {
-            if (global_fat.small_file_count < MAX_SMALL_FILES)
-            {
-                small_file_info_t *fi = &global_fat.small_files[global_fat.small_file_count];
-                fi->is_valid = 1;
-                fi->file_type = current_file_type;
-                fi->start_address = small_file_start_addr;
-                fi->size = current_file_size;
-                memcpy(fi->filename, current_filename, MAX_FILENAME_LEN);
-                global_fat.small_file_count++;
-                storage_fat_save();
-            }
-        }
-        is_downloading = false;
-        send_continue();
-        pending_finalize = false;
     }
 
     uint16_t rx_len = usb_controller_receive(&g_usb_controller, rx_buffer, sizeof(rx_buffer));

@@ -13,6 +13,8 @@
 
 extern USBD_HandleTypeDef hUsbDeviceFS;
 
+volatile bool g_usb_rx_paused = false;
+
 usb_controller_t g_usb_controller;
 static uint8_t s_usb_rx_cache[USB_RECEIVE_BUFFER_SIZE];
 
@@ -242,13 +244,15 @@ uint16_t usb_controller_receive(usb_controller_t *controller, uint8_t *buf, uint
             __enable_irq();
         }
 
-        /* 腾出空间后，检查是否需要重新开启底层的接收 */
-        // 但是这个函数已经在中断里调用了，所以理论上不应该有并发问题，暂时不加锁了。
         uint16_t new_free_space = usb_controller_get_rx_free_space();
-        if (new_free_space >= 64U) // 以USB FS的最大包长为阈值，避免过早开启底层接收导致频繁NAK
+        if (g_usb_rx_paused && (new_free_space >= 64U))
         {
+            __disable_irq();
+            g_usb_rx_paused = false;
+            __enable_irq();
+
             USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef *)hUsbDeviceFS.pClassData;
-            if (hcdc != NULL && hcdc->RxState == 0) // 如果处于非接收状态，则恢复
+            if (hcdc != NULL)
             {
                 USBD_CDC_ReceivePacket(&hUsbDeviceFS);
             }
