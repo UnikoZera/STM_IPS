@@ -9,9 +9,6 @@
     {
       "AbsoluteMoniker": "D:0:0:{30A28572-3EAC-DD3D-EB26-17E3E06834C5}|lcd_host\\lcd_host.csproj|d:\\mcu\\projects\\stm_ips\\lcd_host_solution\\lcd_host\\mainwindow.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{30A28572-3EAC-DD3D-EB26-17E3E06834C5}|lcd_host\\lcd_host.csproj|solutionrelative:lcd_host\\mainwindow.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\mcu\\projects\\stm_ips\\Core\\Src\\storage_manager.c||{3B902123-F8A7-4915-9F01-361F908088D0}"
     }
   ],
   "DocumentGroupContainers": [
@@ -21,32 +18,8 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 2,
+          "SelectedChildIndex": 0,
           "Children": [
-            {
-              "$type": "Document",
-              "DocumentIndex": 2,
-              "Title": "storage_manager.c",
-              "DocumentMoniker": "D:\\mcu\\projects\\stm_ips\\Core\\Src\\storage_manager.c",
-              "RelativeDocumentMoniker": "..\\Core\\Src\\storage_manager.c",
-              "ToolTip": "D:\\mcu\\projects\\stm_ips\\Core\\Src\\storage_manager.c",
-              "RelativeToolTip": "..\\Core\\Src\\storage_manager.c",
-              "ViewState": "AgIAAAcDAAAAAAAAAABYwAAAAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000423|",
-              "WhenOpened": "2026-05-09T02:01:04.163Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 1,
-              "Title": "MainWindow.xaml.cs",
-              "DocumentMoniker": "D:\\mcu\\projects\\stm_ips\\lcd_host_solution\\lcd_host\\MainWindow.xaml.cs",
-              "RelativeDocumentMoniker": "lcd_host\\MainWindow.xaml.cs",
-              "ToolTip": "D:\\mcu\\projects\\stm_ips\\lcd_host_solution\\lcd_host\\MainWindow.xaml.cs",
-              "RelativeToolTip": "lcd_host\\MainWindow.xaml.cs",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAwwKkNAAABAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-05-07T12:29:51.631Z"
-            },
             {
               "$type": "Document",
               "DocumentIndex": 0,
@@ -56,7 +29,20 @@
               "ToolTip": "D:\\mcu\\projects\\stm_ips\\lcd_host_solution\\lcd_host\\MainWindow.xaml",
               "RelativeToolTip": "lcd_host\\MainWindow.xaml",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003549|",
-              "WhenOpened": "2026-04-29T05:47:10.177Z",
+              "WhenOpened": "2026-05-13T00:15:59.941Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "MainWindow.xaml.cs",
+              "DocumentMoniker": "D:\\mcu\\projects\\stm_ips\\lcd_host_solution\\lcd_host\\MainWindow.xaml.cs",
+              "RelativeDocumentMoniker": "lcd_host\\MainWindow.xaml.cs",
+              "ToolTip": "D:\\mcu\\projects\\stm_ips\\lcd_host_solution\\lcd_host\\MainWindow.xaml.cs",
+              "RelativeToolTip": "lcd_host\\MainWindow.xaml.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAADwvwAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-05-13T00:15:53.896Z",
               "EditorCaption": ""
             }
           ]

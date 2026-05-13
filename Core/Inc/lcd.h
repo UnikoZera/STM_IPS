@@ -44,13 +44,7 @@
 #define SEND_TAIL 4
 static const uint8_t LCD_FRAME_TAIL[] = {0x0D, 0x00, 0x07, 0x21};
 
-#ifndef LCD_USB_STREAM_ENABLE
-#define LCD_USB_STREAM_ENABLE 0U
-#endif
-
-#ifndef LCD_USB_STREAM_MIN_INTERVAL_MS
 #define LCD_USB_STREAM_MIN_INTERVAL_MS 30U
-#endif
 
 #pragma region 颜色定义
 #define WHITE 0xFFFF
@@ -100,6 +94,7 @@ void lcd_draw_string(int16_t x,int16_t y, uint16_t fc, uint16_t bc, uint8_t size
 void lcd_set_area_color(int16_t start_x, int16_t start_y, int16_t end_x, int16_t end_y, uint16_t color);
 
 extern volatile bool lcd_dma_busy;
+extern volatile bool lcd_usb_stream_enabled;
 extern uint16_t *lcd_frame_ptr;
 extern uint16_t *lcd_write_ptr;
 extern uint16_t lcd_fps;

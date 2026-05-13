@@ -14,8 +14,8 @@
 #include "w25q_controller.h"
 #include "usb_controller.h"
 #define MAX_FILENAME_LEN 16
-#define MAX_SMALL_FILES 64
-#define MAX_LARGE_FILES 32
+#define MAX_SMALL_FILES 32
+#define MAX_LARGE_FILES 64
 typedef struct
 {
     uint8_t is_valid;

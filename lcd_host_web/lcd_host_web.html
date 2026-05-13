@@ -6,223 +6,441 @@
 <title>STM IPS Host</title>
 <style>
 :root {
-  --bg:#0d1117; --surface:#161b22; --surface2:#21262d;
-  --accent:#ff6b6b; --accent2:#8b5cf6; --text:#e6e6e6; --text2:#8b949e;
-  --green:#3fb950; --yellow:#d29922; --red:#f85149;
-  --border:#30363d; --radius:8px;
+  --bg:#05080d; --surface:#0b1018; --surface2:#111720; --surface3:#1a2232;
+  --cyan:#00e5ff; --magenta:#e040fb; --pink:#ff4081; --gold:#ffab00;
+  --green:#00e676; --red:#ff1744; --amber:#ff9100;
+  --text:#dde3ed; --text2:#6e7a8c; --text3:#3d4a5c;
+  --border:#192235; --radius:7px; --rad-sm:4px;
+  --glow-cyan:rgba(0,229,255,.08); --glow-mag:rgba(224,64,251,.08);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 body{
-  font-family:'Segoe UI',system-ui,sans-serif;
-  background:var(--bg);color:var(--text);
-  min-height:100vh;display:flex;flex-direction:column;
-  overflow:hidden;
+  font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
+  font-size:14px;
+  background:radial-gradient(ellipse at 50% 0%,#0d1525 0%,var(--bg) 70%);
+  color:var(--text);height:100vh;
+  display:flex;flex-direction:column;overflow:hidden;
+  -webkit-font-smoothing:antialiased;
 }
-/* Header */
+body::before{
+  content:'';position:fixed;inset:0;z-index:-1;opacity:.03;
+  background-image:radial-gradient(circle at 1px 1px,var(--cyan) 1px,transparent 0);
+  background-size:32px 32px;
+}
+/* ── Animations ── */
+@keyframes bounceIn{
+  0%{opacity:0;transform:scale(.75) translateY(16px)}
+  55%{transform:scale(1.06) translateY(-4px)}
+  75%{transform:scale(.96) translateY(2px)}
+  100%{opacity:1;transform:scale(1) translateY(0)}
+}
+@keyframes popIn{
+  0%{opacity:0;transform:scale(.5)}
+  70%{transform:scale(1.12)}
+  100%{opacity:1;transform:scale(1)}
+}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes slideLeft{from{opacity:0;transform:translateX(-20px)}to{opacity:1;transform:translateX(0)}}
+@keyframes slideRight{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+@keyframes slideDown{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{box-shadow:0 0 4px var(--green)}50%{box-shadow:0 0 28px var(--green),0 0 48px rgba(0,230,118,.3)}}
+@keyframes breathe{0%,100%{opacity:1}50%{opacity:.55}}
+@keyframes borderGlow{0%,100%{border-color:var(--border)}50%{border-color:var(--cyan)}}
+@keyframes canvasGlow{0%,100%{border-color:var(--border);box-shadow:none}50%{border-color:var(--cyan);box-shadow:0 0 24px rgba(0,229,255,.3)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes scaleIn{from{opacity:0;transform:scale(.88)}to{opacity:1;transform:scale(1)}}
+@keyframes titleShimmer{0%,100%{filter:brightness(1)}50%{filter:brightness(1.35)}}
+@keyframes btnRipple{0%{transform:scale(0);opacity:.6}100%{transform:scale(4);opacity:0}}
+@keyframes gentlePulse{0%,100%{box-shadow:0 0 4px var(--green)}50%{box-shadow:0 0 16px var(--green),0 0 32px rgba(0,230,118,.25)}}
+@keyframes bylineScroll{0%{background-position:0% 50%}100%{background-position:200% 50%}}
+@keyframes fadeOut{0%{opacity:1}100%{opacity:0}}
+@keyframes scaleOut{0%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(.92)}}
+
+/* ── Header ── */
 header{
-  background:linear-gradient(135deg,var(--surface),#1a1025);
+  background:linear-gradient(180deg,rgba(11,16,24,.95),rgba(5,8,13,.98));
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
   border-bottom:1px solid var(--border);
-  padding:14px 24px;
-  display:flex;align-items:center;justify-content:space-between;
-  flex-wrap:wrap;gap:12px;z-index:10;
+  padding:10px 22px;display:flex;align-items:center;
+  justify-content:space-between;z-index:20;flex-shrink:0;
+  animation:popIn .4s cubic-bezier(.34,1.56,.64,1);
 }
 header h1{
-  font-size:20px;
-  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  font-size:18px;font-weight:700;display:flex;align-items:center;gap:12px;
+}
+header h1 .gradient-text{
+  background:linear-gradient(135deg,var(--cyan) 0%,var(--magenta) 100%);
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-  font-weight:700;letter-spacing:-.5px;
+  animation:titleShimmer 6s ease-in-out infinite;
+}
+header h1 .byline{
+  font-size:10px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;
+  padding-left:12px;border-left:1px solid var(--border);
+  background:linear-gradient(90deg,var(--cyan),var(--magenta),var(--pink),var(--gold),var(--green),var(--cyan));
+  background-size:200% 100%;
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  animation:bylineScroll 3s linear infinite;
 }
 .status-badge{
   display:flex;align-items:center;gap:8px;
-  background:var(--surface2);padding:6px 14px;border-radius:20px;
-  border:1px solid var(--border);font-size:12px;
-  transition:all .3s;
+  background:rgba(17,23,32,.8);backdrop-filter:blur(8px);
+  padding:7px 18px;border-radius:20px;
+  border:1px solid var(--border);font-size:12px;transition:all .3s;
+  animation:fadeIn .5s ease .3s both;
 }
-.status-badge.connected{border-color:var(--green);box-shadow:0 0 12px rgba(63,185,80,.2);}
-.status-dot{width:8px;height:8px;border-radius:50%;background:var(--red);transition:all .3s;}
-.status-dot.on{background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2s infinite;}
-@keyframes pulse{0%,100%{box-shadow:0 0 4px var(--green)}50%{box-shadow:0 0 16px var(--green)}}
+.status-badge.connected{animation:borderGlow 3s ease infinite;}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--red);transition:all .3s;box-shadow:0 0 6px var(--red);}
+.status-dot.on{background:var(--green);animation:pulse 1.5s infinite,breathe 2s ease-in-out infinite;box-shadow:0 0 8px var(--green);}
 
-/* Layout */
+/* ── Main Layout ── */
 main{
-  flex:1;display:grid;
-  grid-template-columns:300px 1fr 340px;
-  grid-template-rows:1fr;
-  gap:1px;background:var(--border);overflow:hidden;
+  flex:1;display:flex;
+  gap:0;background:var(--border);overflow:hidden;min-height:0;
+  animation:popIn .45s cubic-bezier(.34,1.56,.64,1) .1s both;
 }
-.panel{background:var(--bg);display:flex;flex-direction:column;overflow:hidden;}
-.panel-header{
-  background:var(--surface);padding:10px 16px;
-  font-size:11px;font-weight:600;color:var(--accent2);
-  border-bottom:1px solid var(--border);
-  text-transform:uppercase;letter-spacing:1.5px;
-  display:flex;align-items:center;gap:8px;
-  flex-shrink:0;
-}
-.panel-header::before{content:'';width:3px;height:14px;background:linear-gradient(180deg,var(--accent),var(--accent2));border-radius:2px;}
-.panel-body{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;min-height:0;}
 
-/* Cards */
-.card{
-  background:var(--surface);border-radius:var(--radius);
-  padding:12px 14px;border:1px solid var(--border);
-  transition:border-color .2s,box-shadow .2s;
+/* ── Panels ── */
+.panel{background:var(--bg);display:flex;flex-direction:column;overflow:hidden;min-height:0;}
+.panel-left{width:340px;min-width:260px;max-width:520px;flex-shrink:0;}
+.panel-center{flex:1;min-width:200px;}
+.panel-right{width:340px;min-width:260px;max-width:520px;flex-shrink:0;}
+.splitter{width:1px;background:var(--border);flex-shrink:0;cursor:col-resize;transition:background .15s,box-shadow .15s;position:relative;}
+.splitter::after{content:'';position:absolute;left:-3px;right:-3px;top:0;bottom:0;}
+.splitter:hover,.splitter.active{background:var(--cyan);box-shadow:0 0 8px rgba(0,229,255,.4);}
+.panel-hd{
+  background:linear-gradient(180deg,var(--surface),var(--surface2));
+  padding:10px 16px;font-size:11px;font-weight:600;color:var(--cyan);
+  border-bottom:1px solid var(--border);
+  text-transform:uppercase;letter-spacing:1.6px;
+  display:flex;align-items:center;gap:8px;flex-shrink:0;user-select:none;
 }
-.card:hover{border-color:var(--accent2);box-shadow:0 0 20px rgba(139,92,246,.1);}
-.card label{
-  display:block;font-size:10px;color:var(--text2);
-  margin-bottom:6px;text-transform:uppercase;
-  letter-spacing:.8px;font-weight:600;
+.panel-hd::before{content:'';width:3px;height:14px;background:linear-gradient(180deg,var(--cyan),var(--magenta));border-radius:2px;}
+.panel-hd .hd-badge{font-size:10px;color:var(--text2);margin-left:auto;font-weight:400;letter-spacing:0;}
+.panel-hd .btn-log-clear{
+  margin-left:auto;font-size:10px;padding:4px 12px;
+  background:transparent;border:1px solid var(--border);
+  border-radius:4px;color:var(--text2);cursor:pointer;
+  transition:all .2s;letter-spacing:0;text-transform:none;
+}
+.panel-hd .btn-log-clear:hover{border-color:var(--red);color:var(--red);background:rgba(255,23,68,.06);}
+.panel-body{flex:1;overflow-y:auto;overflow-x:hidden;padding:10px;min-height:0;}
+.lcd-fixed{
+  flex-shrink:0;padding:8px 10px;
+  background:linear-gradient(180deg,rgba(11,16,24,.6),var(--bg));
+  border-bottom:1px solid var(--border);transition:background .5s;
+}
+.lcd-fixed.streaming{
+  background:linear-gradient(180deg,rgba(0,229,255,.03),rgba(224,64,251,.02),var(--bg));
+}
+#lcdCanvas{
+  border:1px solid var(--border)!important;border-radius:var(--rad-sm)!important;
+  transition:border-color .5s,box-shadow .5s,opacity .3s,filter .3s;
+}
+#lcdCanvas.streaming{animation:canvasGlow 2s ease-in-out infinite;}
+
+/* ── Cards ── */
+.card{
+  background:linear-gradient(180deg,rgba(11,16,24,.9),rgba(17,23,32,.8));
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
+  border-radius:var(--radius);padding:10px 12px;
+  border:1px solid var(--border);position:relative;
+  margin-bottom:8px;transition:border-color .25s,box-shadow .25s,transform .35s cubic-bezier(.34,1.56,.64,1);
+  animation:bounceIn .5s cubic-bezier(.34,1.56,.64,1) both;
+}
+.card::after{
+  content:'';position:absolute;inset:0;border-radius:var(--radius);
+  opacity:0;transition:opacity .25s;
+  background:linear-gradient(135deg,transparent 0%,rgba(0,229,255,.02) 50%,transparent 100%);
+  pointer-events:none;
+}
+.card:nth-child(1){animation-delay:.08s}.card:nth-child(2){animation-delay:.13s}
+.card:nth-child(3){animation-delay:.18s}.card:nth-child(4){animation-delay:.23s}
+.card:nth-child(5){animation-delay:.28s}.card:nth-child(6){animation-delay:.33s}
+.card:last-child{margin-bottom:0;}
+.card:hover{border-color:var(--cyan);box-shadow:0 0 32px var(--glow-cyan),0 8px 24px rgba(0,0,0,.4);transform:translateY(-3px) scale(1.01);}
+.card:hover::after{opacity:1;}
+.card-accent{border-color:rgba(0,229,255,.25);box-shadow:0 0 12px var(--glow-cyan);}
+.card-title{
+  display:block;font-size:10.5px;color:var(--text2);
+  margin-bottom:7px;text-transform:uppercase;letter-spacing:.8px;font-weight:600;
 }
 .card input[type=text],.card input[type=number],.card select{
-  width:100%;padding:8px 10px;
-  background:var(--bg);border:1px solid var(--border);
-  border-radius:4px;color:var(--text);
-  font-family:inherit;font-size:13px;outline:none;
-  transition:border-color .2s,box-shadow .2s;
+  width:100%;padding:9px 11px;
+  background:rgba(5,8,13,.7);border:1px solid var(--border);
+  border-radius:6px;color:var(--text);
+  font-family:inherit;font-size:13.5px;outline:none;
+  transition:border-color .25s,box-shadow .25s,background .25s,transform .15s;
 }
-.card input:focus,.card select:focus{border-color:var(--accent2);box-shadow:0 0 8px rgba(139,92,246,.2);}
+.card input:focus,.card select:focus{
+  border-color:var(--cyan);box-shadow:0 0 16px rgba(0,229,255,.18);
+  background:rgba(5,8,13,.9);transform:translateY(-1px);
+}
 
-/* Buttons */
+/* ── Buttons ── */
 .btn{
-  display:block;width:100%;
-  padding:10px 14px;border:none;border-radius:6px;
-  font-family:inherit;font-size:12px;font-weight:600;
-  cursor:pointer;text-transform:uppercase;
-  letter-spacing:.5px;transition:all .2s;
-  position:relative;overflow:hidden;
+  display:block;width:100%;padding:13px 16px;
+  border:none;border-radius:8px;
+  font-family:inherit;font-size:14px;font-weight:600;
+  cursor:pointer;letter-spacing:.4px;transition:all .25s cubic-bezier(.4,0,.2,1);
+  text-align:center;position:relative;overflow:hidden;
+  outline:none;
 }
-.btn::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,transparent 40%,rgba(255,255,255,.06));pointer-events:none;}
-.btn:active{transform:scale(.96)}.btn:hover{filter:brightness(1.15)}
-.btn:disabled{opacity:.35;cursor:not-allowed;filter:none}
-.btn-connect{background:var(--green);color:#000;}
+.btn:focus-visible{box-shadow:0 0 0 2px var(--cyan),0 0 20px rgba(0,229,255,.25);}
+.btn::before{
+  content:'';position:absolute;inset:0;opacity:0;transition:opacity .25s;
+  background:linear-gradient(135deg,rgba(255,255,255,.06),transparent);
+  pointer-events:none;
+}
+.btn::after{
+  content:'';position:absolute;inset:0;opacity:0;transition:opacity .4s;
+  background:radial-gradient(circle at center,rgba(255,255,255,.12) 0%,transparent 70%);
+  pointer-events:none;
+}
+.btn:hover::before{opacity:1;}
+.btn:hover::after{opacity:1;}
+.btn:active{transform:scale(.94)}
+.btn:disabled{opacity:.3;cursor:not-allowed;filter:none;transform:none!important;box-shadow:none!important;}
+.btn:disabled:hover::before,.btn:disabled:hover::after{opacity:0;}
+.btn-connect{
+  background:linear-gradient(135deg,var(--cyan),#00b8d4);color:#000;
+}
+.btn-connect:hover:not(:disabled){box-shadow:0 0 22px rgba(0,229,255,.4);transform:translateY(-2px);}
 .btn-disconnect{background:var(--red);color:#fff;}
-.btn-send{background:linear-gradient(135deg,var(--accent),#e55);color:#fff;}
-.btn-query{background:var(--surface2);color:var(--text);border:1px solid var(--border);}
-.btn-retry{background:linear-gradient(135deg,var(--yellow),#c80);color:#000;}
+.btn-disconnect:hover{box-shadow:0 0 16px rgba(255,23,68,.45);transform:translateY(-1px);}
+.btn-send{
+  background:linear-gradient(135deg,var(--magenta),var(--pink));color:#fff;
+}
+.btn-send:hover:not(:disabled){box-shadow:0 0 24px rgba(224,64,251,.35);transform:translateY(-2px);}
+.btn-query{
+  background:var(--surface3);color:var(--text);
+  border:1px solid var(--border);font-size:13px;padding:11px 14px;
+}
+.btn-query:hover{border-color:var(--cyan);box-shadow:0 0 18px rgba(0,229,255,.15);transform:translateY(-2px);}
+.btn-retry{
+  background:linear-gradient(135deg,var(--amber),var(--gold));color:#000;
+}
+.btn-retry:hover{box-shadow:0 0 18px rgba(255,171,0,.35);transform:translateY(-1px);}
 .btn-cancel{background:var(--red);color:#fff;}
-.btn-danger{background:var(--red);color:#fff;font-size:10px;padding:4px 10px;}
+.btn-danger{background:var(--red);color:#fff;font-size:13px;padding:11px 14px;border-radius:8px;}
+.btn-danger:hover{box-shadow:0 0 14px rgba(255,23,68,.45);transform:translateY(-2px);}
+.btn-sm{width:auto;font-size:11px;padding:6px 12px;display:inline-block;}
+.btn-row{display:flex;gap:6px;}
+.btn-row .btn{flex:1;}
 .file-upload{position:relative;overflow:hidden;}
 .file-upload input[type=file]{position:absolute;top:0;right:0;min-width:100%;min-height:100%;opacity:0;cursor:pointer;}
 
-/* Progress */
-.progress-wrap{margin-top:4px;}
-.progress-bar{width:100%;height:8px;background:var(--surface2);border-radius:4px;overflow:hidden;}
-.progress-fill{height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));border-radius:4px;transition:width .3s;position:relative;}
-.progress-fill::after{content:'';position:absolute;right:0;top:0;bottom:0;width:20px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.3));animation:shimmer 1s infinite;}
-@keyframes shimmer{0%{opacity:0}50%{opacity:1}100%{opacity:0}}
-.progress-text{font-size:11px;color:var(--text2);margin-top:4px;display:flex;justify-content:space-between;}
+/* ── Send Warning ── */
+.send-warn{
+  background:linear-gradient(135deg,rgba(255,23,68,.12),rgba(255,23,68,.04));
+  border:1px solid rgba(255,23,68,.35);border-radius:8px;
+  padding:10px 14px;font-size:13px;color:var(--red);font-weight:600;
+  margin-bottom:8px;text-align:center;position:relative;
+  box-shadow:0 4px 20px rgba(255,23,68,.12);
+  animation:warnBounce .5s cubic-bezier(.34,1.56,.64,1) forwards;
+}
+.send-warn.hide-warn{
+  animation:warnFade .35s ease forwards;
+}
+@keyframes warnBounce{
+  0%{opacity:0;transform:translateY(24px) scale(.8)}
+  50%{transform:translateY(-6px) scale(1.04)}
+  75%{transform:translateY(3px) scale(.97)}
+  100%{opacity:1;transform:translateY(0) scale(1)}
+}
+@keyframes warnFade{
+  0%{opacity:1;transform:translateY(0) scale(1)}
+  100%{opacity:0;transform:translateY(-16px) scale(.9)}
+}
 
-/* Log */
-#log{font-size:11.5px;line-height:1.7;white-space:pre-wrap;word-break:break-all;font-family:'Cascadia Code',Consolas,monospace;}
-#log .log-line{padding:2px 6px;border-radius:3px;}
-.log-time{color:#555;}.log-send{color:#7b9;}.log-recv{color:#7cb;}
-.log-error{color:var(--red);}.log-info{color:var(--yellow);}.log-warn{color:#f80;}
-.log-header{color:var(--accent2);font-weight:600;}
+/* ── Progress ── */
+.progress-wrap{margin-top:6px;}
+.progress-bar{width:100%;height:6px;background:var(--surface3);border-radius:6px;overflow:hidden;box-shadow:inset 0 1px 3px rgba(0,0,0,.3);transition:height .2s;}
+.progress-fill{
+  height:100%;width:0;border-radius:6px;transition:width .3s;
+  background:var(--red);box-shadow:0 0 10px rgba(255,23,68,.3);
+}
+.progress-fill.animating{
+  background-size:200% 100%;animation:shimmer 1.5s linear infinite;
+}
+.progress-text{font-size:11px;color:var(--text2);margin-top:3px;display:flex;justify-content:space-between;}
 
-/* File list */
+/* ── Log ── */
+#log{font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-all;font-family:'Cascadia Code',Consolas,monospace;}
+#log .log-line{padding:3px 7px;border-radius:3px;border-bottom:1px solid rgba(25,34,53,.5);animation:slideLeft .3s cubic-bezier(.34,1.56,.64,1) both;transition:background .15s;}
+#log .log-line:hover{background:rgba(0,229,255,.02);}
+.log-time{color:var(--text3);margin-right:6px;font-size:11px;}
+.log-send{color:#4dd0e1;}.log-recv{color:#81c784;}
+.log-error{color:var(--red);}.log-info{color:var(--amber);}.log-warn{color:var(--gold);}
+
+/* ── File list ── */
 .file-item{
-  background:var(--surface);border:1px solid var(--border);
+  background:linear-gradient(180deg,rgba(11,16,24,.9),rgba(17,23,32,.8));
+  border:1px solid var(--border);
   border-radius:var(--radius);padding:10px 12px;
-  display:flex;flex-direction:column;gap:4px;
-  transition:border-color .2s,transform .2s;
-  animation:fadeIn .3s ease;
+  margin-bottom:6px;transition:all .35s cubic-bezier(.34,1.56,.64,1);cursor:pointer;
+  animation:bounceIn .4s cubic-bezier(.34,1.56,.64,1) both;
+  position:relative;overflow:hidden;
 }
-@keyframes fadeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
-.file-item:hover{border-color:var(--accent2);transform:translateX(2px);}
-.file-item-name{font-size:13px;font-weight:600;color:var(--accent);}
-.file-item-meta{font-size:10px;color:var(--text2);display:flex;flex-wrap:wrap;gap:6px;}
-.file-item .tag{display:inline-block;padding:2px 7px;border-radius:3px;font-size:9px;font-weight:600;}
-.tag-large{background:rgba(255,107,107,.2);color:var(--accent);}
-.tag-small{background:rgba(139,92,246,.2);color:var(--accent2);}
-.empty-state{text-align:center;padding:40px 20px;color:var(--text2);opacity:.6;}
-.empty-state .icon{font-size:48px;margin-bottom:12px;display:block;}
+.file-item::after{
+  content:'';position:absolute;inset:0;border-radius:var(--radius);
+  opacity:0;transition:opacity .25s;
+  background:linear-gradient(135deg,transparent 0%,rgba(0,229,255,.015) 50%,transparent 100%);
+  pointer-events:none;
+}
+.file-item:hover{border-color:var(--cyan);transform:translateX(6px) scale(1.01);box-shadow:0 0 28px var(--glow-cyan);}
+.file-item:hover::after{opacity:1;}
+.file-item:last-child{margin-bottom:0;}
+.file-item-name{font-size:13.5px;font-weight:600;color:var(--cyan);margin-bottom:4px;display:flex;align-items:center;gap:5px;}
+.file-icon{font-size:15px;flex-shrink:0;}
+.file-item-meta{font-size:10px;color:var(--text2);display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.file-item-meta .sep{color:var(--text3);}
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:9.5px;font-weight:600;letter-spacing:.3px;}
+.tag-L{background:rgba(0,229,255,.12);color:var(--cyan);border:1px solid rgba(0,229,255,.15);}
+.tag-S{background:rgba(224,64,251,.12);color:var(--magenta);border:1px solid rgba(224,64,251,.15);}
+.file-item-actions{margin-top:6px;display:flex;gap:6px;}
+.empty-state{text-align:center;padding:40px 16px;color:var(--text2);opacity:.35;}
+.empty-state .icon{font-size:40px;margin-bottom:8px;display:block;}
+#fileCountBadge{font-size:10px;color:var(--text2);}
 
-/* Toast */
+/* ── Modal ── */
+.modal-overlay{
+  position:fixed;inset:0;z-index:200;
+  background:rgba(0,0,0,.65);backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+  display:none;align-items:center;justify-content:center;
+  animation:fadeIn .2s ease;
+}
+.modal-overlay.closing{animation:fadeOut .2s ease forwards;}
+.modal-content{
+  background:linear-gradient(180deg,var(--surface2),var(--surface));
+  border:1px solid var(--border);
+  border-radius:var(--radius);width:440px;max-width:92vw;
+  box-shadow:0 20px 60px rgba(0,0,0,.7),0 0 40px rgba(0,229,255,.04);
+  animation:bounceIn .35s cubic-bezier(.34,1.56,.64,1);max-height:80vh;display:flex;flex-direction:column;
+}
+.modal-content.closing{animation:scaleOut .2s ease forwards;}
+.modal-hd{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 18px;border-bottom:1px solid var(--border);flex-shrink:0;
+}
+.modal-title{font-size:12px;font-weight:600;color:var(--cyan);text-transform:uppercase;letter-spacing:1.2px;}
+.modal-close{
+  background:none;border:none;color:var(--text2);font-size:22px;line-height:1;
+  cursor:pointer;padding:0 4px;transition:color .2s,transform .2s;
+}
+.modal-close:hover{color:var(--red);transform:scale(1.15);}
+.modal-body{padding:16px 18px;overflow-y:auto;}
+.fd-row{
+  display:flex;padding:10px 0;
+  border-bottom:1px solid rgba(25,34,53,.5);transition:background .15s;
+}
+.fd-row:last-child{border-bottom:none;}
+.fd-row:hover{background:rgba(0,229,255,.015);}
+.fd-label{
+  width:110px;flex-shrink:0;font-size:11px;color:var(--text2);
+  font-weight:500;text-transform:uppercase;letter-spacing:.5px;line-height:1.5;
+}
+.fd-value{
+  flex:1;font-size:13px;color:var(--text);
+  word-break:break-all;line-height:1.5;font-weight:500;
+}
+.fd-value .fd-bytes{color:var(--text2);font-size:12px;font-weight:400;margin-left:6px;}
+
+/* ── Toast ── */
 .toast{
-  position:fixed;top:20px;right:20px;
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--radius);padding:12px 18px;
-  font-size:12px;z-index:100;
-  animation:slideIn .3s ease;
-  max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.5);
+  position:fixed;top:56px;right:16px;
+  background:rgba(17,23,32,.95);backdrop-filter:blur(12px);
+  border:1px solid var(--border);
+  border-radius:var(--radius);padding:12px 16px 12px 18px;
+  font-size:12.5px;z-index:100;animation:bounceIn .4s cubic-bezier(.34,1.56,.64,1);
+  max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,.7);
+  display:flex;align-items:flex-start;gap:10px;cursor:default;
 }
-.toast.error{border-color:var(--red);}
-.toast.success{border-color:var(--green);}
-@keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+.toast.error{border-color:var(--red);}.toast.success{border-color:var(--green);}.toast.warn{border-color:var(--amber);}
+.toast-msg{flex:1;word-break:break-word;line-height:1.4;}
+.toast-close{cursor:pointer;font-size:14px;color:var(--text2);line-height:1;padding:0 2px;flex-shrink:0;opacity:.6;transition:opacity .2s;}
+.toast-close:hover{opacity:1;color:var(--red);}
+#toastContainer{position:fixed;top:56px;right:16px;z-index:100;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
+#toastContainer .toast{position:static;pointer-events:auto;animation:bounceIn .35s cubic-bezier(.34,1.56,.64,1);}
+#sendStatus{font-size:11.5px;color:var(--magenta);margin-top:4px;min-height:16px;}
 
-/* Spinner */
-@keyframes spin{to{transform:rotate(360deg)}}
-.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--text2);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;}
+/* ── Spinner ── */
+.spinner{display:inline-block;width:13px;height:13px;border:2px solid var(--text2);border-top-color:var(--cyan);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:5px;}
 
-/* Status line */
-#sendStatus{font-size:11px;color:var(--accent);margin-top:2px;min-height:16px;}
-
-@media(max-width:900px){main{grid-template-columns:1fr;}}
-::-webkit-scrollbar{width:5px;}
+/* ── Scrollbar ── */
+::-webkit-scrollbar{width:7px;height:7px;}
 ::-webkit-scrollbar-track{background:transparent;}
-::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
-::-webkit-scrollbar-thumb:hover{background:var(--text2);}
+::-webkit-scrollbar-thumb{background:#1f2a3a;border-radius:4px;border:1px solid transparent;background-clip:padding-box;}
+::-webkit-scrollbar-thumb:hover{background:#35455a;}
+
+/* ── Responsive ── */
+@media(max-width:900px){main{flex-direction:column;}.panel-left,.panel-right{width:100%!important;max-width:none!important;min-width:0!important;flex:auto;}.panel-center{min-width:0;}.splitter{display:none;}.lcd-fixed{max-height:300px;overflow-y:auto;}}
 </style>
 </head>
 <body>
 
 <header>
-  <h1>STM IPS Host</h1>
+  <h1><span class="gradient-text">&#9670; STM IPS Host</span><span class="byline">Powered by UnikoZera</span></h1>
   <div class="status-badge" id="statusBadge">
     <span class="status-dot off" id="statusDot"></span>
     <span id="statusText">脱机</span>
-    <span style="color:var(--text2);font-size:10px;" id="portInfo"></span>
+    <span style="color:var(--text3);font-size:11px;" id="portInfo"></span>
   </div>
 </header>
 
 <main>
   <!-- Left: Controls -->
-  <div class="panel">
-    <div class="panel-header">控制面板</div>
+  <div class="panel panel-left" id="leftPanel">
+    <div class="panel-hd">控制面板</div>
     <div class="panel-body">
 
-      <div class="card">
-        <label>串口连接</label>
-        <button class="btn btn-connect" id="btnConnect" onclick="connectSerial()">连接串口</button>
-        <button class="btn btn-disconnect" id="btnDisconnect" onclick="disconnectSerial()" style="display:none;">断开连接</button>
+      <div class="card card-accent">
+        <span class="card-title">串口连接</span>
+        <button class="btn btn-connect" id="btnConnect" onclick="connectSerial()">&#9889; 连接串口</button>
+        <button class="btn btn-disconnect" id="btnDisconnect" onclick="disconnectSerial()" style="display:none;">&#10005; 断开连接</button>
         <div style="display:flex;gap:6px;margin-top:6px;">
-          <input type="number" id="baudRate" value="921600" step="100" min="9600" style="flex:1;padding:6px;font-size:11px;">
-          <span style="font-size:10px;color:var(--text2);line-height:32px;">bps</span>
+          <select id="baudRate" style="flex:1;font-size:12px;">
+            <option value="9600">9600</option>
+            <option value="19200">19200</option>
+            <option value="38400">38400</option>
+            <option value="57600">57600</option>
+            <option value="115200">115200</option>
+            <option value="230400">230400</option>
+            <option value="460800">460800</option>
+            <option value="921600" selected>921600</option>
+            <option value="1000000">1000000</option>
+            <option value="1500000">1500000</option>
+            <option value="2000000">2000000</option>
+          </select>
+          <span style="font-size:11px;color:var(--text2);line-height:34px;">bps</span>
         </div>
       </div>
 
       <div class="card">
-        <label>文件类型</label>
-        <select id="fileType">
+        <span class="card-title">发送设置</span>
+        <select id="fileType" style="margin-bottom:5px;">
           <option value="0x11">大文件 0x11 (扇区对齐)</option>
           <option value="0x45">小文件 0x45 (紧凑存储)</option>
         </select>
+        <input type="number" id="chunkSize" value="512" min="16" max="512" step="16" placeholder="数据块大小 (字节)" style="margin-bottom:5px;">
+        <input type="text" id="fileNameInput" value="" maxlength="16" placeholder="设备端文件名 (≤16字节)" style="margin-bottom:3px;">
+        <div style="font-size:10px;color:var(--text2);text-align:right;" id="nameByteCount">0 / 16</div>
       </div>
 
       <div class="card">
-        <label>选择本地文件</label>
-        <button class="btn btn-send file-upload">+ 选择文件<input type="file" id="fileInput" onchange="onFileSelected(this)"></button>
-        <div id="fileInfo" style="font-size:10px;color:var(--text2);margin-top:4px;word-break:break-all;">未选择文件</div>
+        <button class="btn btn-send file-upload" id="btnPickFile">
+          &#128193; 选择文件
+          <input type="file" id="fileInput" onchange="onFileSelected(this)">
+        </button>
+        <div id="fileInfo" style="font-size:11px;color:var(--text2);margin-top:5px;word-break:break-all;">未选择文件</div>
       </div>
 
-      <div class="card">
-        <label>设备端文件名 (最多16字节 ASCII)</label>
-        <div style="display:flex;gap:6px;">
-          <input type="text" id="fileNameInput" value="" maxlength="16" placeholder="设备端保存的文件名" style="flex:1;">
-          <span id="nameByteCount" style="font-size:10px;color:var(--text2);line-height:32px;min-width:36px;">0/16</span>
-        </div>
-      </div>
-
-      <div class="card">
-        <label>数据块大小 (字节)</label>
-        <input type="number" id="chunkSize" value="512" min="16" max="512" step="16">
-      </div>
-
-      <div class="card" style="border-color:var(--accent);">
-        <button class="btn btn-send" id="btnStartSend" onclick="userStartSend()" disabled>开始发送</button>
-        <button class="btn btn-cancel" id="btnCancelSend" onclick="cancelSend()" style="display:none;margin-top:6px;">取消发送</button>
-        <button class="btn btn-retry" id="btnRetrySend" onclick="retrySend()" style="display:none;margin-top:6px;">重新发送</button>
+      <div class="card" style="border-color:rgba(224,64,251,.25);">
+        <div id="lcdSendWarn" class="send-warn" style="display:none;">&#9888; 请先关闭LCD帧流</div>
+        <button class="btn btn-send" id="btnStartSend" onclick="userStartSend()" disabled>&#9654; 开始发送</button>
+        <button class="btn btn-cancel" id="btnCancelSend" onclick="cancelSend()" style="display:none;margin-top:6px;">&#9646; 取消发送</button>
+        <button class="btn btn-retry" id="btnRetrySend" onclick="retrySend()" style="display:none;margin-top:6px;">&#8634; 重新发送</button>
         <div id="sendStatus"></div>
         <div class="progress-wrap">
           <div class="progress-bar"><div class="progress-fill" id="progressBar"></div></div>
@@ -233,42 +451,63 @@ main{
       </div>
 
       <div class="card">
-        <button class="btn btn-query" onclick="queryFileList()">查询文件列表</button>
-      </div>
-
-      <div class="card">
-        <label>删除文件</label>
-        <div style="display:flex;gap:4px;">
-          <select id="deleteFileType" style="width:80px;padding:6px;font-size:11px;">
-            <option value="0x11">大文件</option><option value="0x45">小文件</option>
-          </select>
-          <input type="number" id="deleteFileIndex" value="0" min="0" max="255" style="width:52px;padding:6px;font-size:11px;">
-          <button class="btn btn-danger" onclick="deleteFile()" style="width:auto;">删除</button>
+        <span class="card-title">设备管理</span>
+        <button class="btn btn-query" onclick="queryFileList()">&#128260; 刷新文件列表</button>
+        <div style="margin-top:6px;">
+          <button class="btn btn-danger" id="btnDeleteMenu" onclick="openDeleteModal()">&#128465; 删除文件</button>
         </div>
       </div>
+
+      
     </div>
   </div>
 
+  <div class="splitter" id="splitterL"></div>
+
   <!-- Center: Log -->
-  <div class="panel">
-    <div class="panel-header">通信日志</div>
-    <div class="panel-body">
+  <div class="panel panel-center">
+    <div class="panel-hd">通信日志 <span style="font-size:10px;color:var(--text3);margin-left:4px;font-weight:400;">(烧录仅记录开始/结束)</span><button class="btn-log-clear" onclick="clearLog()">清除</button></div>
+    <div class="panel-body" id="logPanelBody">
       <div id="log"></div>
     </div>
   </div>
 
-  <!-- Right: File List -->
-  <div class="panel">
-    <div class="panel-header">设备文件列表</div>
-    <div class="panel-body">
+  <div class="splitter" id="splitterR"></div>
+
+  <!-- Right: LCD (fixed) + File List (scrollable) -->
+  <div class="panel panel-right" id="rightPanel">
+    <div class="panel-hd">LCD 屏幕流</div>
+    <div class="lcd-fixed" id="lcdCard">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <span style="font-size:11px;color:var(--text2);">状态:</span>
+        <span id="lcdStreamStatus" style="font-size:12px;font-weight:600;color:var(--red);">\u25CB 已关闭</span>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-query" id="btnLcdOn" onclick="lcdStreamEnable()" style="background:var(--green);color:#000;font-size:11px;">&#9654; 开启</button>
+        <button class="btn btn-danger" id="btnLcdOff" onclick="lcdStreamDisable()" style="font-size:11px;">&#9646; 关闭</button>
+      </div>
+      <canvas id="lcdCanvas" width="160" height="80" style="width:100%;display:block;border:1px solid var(--border);border-radius:var(--rad-sm);margin-top:6px;image-rendering:pixelated;"></canvas>
+    </div>
+    <div class="panel-hd" style="border-top:1px solid var(--border);">设备文件列表 <span class="hd-badge" id="fileCountBadge"></span></div>
+    <div class="panel-body" id="fileListPanelBody">
       <div id="fileList">
-        <div class="empty-state"><span class="icon">&#9783;</span>点击"查询文件列表"获取</div>
+        <div class="empty-state"><span class="icon">&#9783;</span>点击左侧"刷新文件列表"获取</div>
       </div>
     </div>
   </div>
 </main>
 
 <div id="toastContainer"></div>
+
+<div id="fileDetailModal" class="modal-overlay" onclick="closeModal()">
+  <div class="modal-content" onclick="event.stopPropagation()">
+    <div class="modal-hd">
+      <span class="modal-title" id="modalTitle">&#128196; 文件详情</span>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -280,10 +519,12 @@ function crc16(data,off,len) { let c=0xFFFF; for (let i=0;i<len;i++) c=(c>>>8)^C
 
 // ============= Constants =============
 const H0=0xBB,H1=0x44,HS=5;
-const C_L=0x11,C_S=0x45,C_END=0x14,C_DEL=0x19,C_QRY=0x20;
+const C_L=0x11,C_S=0x45,C_END=0x14,C_DEL=0x19,C_QRY=0x20,C_LCD=0x10;
+const LCD_W=160,LCD_H=80,LCD_TAIL=4,LCD_FRAME_SZ=LCD_W*LCD_H*2;
+const R_LCD=0xA0;
 const UH0=0xAA,UH1=0x55,UHS=5;
 const R_CONT=0xA1,R_ERR=0xE0;
-const ERRMSG={1:'CRC',2:'未知类型',3:'大文件满',4:'小文件满',5:'类型不匹配',6:'大文件扩展失败',7:'小文件扩展失败',8:'索引无效',9:'未知命令',10:'DMA失败'};
+const ERRMSG={1:'CRC错误',2:'未知类型',3:'大文件区满',4:'小文件区满',5:'类型不匹配',6:'大文件扩展失败',7:'小文件扩展失败',8:'索引无效',9:'未知命令',10:'DMA失败'};
 const CHUNK_MAX=512, WRITE_TIMEOUT=8000, SEND_TIMEOUT=15000;
 const ST_INIT=0, ST_SENDING=1, ST_WAIT_ACK=2, ST_DONE=3, ST_ERR=4;
 
@@ -293,6 +534,8 @@ const elLog=$('log'), elProg=$('progressBar'), elPct=$('progressPct'), elBytes=$
 const elStatus=$('sendStatus'), elBtnSend=$('btnStartSend'), elBtnCancel=$('btnCancelSend'), elBtnRetry=$('btnRetrySend');
 const elFileInfo=$('fileInfo'), elFileList=$('fileList'), elToast=$('toastContainer');
 const elName=$('fileNameInput'), elNameCnt=$('nameByteCount');
+const elLogBody=$('logPanelBody'), elFLBody=$('fileListPanelBody');
+const elFileCnt=$('fileCountBadge');
 
 // ============= Globals =============
 let port=null, reader=null, readLoop=false;
@@ -300,8 +543,31 @@ let fileData=null, fileOff=0, fileCmd=0, fileName='';
 let selFile=null, sendState=ST_INIT;
 let contResolve=null, contPending=0;
 let writeTimer=null, sendTimer=null;
+let lastFileListData=null;
+let lcdFrameCount=0, lcdCanvas=null, lcdCtx=null;
+let lcdStreamWasOn=false;
+let isTransferring=false;
+let lcdLastFrameTime=0, lcdWatchTimer=null;
+let lcdQueryTid=null;
+let lcdAckResolve=null;
 
-// ============= Frame builder =============
+/* pre-init canvas context early */
+(function initLcdContext(){
+  lcdCanvas=$('lcdCanvas');
+  if(lcdCanvas){
+    lcdCtx=lcdCanvas.getContext('2d',{willReadFrequently:false});
+    lcdCtx.imageSmoothingEnabled=false;
+    clearLcdCanvas();
+  }
+})();
+
+function clearLcdCanvas(){
+  if(!lcdCtx)return;
+  lcdCtx.fillStyle='#0a0f18';
+  lcdCtx.fillRect(0,0,160,80);
+}
+
+/* ===== frame ===== */
 function frame(cmd,data) {
   const dL=data?data.length:0, pL=dL+2, total=HS+dL+2;
   const f=new Uint8Array(total);
@@ -312,7 +578,7 @@ function frame(cmd,data) {
   return f;
 }
 
-// ============= RX: USB frame parser =============
+/* ===== RX ===== */
 let rxBuf=new Uint8Array(0);
 function feedRx(data) {
   let c=new Uint8Array(rxBuf.length+data.length);c.set(rxBuf);c.set(data,rxBuf.length);rxBuf=c;
@@ -323,7 +589,7 @@ function feedRx(data) {
     if(hi>0)rxBuf=rxBuf.slice(hi);
     if(rxBuf.length<UHS)return;
     const cmd=rxBuf[2],pLen=rxBuf[3]|(rxBuf[4]<<8),fLen=UHS+pLen;
-    if(pLen>4096){rxBuf=rxBuf.slice(1);log('无效帧长度 '+pLen,'error');continue;}
+    if(pLen>32768){rxBuf=rxBuf.slice(1);log('无效帧长度 '+pLen,'error');continue;}
     if(rxBuf.length<fLen)return;
     handleResp(cmd,rxBuf.slice(UHS,fLen));
     rxBuf=rxBuf.slice(fLen);
@@ -331,17 +597,37 @@ function feedRx(data) {
 }
 
 function handleResp(cmd,payload){
-  if(cmd===R_CONT){log('MCU -> 就绪 (0xA1)','recv');signalCont();}
+  if(cmd===R_CONT){if(!isTransferring)log('MCU \u2192 就绪 (0xA1)','recv');else signalCont();}
   else if(cmd===R_ERR){
     const code=payload.length>0?payload[0]:0;
-    log('MCU -> 错误 0x'+code.toString(16).toUpperCase().padStart(2,'0')+' '+ (ERRMSG[code]||'未知'),'error');
-    if(sendState===ST_SENDING||sendState===ST_WAIT_ACK) doAbort('错误: '+(ERRMSG[code]||'0x'+code.toString(16)));
+    log('MCU \u2192 错误 0x'+code.toString(16).toUpperCase().padStart(2,'0')+' '+ (ERRMSG[code]||'未知'),'error');
+    if(sendState===ST_SENDING||sendState===ST_WAIT_ACK) doAbort(ERRMSG[code]||'0x'+code.toString(16));
   }
-  else if(cmd===C_QRY){log('MCU -> 文件列表 (0x20)','recv');parseList(payload);}
-  else{let h='';for(let i=0;i<Math.min(payload.length,24);i++)h+=('0'+payload[i].toString(16).toUpperCase()).slice(-2)+' ';log('MCU -> 0x'+cmd.toString(16).toUpperCase().padStart(2,'0')+' '+h,'recv');}
+  else if(cmd===C_QRY){log('MCU \u2192 文件列表 ('+payload[0]+' 个文件)','recv');parseList(payload);}
+  else if(cmd===C_LCD){
+    if(payload.length>=1){
+      const en=payload[0];
+      updateLcdUI(en);
+      if(!en&&lcdAckResolve){lcdAckResolve();lcdAckResolve=null;}
+      log('MCU \u2192 LCD流 '+(en?'已开启':'已关闭'),'recv');
+    }
+  }
+  else if(cmd===R_LCD){
+    if(payload.length>=LCD_FRAME_SZ){renderLcdFrame(payload);lcdLastFrameTime=Date.now();}
+    lcdFrameCount++;
+    const stEl=$('lcdStreamStatus'),cv=$('lcdCanvas'),lc=$('lcdCard');
+    if(stEl&&!stEl.textContent.includes('已开启')){
+      stEl.textContent='\u25C9 已开启';stEl.style.color='var(--green)';
+    }
+    if(cv){
+      if(!cv.classList.contains('streaming'))cv.classList.add('streaming');
+    }
+    if(lc&&!lc.classList.contains('streaming'))lc.classList.add('streaming');
+  }
+  else{let h='';for(let i=0;i<Math.min(payload.length,12);i++)h+=('0'+payload[i].toString(16).toUpperCase()).slice(-2)+' ';log('MCU \u2192 0x'+cmd.toString(16).toUpperCase().padStart(2,'0')+' '+h,'recv');}
 }
 
-// ============= Continuation =============
+/* ===== Continuation ===== */
 function signalCont(){contPending++;if(contResolve){const r=contResolve;contResolve=null;contPending--;r();}}
 function waitCont(){
   if(contPending>0){contPending--;return Promise.resolve();}
@@ -353,12 +639,13 @@ function resetCont(){
   if(sendTimer){clearTimeout(sendTimer);sendTimer=null;}
 }
 
-// ============= File List =============
+/* ===== File List ===== */
 function parseList(payload){
   if(payload.length<1)return;
   const cnt=payload[0];
-  let h='<div style="font-size:11px;color:var(--text2);margin-bottom:8px;">共 <b style="color:var(--accent);">'+cnt+'</b> 个文件</div>';
-  let idx=1,parsed=0;
+  elFileCnt.textContent='共 '+cnt+' 个';
+
+  let files=[]; let idx=1;
   for(let i=0;i<cnt;i++){
     if(idx>=payload.length)break;
     const rLen=payload[idx];if(rLen<12||idx+rLen>payload.length)break;
@@ -368,58 +655,174 @@ function parseList(payload){
     const name=new TextDecoder('ascii').decode(payload.slice(idx+4,idx+4+nLen)).replace(/\0/g,'');
     const addr=new DataView(payload.buffer,payload.byteOffset+idx+4+nLen,4).getUint32(0,true);
     const size=new DataView(payload.buffer,payload.byteOffset+idx+8+nLen,4).getUint32(0,true);
-    const sz=size<1024?size+'B':size<1048576?(size/1024).toFixed(1)+'K':(size/1048576).toFixed(2)+'M';
-    const tc=zn==='large'?'tag-large':'tag-small',zl=zn==='large'?'大文件':'小文件';
-    const tl=fType===0x11?'大文件':fType===0x45?'小文件':('0x'+fType.toString(16));
-    h+='<div class="file-item"><div class="file-item-name">['+fi+'] '+(name||'(无名)')+'</div>'
-      +'<div class="file-item-meta"><span class="tag '+tc+'">'+zl+'</span>'
-      +'<span>类型:'+tl+'</span><span>大小:'+sz+'</span><span>地址:0x'+addr.toString(16).toUpperCase()+'</span></div>'
-      +'<button class="btn btn-danger" onclick="delFI('+fType+','+fi+')">删除</button></div>';
-    idx+=rLen;parsed++;
+    files.push({zn,zName:zn==='large'?'大文件':'小文件',fType,fi,name,addr,size});
+    idx+=rLen;
   }
-  if(!parsed)h+='<div class="empty-state"><span class="icon">&#9744;</span>设备中没有文件</div>';
+
+  lastFileListData=files;
+
+  let h='';
+  files.forEach(function(f,order){
+    const sz=f.size<1024?f.size+' B':f.size<1048576?(f.size/1024).toFixed(1)+' KB':(f.size/1048576).toFixed(2)+' MB';
+    const tagCls=f.zn==='large'?'tag-L':'tag-S',zoneLabel=f.zName;
+    const sectorInfo=f.zn==='large'?' 扇区:'+f.addr:' 地址:0x'+f.addr.toString(16).toUpperCase();
+    const sizeIcon=f.zn==='large'?'\u{1F4E6}':'\u{1F4C4}';
+    h+='<div class="file-item" style="animation-delay:'+(order*.04)+'s" onclick="openFileDetailByIndex('+order+')">'
+      +'<div class="file-item-name"><span class="file-icon">'+sizeIcon+'</span> ['+f.fi+'] '+escHtml(f.name||'(无名)')+'</div>'
+      +'<div class="file-item-meta">'
+      +'<span class="tag '+tagCls+'">'+zoneLabel+'</span>'
+      +'<span class="sep">|</span><span>'+sz+'</span>'
+      +'<span class="sep">|</span><span>'+sectorInfo+'</span>'
+      +'</div>'
+      +'<div class="file-item-actions">'
+      +'<button class="btn btn-danger" onclick="event.stopPropagation();delFIClick('+f.fType+','+f.fi+',\''+escAttr(f.name||'')+'\')">&#128465; 删除</button>'
+      +'</div></div>';
+  });
+  if(!files.length)h='<div class="empty-state"><span class="icon">&#9744;</span>设备中没有文件</div>';
   elFileList.innerHTML=h;
+  elFLBody.scrollTop=0;
 }
 
-// ============= Send =============
+/* ===== File Detail Modal ===== */
+function closeModal(){
+  const el=$('fileDetailModal');
+  el.classList.add('closing');
+  setTimeout(function(){el.style.display='none';el.classList.remove('closing');},200);
+}
+function openFileDetailByIndex(idx){
+  if(lastFileListData&&lastFileListData[idx])openFileDetail(lastFileListData[idx]);
+}
+function openFileDetail(f){
+  $('modalTitle').textContent='\u{1F4C4} 文件详情';
+  const body=$('modalBody');
+  const szBytes=f.size;
+  const szFormatted=szBytes<1024?szBytes+' B':szBytes<1048576?(szBytes/1024).toFixed(1)+' KB<span class="fd-bytes">('+szBytes+' B)</span>':(szBytes/1048576).toFixed(2)+' MB<span class="fd-bytes">('+szBytes+' B)</span>';
+  const zone=f.zn==='large'?'大文件区 (Large)':'小文件区 (Small)';
+  const addrStr=f.zn==='large'?'扇区 #'+f.addr:'0x'+f.addr.toString(16).toUpperCase();
+  body.innerHTML=''
+    +'<div class="fd-row"><span class="fd-label">文件名</span><span class="fd-value">'+escHtml(f.name||'(无名)')+'</span></div>'
+    +'<div class="fd-row"><span class="fd-label">文件索引</span><span class="fd-value">#'+f.fi+'</span></div>'
+    +'<div class="fd-row"><span class="fd-label">存储区域</span><span class="fd-value">'+zone+'</span></div>'
+    +'<div class="fd-row"><span class="fd-label">类型代码</span><span class="fd-value">0x'+f.fType.toString(16).toUpperCase().padStart(2,'0')+'</span></div>'
+    +'<div class="fd-row"><span class="fd-label">文件大小</span><span class="fd-value">'+szFormatted+'</span></div>'
+    +'<div class="fd-row"><span class="fd-label">地址/扇区</span><span class="fd-value">'+addrStr+'</span></div>';
+  $('fileDetailModal').style.display='flex';
+}
+function openDeleteModal(){
+  if(!lastFileListData||!lastFileListData.length){
+    toast('请先刷新文件列表','warn');
+    return;
+  }
+  $('modalTitle').textContent='\u{1F5D1} 删除文件';
+  const body=$('modalBody');
+  let h='<div style="font-size:11px;color:var(--text2);margin-bottom:10px;">点击文件进行删除（共 '+lastFileListData.length+' 个）</div>';
+  lastFileListData.forEach(function(f){
+    const sz=f.size<1024?f.size+'B':f.size<1048576?(f.size/1024).toFixed(1)+'KB':(f.size/1048576).toFixed(2)+'MB';
+    h+='<div class="fd-row" style="cursor:pointer;" onclick="delFromModal('+f.fType+','+f.fi+',\''+escAttr(f.name||'')+'\')">'
+      +'<span class="fd-label" style="width:60px;">#'+f.fi+'</span>'
+      +'<span class="fd-value" style="font-size:12px;">'+escHtml(f.name||'(无名)')+'</span>'
+      +'<span class="fd-label" style="width:80px;text-align:right;">'+f.zName+'</span>'
+      +'<span class="fd-label" style="width:80px;text-align:right;">'+sz+'</span>'
+      +'</div>';
+  });
+  body.innerHTML=h;
+  $('fileDetailModal').style.display='flex';
+}
+window.delFromModal=function(ft,fi,name){
+  closeModal();
+  setTimeout(function(){delFIClick(ft,fi,name);},250);
+};
+$('fileDetailModal').addEventListener('keydown',function(e){if(e.key==='Escape')closeModal();});
+
+/* ===== Delete ===== */
+let delPending=false;
+async function delFIClick(ft,fi,name){
+  if(!port){toast('未连接串口','error');return;}
+  if(delPending){toast('删除操作进行中','warn');return;}
+  const typeName=ft===C_L?'大文件':'小文件';
+  if(!confirm('确认删除 '+typeName+' #'+fi+' ('+name+')？\n\n注意：删除后空间不会回收。'))return;
+  delPending=true;
+  const d=new Uint8Array([ft&0xFF,fi&0xFF]);
+  const ok=await writeSer(frame(C_DEL,d));
+  if(ok){
+    log('HOST \u2192 删除 '+typeName+' #'+fi+' ('+name+')','send');
+    toast('已删除: '+name,'success');
+    setTimeout(function(){queryFileList();delPending=false;},600);
+  }else{
+    toast('删除命令发送失败','error');
+    delPending=false;
+  }
+}
+window.delFIClick=delFIClick;
+
+/* ===== Send ===== */
 function onFileSelected(input){
   const f=input.files[0];if(!f)return;
   selFile=f;
-  const sz=f.size<1024?f.size+'B':f.size<1048576?(f.size/1024).toFixed(1)+'K':(f.size/1048576).toFixed(2)+'M';
-  elFileInfo.textContent=f.name+' ('+sz+')';
+  const sz=f.size<1024?f.size+'B':f.size<1048576?(f.size/1024).toFixed(1)+'KB':(f.size/1048576).toFixed(2)+'MB';
+  elFileInfo.textContent='\u2714 '+f.name+' ('+sz+')';
   elName.value=f.name.replace(/\.[^.]+$/,'').slice(0,16);updateNBC();
   elBtnSend.disabled=false;
 }
 elName.addEventListener('input',updateNBC);
 function updateNBC(){
   const b=new TextEncoder().encode(elName.value).length;
-  elNameCnt.textContent=b+'/16';elNameCnt.style.color=b>16?'var(--red)':'var(--text2)';
+  elNameCnt.textContent=b+' / 16';elNameCnt.style.color=b>16?'var(--red)':'var(--text2)';
+}
+function showSendWarn(){
+  const el=$('lcdSendWarn');
+  if(!el)return;
+  el.style.display='block';el.className='send-warn';
+  clearTimeout(el._timer);
+  el._timer=setTimeout(function(){el.classList.add('hide-warn');setTimeout(function(){el.style.display='none';},350);},3500);
+}
+function hideSendWarn(){
+  const el=$('lcdSendWarn');
+  if(!el)return;
+  clearTimeout(el._timer);
+  el.classList.add('hide-warn');
+  setTimeout(function(){el.style.display='none';},350);
 }
 
 async function userStartSend(){
   if(!selFile){toast('请选择文件','error');return;}
+  if((document.getElementById('lcdStreamStatus').textContent||'').includes('已开启')){
+    showSendWarn();
+    return;
+  }
   const cmd=parseInt(document.getElementById('fileType').value);
   let fn=elName.value.trim();if(!fn)fn=selFile.name.replace(/\.[^.]+$/,'').slice(0,16);
   if(new TextEncoder().encode(fn).length>16){toast('文件名编码超16字节','error');return;}
-  const sz=selFile.size<1024?selFile.size+'B':(selFile.size/1024).toFixed(1)+'K';
+  const sz=selFile.size<1024?selFile.size+'B':(selFile.size/1024).toFixed(1)+'KB';
   const cn=cmd===C_L?'大文件':'小文件';
-  if(!confirm('发送:\n  本地: '+selFile.name+'\n  设备名: '+fn+'\n  类型: '+cn+' ('+sz+')?\n\n确认'))return;
+  if(!confirm('发送确认:\n  本地: '+selFile.name+'\n  设备名: '+fn+'\n  类型: '+cn+' ('+sz+')?'))return;
   await doSend(selFile,cmd,fn);
 }
 
 async function doSend(file,cmd,fn){
   if(!port||!port.writable){toast('未连接串口','error');return;}
   if(sendState!==ST_INIT&&sendState!==ST_DONE&&sendState!==ST_ERR){toast('正在发送中','error');return;}
-
+  sendState=ST_INIT;
+  resetCont();
+  if(lcdQueryTid){clearTimeout(lcdQueryTid);lcdQueryTid=null;}
   fileData=new Uint8Array(await file.arrayBuffer());
   fileOff=0;fileCmd=cmd;fileName=fn;
-  sendState=ST_SENDING;resetCont();
-  log('--- 开始发送: '+fn+' ('+(file.size<1024?file.size+'B':(file.size/1024).toFixed(1)+'K')+') ---','info');
-  setUI('sending');
-  updateProg(0,0,fileData.length);
-
+  sendState=ST_SENDING;
+  lcdStreamWasOn=(document.getElementById('lcdStreamStatus').textContent||'').indexOf('已开启')>=0;
+  if(lcdStreamWasOn){
+    const ackPromise=new Promise(function(r){lcdAckResolve=r;});
+    const ok=await writeSer(frame(C_LCD,new Uint8Array([0x00])));
+    if(ok){log('HOST \u2192 临时关闭LCD流以进行烧录','send');}
+    await Promise.race([ackPromise,new Promise(function(r){setTimeout(r,1000);})]);
+    lcdAckResolve=null;
+    rxBuf=new Uint8Array(0);
+  }
+  isTransferring=true;contPending=0;
+  const totalStr=fileData.length<1024?fileData.length+' B':(fileData.length/1024).toFixed(1)+' KB';
+  log('\u2500\u2500 开始发送: '+fn+' ('+totalStr+') \u2500\u2500','info');
+  setUI('sending');updateProg(0,0,fileData.length);
   try{await sendLoop();}
-  catch(e){log('发送异常: '+e.message,'error');doFinish(false);}
+  catch(e){log('发送异常: '+e.message,'error');await doFinish(false);}
 }
 
 async function sendLoop(){
@@ -428,20 +831,11 @@ async function sendLoop(){
     const cs=chunkSz(),len=Math.min(fileData.length-fileOff,cs);
     const chunk=fileData.slice(fileOff,fileOff+len);
     const frm=frame(fileCmd,chunk);
-
     const ok=await writeSer(frm);
     if(!ok){doAbort('写入失败');return;}
-
     fileOff+=len;updateProg(fileOff/fileData.length*100,fileOff,fileData.length);
-    log('主机 -> 数据 0x'+fileCmd.toString(16).toUpperCase()+' '+fileOff+'/'+fileData.length+' ('+(fileOff/fileData.length*100).toFixed(1)+'%)','send');
-
-    if(fileOff>=fileData.length)break;
-
     sendState=ST_WAIT_ACK;elStatus.innerHTML='<span class="spinner"></span> 等待MCU就绪...';
-    sendTimer=setTimeout(function(){
-      if(sendState===ST_WAIT_ACK)doAbort('等待MCU回应超时');
-    },SEND_TIMEOUT);
-
+    sendTimer=setTimeout(function(){if(sendState===ST_WAIT_ACK)doAbort('等待MCU回应超时');},SEND_TIMEOUT);
     await waitCont();
     if(sendTimer){clearTimeout(sendTimer);sendTimer=null;}
     if(sendState!==ST_WAIT_ACK)return;
@@ -454,47 +848,60 @@ async function sendEndFrame(){
   pn.set(nb.slice(0,16));
   const frm=frame(C_END,pn);
   const ok=await writeSer(frm);
-  if(ok){log('主机 -> 结束帧 文件名='+fileName,'send');}
+  if(ok){log('HOST \u2192 结束帧 文件名='+fileName,'send');}
   sendState=ST_WAIT_ACK;elStatus.innerHTML='<span class="spinner"></span> 等待确认...';
   sendTimer=setTimeout(function(){if(sendState===ST_WAIT_ACK)signalCont();},3000);
   await waitCont();
   if(sendTimer){clearTimeout(sendTimer);sendTimer=null;}
-  doFinish(true);
+  await doFinish(true);
 }
 
-function doFinish(ok){
+async function doFinish(ok){
   if(sendState===ST_DONE)return;
   sendState=ST_DONE;
-  if(ok){log('--- 发送完成 ---','info');updateProg(100,fileData?fileData.length:0,fileData?fileData.length:1);toast('发送完成: '+fileName,'success');}
-  else{log('--- 发送中止 ---','error');updateProg(0,0,0);}
+  isTransferring=false;
+  if(ok){
+    const totalStr=fileData?fileData.length+' B':'';
+    log('\u2500\u2500 发送完成: '+fileName+' ('+totalStr+') \u2500\u2500','info');
+    updateProg(100,fileData?fileData.length:0,fileData?fileData.length:1);
+    toast('发送完成: '+fileName,'success');
+    setTimeout(function(){updateProg(0,0,0);},1200);
+  }else{
+    log('\u2500\u2500 发送中止 \u2500\u2500','error');
+    updateProg(0,0,0);
+  }
+  if(lcdStreamWasOn){
+    await writeSer(frame(C_LCD,new Uint8Array([0x01])));
+    log('HOST \u2192 恢复LCD流','send');
+  }
   fileData=null;fileOff=0;fileName='';
-  resetCont();
-  setUI('idle');
-  if(!ok)setUI('error');
+  resetCont();setUI('idle');
+  if(ok){lcdQueryTid=setTimeout(function(){lcdStreamQuery();lcdQueryTid=null;},400);setTimeout(function(){queryFileList();},800);}
+  else{setUI('error');}
 }
 
 function doAbort(reason){
   log('中止: '+reason,'error');toast('传输中止: '+reason,'error');
-  resetCont();
-  sendState=ST_ERR;
+  isTransferring=false;
+  if(lcdStreamWasOn){
+    writeSer(frame(C_LCD,new Uint8Array([0x01])));
+  }
+  resetCont();sendState=ST_ERR;
   fileData=null;fileOff=0;fileName='';
-  updateProg(0,0,0);
-  setUI('error');
+  updateProg(0,0,0);setUI('error');
 }
 
 function cancelSend(){
   if(sendState===ST_INIT||sendState===ST_DONE||sendState===ST_ERR)return;
-  log('用户取消','warn');
-  doAbort('用户取消');
+  log('用户取消','warn');doAbort('用户取消');
 }
 
 async function retrySend(){
   const f=selFile;let fn=elName.value.trim();
-  if(!f){for(let i=0;i<99;i++){if(!selFile)break;}toast('请重新选择文件','error');return;}
+  if(!f){toast('请重新选择文件','error');return;}
   if(!fn)fn=f.name.replace(/\.[^.]+$/,'').slice(0,16);
   const cmd=parseInt(document.getElementById('fileType').value);
-  sendState=ST_INIT;
-  elBtnRetry.style.display='none';elBtnSend.style.display='block';
+  sendState=ST_INIT;elBtnRetry.style.display='none';elBtnSend.style.display='block';
   await doSend(f,cmd,fn);
 }
 
@@ -506,12 +913,21 @@ function setUI(state){
 
 function chunkSz(){return Math.max(16,Math.min(CHUNK_MAX,parseInt(document.getElementById('chunkSize').value)||512));}
 function updateProg(pct,done,total){
-  elProg.style.width=pct+'%';elPct.textContent=pct>0?pct.toFixed(1)+'%':'';
-  if(total>0){const ds=done<1024?done+'B':done<1048576?(done/1024).toFixed(1)+'K':(done/1048576).toFixed(2)+'M',ts=total<1024?total+'B':total<1048576?(total/1024).toFixed(1)+'K':(total/1048576).toFixed(2)+'M';elBytes.textContent=ds+' / '+ts;}
-  else elBytes.textContent='';
+  elProg.style.width=pct+'%';
+  const r=Math.round(255*(1-pct/100)),g=Math.round(23*(1-pct/100)+230*(pct/100)),b=Math.round(68*(1-pct/100)+118*(pct/100));
+  const c='rgb('+r+','+g+','+b+')';
+  elProg.style.background=c;elProg.style.boxShadow='0 0 10px rgba('+r+','+g+','+b+',.35)';
+  if(sendState===ST_SENDING||sendState===ST_WAIT_ACK)elProg.classList.add('animating');
+  else elProg.classList.remove('animating');
+  elPct.textContent=pct>0?pct.toFixed(1)+'%':'';
+  if(total>0){
+    const ds=done<1024?done+' B':done<1048576?(done/1024).toFixed(1)+' KB':(done/1048576).toFixed(2)+' MB';
+    const ts=total<1024?total+' B':total<1048576?(total/1024).toFixed(1)+' KB':(total/1048576).toFixed(2)+' MB';
+    elBytes.textContent=ds+' / '+ts;
+  }else elBytes.textContent='';
 }
 
-// ============= Serial =============
+/* ===== Serial ===== */
 async function connectSerial(){
   try{
     port=await navigator.serial.requestPort();
@@ -521,6 +937,12 @@ async function connectSerial(){
     $('statusBadge').classList.add('connected');
     $('btnConnect').style.display='none';$('btnDisconnect').style.display='block';
     log('串口连接 @ '+br+' bps','info');startRead();
+    updateLcdUI(false);
+    lcdLastFrameTime=0;lcdFrameCount=0;clearLcdCanvas();
+    if(lcdWatchTimer){clearInterval(lcdWatchTimer);}
+    lcdWatchTimer=setInterval(lcdWatchCheck,300);
+    setTimeout(function(){lcdStreamQuery();},300);
+    saveAllSettings();
   }catch(e){log('连接失败: '+e.message,'error');toast('连接失败','error');}
 }
 
@@ -533,6 +955,9 @@ async function disconnectSerial(){
   $('statusBadge').classList.remove('connected');
   $('btnConnect').style.display='block';$('btnDisconnect').style.display='none';
   setUI('idle');log('串口断开','info');
+  updateLcdUI(false);
+  clearLcdCanvas();
+  stopLcdWatch();
 }
 
 async function startRead(){
@@ -560,7 +985,7 @@ async function writeSer(data){
     return true;
   }catch(e){
     log('写错误: '+e.message,(e.message==='写超时'?'warn':'error'));
-    if(e.message==='写超时')toast('USB写入超时, 可能MCU繁忙','error');
+    if(e.message==='写超时')toast('USB写入超时','error');
     return false;
   }finally{
     if(writeTimer){clearTimeout(writeTimer);writeTimer=null;}
@@ -568,47 +993,209 @@ async function writeSer(data){
   }
 }
 
-// ============= Commands =============
+/* ===== Commands ===== */
 async function queryFileList(){
   if(!port){toast('未连接','error');return;}
-  await writeSer(frame(C_QRY,new Uint8Array(0)));
-  log('主机 -> 查询文件列表','send');
+  const ok=await writeSer(frame(C_QRY,new Uint8Array(0)));
+  if(ok)log('HOST \u2192 查询文件列表','send');
+  else toast('查询命令发送失败','error');
 }
-async function deleteFile(){
-  if(!port){toast('未连接','error');return;}
-  const ft=parseInt(document.getElementById('deleteFileType').value),fi=parseInt(document.getElementById('deleteFileIndex').value)||0;
-  if(!confirm('删除 '+(ft===C_L?'大':'小')+'文件 #'+fi+'?'))return;
-  await delFI(ft,fi);
-}
-async function delFI(ft,fi){
-  if(!port)return;
-  const d=new Uint8Array([ft&0xFF,fi&0xFF]);
-  await writeSer(frame(C_DEL,d));
-  log('主机 -> 删除 类型=0x'+ft.toString(16).toUpperCase()+' 索引='+fi,'send');
-}
-window.delFI=delFI;
 
-// ============= Log =============
+/* ===== LCD Frame Render ===== */
+let lcdBackCanvas=null,lcdBackCtx=null,lcdPendingFrame=null,lcdFrameScheduled=false;
+function renderLcdFrame(payload){
+  lcdPendingFrame=payload;
+  if(!lcdFrameScheduled){
+    lcdFrameScheduled=true;
+    requestAnimationFrame(commitLcdFrame);
+  }
+}
+function commitLcdFrame(){
+  lcdFrameScheduled=false;
+  if(!lcdCtx)return;
+  if(!lcdBackCanvas){lcdBackCanvas=document.createElement('canvas');lcdBackCanvas.width=LCD_W;lcdBackCanvas.height=LCD_H;lcdBackCtx=lcdBackCanvas.getContext('2d');}
+  const p=lcdPendingFrame;if(!p)return;lcdPendingFrame=null;
+  const img=lcdBackCtx.createImageData(LCD_W,LCD_H);
+  const d=img.data;
+  for(let i=0;i<LCD_W*LCD_H;i++){
+    const hi=i*2,lo=hi+1;
+    const c=(p[hi]<<8)|p[lo];
+    d[i*4]=((c>>11)&0x1F)*255/31;
+    d[i*4+1]=((c>>5)&0x3F)*255/63;
+    d[i*4+2]=(c&0x1F)*255/31;
+    d[i*4+3]=255;
+  }
+  lcdBackCtx.putImageData(img,0,0);
+  lcdCtx.drawImage(lcdBackCanvas,0,0);
+}
+
+/* ===== LCD Stream Control ===== */
+function updateLcdUI(enabled){
+  const stEl=$('lcdStreamStatus');
+  const cv=$('lcdCanvas'),lc=$('lcdCard');
+  if(enabled){
+    stEl.textContent='\u25C9 已开启';stEl.style.color='var(--green)';
+    if(cv)cv.classList.add('streaming');
+    if(lc)lc.classList.add('streaming');
+  }else{
+    stEl.textContent='\u25CB 已关闭';stEl.style.color='var(--red)';
+    if(cv){cv.classList.remove('streaming');clearLcdCanvas();}
+    if(lc)lc.classList.remove('streaming');
+    hideSendWarn();
+  }
+}
+
+async function lcdStreamEnable(){
+  if(!port){toast('未连接','error');return;}
+  await writeSer(frame(C_LCD,new Uint8Array([0x01])));
+  log('HOST \u2192 开启LCD流','send');
+  setTimeout(function(){lcdStreamQuery();},300);
+}
+
+async function lcdStreamDisable(){
+  if(!port){toast('未连接','error');return;}
+  await writeSer(frame(C_LCD,new Uint8Array([0x00])));
+  log('HOST \u2192 关闭LCD流','send');
+  setTimeout(function(){lcdStreamQuery();},300);
+}
+
+async function lcdStreamQuery(){
+  if(!port){toast('未连接','error');return;}
+  if(lcdQueryTid){clearTimeout(lcdQueryTid);lcdQueryTid=null;}
+  await writeSer(frame(C_LCD,new Uint8Array(0)));
+  log('HOST \u2192 查询LCD流状态','send');
+}
+
+/* ===== Log ===== */
 function log(msg,cls){
   const t=new Date().toLocaleTimeString();
   const cm={send:'log-send',recv:'log-recv',error:'log-error',info:'log-info',warn:'log-warn'};
-  const container=elLog.parentElement;
-  const atBottom=container.scrollHeight-container.scrollTop-container.clientHeight<40;
   const div=document.createElement('div');div.className='log-line';
-  div.innerHTML='<span class="log-time">['+t+']</span> <span class="'+(cm[cls]||'')+'">'+esc(msg)+'</span>';
+  div.innerHTML='<span class="log-time">['+t+']</span> <span class="'+(cm[cls]||'')+'">'+escHtml(msg)+'</span>';
   elLog.appendChild(div);
-  if(atBottom)container.scrollTop=container.scrollHeight;
+  requestAnimationFrame(function(){elLogBody.scrollTo({top:elLogBody.scrollHeight,behavior:'smooth'});});
 }
-function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 
-// ============= Toast =============
+function escHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+function escAttr(s){return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+function clearLog(){elLog.innerHTML='';log('日志已清除','info');}
+
+/* ===== Toast ===== */
 function toast(msg,type){
-  const d=document.createElement('div');d.className='toast '+(type||'');d.textContent=msg;elToast.appendChild(d);
-  setTimeout(function(){d.style.opacity='0';d.style.transition='opacity .3s';setTimeout(function(){if(d.parentNode)d.parentNode.removeChild(d);},300);},3500);
+  const d=document.createElement('div');d.className='toast '+(type||'');
+  const m=document.createElement('span');m.className='toast-msg';m.textContent=msg;
+  const x=document.createElement('span');x.className='toast-close';x.textContent='\u2715';
+  x.title='右键点击或点击此处关闭';
+  d.appendChild(m);d.appendChild(x);
+  let dismissTimer=setTimeout(function(){removeToast(d,dismissTimer);},4000);
+  function dismiss(){removeToast(d,dismissTimer);}
+  x.addEventListener('click',dismiss);
+  d.addEventListener('contextmenu',function(e){e.preventDefault();dismiss();});
+  elToast.appendChild(d);
+}
+function removeToast(d,timer){
+  if(timer)clearTimeout(timer);
+  d.style.opacity='0';d.style.transition='opacity .25s';
+  setTimeout(function(){if(d.parentNode)d.parentNode.removeChild(d);},260);
 }
 
-// ============= Init =============
+/* ===== LCD Stream Watch ===== */
+function lcdWatchCheck(){
+  const stEl=$('lcdStreamStatus');
+  if(!stEl)return;
+  if(lcdLastFrameTime&&Date.now()-lcdLastFrameTime>300){
+    if(stEl.textContent.includes('已开启')){
+      stEl.textContent='\u25CB 已关闭';stEl.style.color='var(--red)';
+      const cv=$('lcdCanvas'),lc=$('lcdCard');
+      if(cv){cv.classList.remove('streaming');clearLcdCanvas();}
+      if(lc)lc.classList.remove('streaming');
+    }
+  }
+}
+function stopLcdWatch(){
+  if(lcdWatchTimer){clearInterval(lcdWatchTimer);lcdWatchTimer=null;}
+  lcdLastFrameTime=0;
+  const cv=$('lcdCanvas'),lc=$('lcdCard');
+  if(cv){cv.classList.remove('streaming');clearLcdCanvas();}
+  if(lc)lc.classList.remove('streaming');
+}
+
+/* ===== Settings Persistence ===== */
+const SET_KEY='stm_ips_host_cfg';
+function saveAllSettings(){
+  const s={
+    baudRate:document.getElementById('baudRate').value,
+    chunkSize:document.getElementById('chunkSize').value,
+    fileType:document.getElementById('fileType').value,
+    fileName:document.getElementById('fileNameInput').value,
+    leftW:$('leftPanel').style.width||'',
+    rightW:$('rightPanel').style.width||''
+  };
+  try{localStorage.setItem(SET_KEY,JSON.stringify(s));}catch(e){}
+}
+function loadAllSettings(){
+  try{
+    const raw=localStorage.getItem(SET_KEY);
+    if(!raw)return;
+    const s=JSON.parse(raw);
+    if(s.baudRate)document.getElementById('baudRate').value=s.baudRate;
+    if(s.chunkSize)document.getElementById('chunkSize').value=s.chunkSize;
+    if(s.fileType)document.getElementById('fileType').value=s.fileType;
+    if(s.fileName)document.getElementById('fileNameInput').value=s.fileName;
+    if(s.leftW){const w=Math.max(260,Math.min(520,parseInt(s.leftW)||340));$('leftPanel').style.width=w+'px';}
+    if(s.rightW){const w=Math.max(260,Math.min(520,parseInt(s.rightW)||340));$('rightPanel').style.width=w+'px';}
+    updateNBC();
+  }catch(e){}
+}
+['baudRate','chunkSize','fileType'].forEach(function(id){
+  document.getElementById(id).addEventListener('change',saveAllSettings);
+});
+document.getElementById('fileNameInput').addEventListener('input',function(){
+  updateNBC();saveAllSettings();
+});
+
+/* ===== Panel Splitter Drag ===== */
+(function initSplitters(){
+  function makeSplitter(splitterId, panelId, side){
+    const sp=document.getElementById(splitterId);
+    const pn=document.getElementById(panelId);
+    if(!sp||!pn)return;
+    let sx,sw;
+    sp.addEventListener('mousedown',function(e){
+      e.preventDefault();
+      sx=e.clientX;sw=pn.getBoundingClientRect().width;
+      sp.classList.add('active');
+      document.body.style.cursor='col-resize';document.body.style.userSelect='none';
+      function mv(ev){
+        let dx=ev.clientX-sx;
+        let nw=side==='left'?sw+dx:sw-dx;
+        nw=Math.max(260,Math.min(520,nw));
+        pn.style.width=nw+'px';
+      }
+      function up(){
+        sp.classList.remove('active');
+        document.body.style.cursor='';document.body.style.userSelect='';
+        document.removeEventListener('mousemove',mv);
+        document.removeEventListener('mouseup',up);
+        saveAllSettings();
+      }
+      document.addEventListener('mousemove',mv);
+      document.addEventListener('mouseup',up);
+    });
+  }
+  makeSplitter('splitterL','leftPanel','left');
+  makeSplitter('splitterR','rightPanel','right');
+})();
+
+/* ===== Init ===== */
+loadAllSettings();
 window.addEventListener('beforeunload',function(){
+  if(sendState===ST_SENDING||sendState===ST_WAIT_ACK){
+    if(lcdStreamWasOn){
+      try{port.writable.getWriter().write(frame(C_LCD,new Uint8Array([0x01])))}catch(e){}
+    }
+  }
   sendState=ST_DONE;resetCont();readLoop=false;
   if(port){try{port.close()}catch(e){}}
 });
