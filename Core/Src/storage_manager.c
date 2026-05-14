@@ -161,12 +161,11 @@ void clear_large_file(void)
 
 void clear_small_file(void)
 {
-    // 小文件区不需要物理擦除，直接重置分配指针和文件信息即可
-    global_fat.small_next_addr = AREA_SMALL_START_ADDR;
-    for (uint16_t i = 0; i < MAX_SMALL_FILES; i++)
+    for (uint16_t i = 0; i < AREA_SMALL_SECTORS; i++)
     {
-        global_fat.small_files[i].is_valid = 0;
+        w25q_erase_sector(AREA_SMALL_START_SECTOR + i);
     }
+    storage_fat_init_default();
     storage_fat_save();
 }
 

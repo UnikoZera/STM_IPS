@@ -1644,7 +1644,7 @@ Discarded input sections
  .text.clear_large_file
                 0x00000000       0x30 ./Core/Src/storage_manager.o
  .text.clear_small_file
-                0x00000000       0x44 ./Core/Src/storage_manager.o
+                0x00000000       0x32 ./Core/Src/storage_manager.o
  .debug_macro   0x00000000      0xad8 ./Core/Src/storage_manager.o
  .debug_macro   0x00000000       0x22 ./Core/Src/storage_manager.o
  .debug_macro   0x00000000       0x2a ./Core/Src/storage_manager.o
@@ -9304,11 +9304,11 @@ LOAD D:/mcu/STM/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-
  .debug_line    0x00002f6b     0x10f4 ./Core/Src/lcd.o
  .debug_line    0x0000405f     0x13e3 ./Core/Src/lcd_driver.o
  .debug_line    0x00005442      0xafb ./Core/Src/lcd_ui.o
- .debug_line    0x00005f3d      0xb51 ./Core/Src/main.o
- .debug_line    0x00006a8e      0x8fc ./Core/Src/spi.o
- .debug_line    0x0000738a      0x789 ./Core/Src/stm32f4xx_hal_msp.o
- .debug_line    0x00007b13      0x8b0 ./Core/Src/stm32f4xx_it.o
- .debug_line    0x000083c3     0x12bd ./Core/Src/storage_manager.o
+ .debug_line    0x00005f3d      0xb53 ./Core/Src/main.o
+ .debug_line    0x00006a90      0x8fc ./Core/Src/spi.o
+ .debug_line    0x0000738c      0x789 ./Core/Src/stm32f4xx_hal_msp.o
+ .debug_line    0x00007b15      0x8b0 ./Core/Src/stm32f4xx_it.o
+ .debug_line    0x000083c5     0x12bb ./Core/Src/storage_manager.o
  .debug_line    0x00009680      0x86b ./Core/Src/syscalls.o
  .debug_line    0x00009eeb      0x547 ./Core/Src/sysmem.o
  .debug_line    0x0000a432      0x7ff ./Core/Src/system_stm32f4xx.o

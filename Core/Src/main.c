@@ -113,6 +113,10 @@ int main(void)
   lcd_ui_init();
   bool w25q_ok = w25q_init();
   bool storage_init_ok = storage_manager_init();
+
+  // clear_large_file();
+  // clear_small_file();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
