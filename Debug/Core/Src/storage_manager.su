@@ -1,5 +1,5 @@
 ../Core/Src/storage_manager.c:72:13:storage_fat_init_default	8	static
-../Core/Src/storage_manager.c:82:6:storage_fat_load	2720	static
+../Core/Src/storage_manager.c:82:6:storage_fat_load	1824	static
 ../Core/Src/storage_manager.c:100:6:storage_fat_save	8	static
 ../Core/Src/storage_manager.c:105:9:find_small_file_by_name	24	static
 ../Core/Src/storage_manager.c:117:9:find_large_file_by_name	24	static

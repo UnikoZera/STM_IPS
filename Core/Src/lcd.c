@@ -7,6 +7,9 @@
 
 #include "lcd.h"
 #include "storage_manager.h"
+#include "w25q_controller.h"
+
+#define LCD_PIC_CHUNK_SIZE 256
 
 volatile bool lcd_dma_busy = false;
 volatile bool lcd_usb_stream_enabled = false;
@@ -634,6 +637,68 @@ void lcd_draw_line_dma(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t 
 			err += dx;
 			y1 += sy;
 		}
+	}
+}
+
+void lcd_draw_picture_dma(int16_t x, int16_t y, int16_t width, int16_t height, const uint16_t *data)
+{
+    if (lcd_dma_busy) return;
+    // 计算源偏移和目标偏移
+    int16_t src_x = 0, src_y = 0;
+    int16_t draw_x = x, draw_y = y;
+    if (x < 0) { src_x = -x; draw_x = 0; }
+    if (y < 0) { src_y = -y; draw_y = 0; }
+    int16_t clip_w = width - src_x;
+    int16_t clip_h = height - src_y;
+    if (draw_x + clip_w > LCD_W) clip_w = LCD_W - draw_x;
+    if (draw_y + clip_h > LCD_H) clip_h = LCD_H - draw_y;
+    if (clip_w <= 0 || clip_h <= 0) return;
+    uint16_t *draw_buf = lcd_write_ptr;
+    for (int16_t j = 0; j < clip_h; j++)
+    {
+        for (int16_t i = 0; i < clip_w; i++)
+        {
+            draw_buf[(draw_y + j) * LCD_W + (draw_x + i)] =
+                swap_uint16_builtin(data[(src_y + j) * width + (src_x + i)]);
+        }
+    }
+}
+
+void lcd_draw_picture_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t w25q_addr)
+{
+	if (x < 0 || y < 0 || x + width > LCD_W || y + height > LCD_H)
+	{
+		return;
+	}
+
+	if (lcd_dma_busy) return;
+
+	uint8_t chunk[LCD_PIC_CHUNK_SIZE];
+	uint32_t total_bytes = (uint32_t)width * height * 2;
+	uint32_t done = 0;
+
+	while (done < total_bytes)
+	{
+		uint32_t to_read = total_bytes - done;
+		if (to_read > LCD_PIC_CHUNK_SIZE)
+		{
+			to_read = LCD_PIC_CHUNK_SIZE;
+		}
+
+		w25q_read_data(w25q_addr + done, chunk, to_read);
+
+		uint32_t pixels = to_read / 2;
+		for (uint32_t p = 0; p < pixels; p++)
+		{
+			uint32_t g_idx = done / 2 + p;
+			uint16_t img_col = (uint16_t)(g_idx % (uint32_t)width);
+			uint16_t img_row = (uint16_t)(g_idx / (uint32_t)width);
+			uint16_t pixel_le = (uint16_t)chunk[p * 2 + 1] << 8 | chunk[p * 2];
+			lcd_write_ptr[(uint32_t)(y + img_row) * LCD_W + (uint32_t)(x + img_col)] =
+			    swap_uint16_builtin(pixel_le);
+		}
+
+		done += to_read;
 	}
 }
 

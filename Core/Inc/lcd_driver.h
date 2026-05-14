@@ -140,6 +140,16 @@ typedef struct
 	const char *text;
 } lcd_label_t;
 
+typedef struct
+{
+	int16_t x;
+	int16_t y;
+	int16_t width;
+	int16_t height;
+	const uint16_t *data;
+} lcd_picture_t;
+
+
 void lcd_anim_manager_init(void);
 void lcd_anim_manager_set_bg(uint16_t color);
 void lcd_anim_manager_task(void);
@@ -174,10 +184,12 @@ void lcd_dma_draw_pixel(int16_t x, int16_t y, uint16_t color);
 void lcd_dma_draw_filled_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
 void lcd_dma_draw_circle(int16_t x0, int16_t y0, uint8_t r, uint16_t color);
 void lcd_dma_draw_label(const lcd_label_t *label);
+void lcd_dma_draw_picture(int16_t x, int16_t y, int16_t width, int16_t height, const uint16_t *data);
 
 void lcd_draw_rect_layer(void *ctx);
 void lcd_draw_circle_layer(void *ctx);
 void lcd_draw_label_layer(void *ctx);
+void lcd_draw_picture_layer(void *ctx);
 
 void lcd_anim_exec_set_i16(void *target, int32_t value);
 void lcd_anim_exec_set_u16(void *target, int32_t value);

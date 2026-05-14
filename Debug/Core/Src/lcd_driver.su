@@ -31,9 +31,11 @@
 ../Core/Src/lcd_driver.c:569:6:lcd_dma_draw_filled_rect	48	static
 ../Core/Src/lcd_driver.c:607:6:lcd_dma_draw_circle	32	static
 ../Core/Src/lcd_driver.c:638:6:lcd_dma_draw_label	32	static
-../Core/Src/lcd_driver.c:648:6:lcd_draw_rect_layer	40	static
-../Core/Src/lcd_driver.c:659:6:lcd_draw_circle_layer	24	static
-../Core/Src/lcd_driver.c:670:6:lcd_draw_label_layer	24	static
-../Core/Src/lcd_driver.c:680:6:lcd_anim_exec_set_i16	16	static
-../Core/Src/lcd_driver.c:699:6:lcd_anim_exec_set_u16	16	static
-../Core/Src/lcd_driver.c:718:6:lcd_anim_exec_set_u8	16	static
+../Core/Src/lcd_driver.c:649:6:lcd_dma_draw_picture	32	static
+../Core/Src/lcd_driver.c:661:6:lcd_draw_rect_layer	40	static
+../Core/Src/lcd_driver.c:672:6:lcd_draw_circle_layer	24	static
+../Core/Src/lcd_driver.c:683:6:lcd_draw_label_layer	24	static
+../Core/Src/lcd_driver.c:689:6:lcd_draw_picture_layer	40	static
+../Core/Src/lcd_driver.c:704:6:lcd_anim_exec_set_i16	16	static
+../Core/Src/lcd_driver.c:723:6:lcd_anim_exec_set_u16	16	static
+../Core/Src/lcd_driver.c:742:6:lcd_anim_exec_set_u8	16	static

@@ -645,6 +645,19 @@ void lcd_dma_draw_label(const lcd_label_t *label)
 	lcd_draw_string(label->x, label->y, label->fg_color, label->bg_color, label->size, label->text);
 }
 
+//! 注意这个函数会要求你把照片数据放在 RAM 中，如果照片较大可能会占用较多内存，适合小图标等使用(如果内存不够可以直接调用lcd.c下的原生函数)
+void lcd_dma_draw_picture(int16_t x, int16_t y, int16_t width, int16_t height, const uint16_t *data)
+{
+	if (data == NULL || width <= 0 || height <= 0)
+	{
+		return;
+	}
+
+	lcd_draw_picture_dma(x, y, width, height, data);
+}
+
+
+
 void lcd_draw_rect_layer(void *ctx)
 {
 	lcd_rect_t *rect = (lcd_rect_t *)ctx;
@@ -671,6 +684,17 @@ void lcd_draw_label_layer(void *ctx)
 {
 	lcd_label_t *label = (lcd_label_t *)ctx;
 	lcd_dma_draw_label(label);
+}
+
+void lcd_draw_picture_layer(void *ctx)
+{
+	lcd_picture_t *pic = (lcd_picture_t *)ctx;
+	if (pic == NULL || pic->data == NULL)
+	{
+		return;
+	}
+
+	lcd_draw_picture_dma(pic->x, pic->y, pic->width, pic->height, pic->data);
 }
 
 #pragma endregion

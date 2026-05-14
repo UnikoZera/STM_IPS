@@ -11,6 +11,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "math.h"
+#include "w25q_controller.h"
+#include "storage_manager.h"
+
 
 #pragma region UI元素定义
 
@@ -21,6 +24,8 @@ static lcd_label_t g_label2 = {12, 14, WHITE, BLACK, 8, "TEST"};
 static lcd_label_t g_label3 = {12, 14, WHITE, BLACK, 8, "TEST"};
 static lcd_circle_t g_circle2 = {60, 58, 10, CYAN};
 static lcd_rect_t g_rect2 = {50, 24, 35, 30, MAGENTA};
+extern const uint16_t storage_kay[45 * 60]; // 来自main.c的图片数据RAM缓冲区
+static lcd_picture_t g_picture = {10, 10, 45, 60, storage_kay};
 
 #pragma endregion
 
@@ -31,13 +36,14 @@ void lcd_ui_init(void)
 
     #pragma region 添加元素到动画管理器
 
-    lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
-    lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
-    lcd_anim_manager_add_layer(&g_circle, lcd_draw_circle_layer);
-    lcd_anim_manager_add_layer(&g_circle2, lcd_draw_circle_layer);
-    lcd_anim_manager_add_layer(&g_label2, lcd_draw_label_layer);
-    lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
-    lcd_anim_manager_add_layer(&g_label3, lcd_draw_label_layer);
+    lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
+    // lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
+    // lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
+    // lcd_anim_manager_add_layer(&g_circle, lcd_draw_circle_layer);
+    // lcd_anim_manager_add_layer(&g_circle2, lcd_draw_circle_layer);
+    // lcd_anim_manager_add_layer(&g_label2, lcd_draw_label_layer);
+    // lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
+    // lcd_anim_manager_add_layer(&g_label3, lcd_draw_label_layer);
 
     #pragma endregion
 
@@ -171,17 +177,33 @@ void lcd_ui_change(void)
   static char fps_buf[16];
   snprintf(fps_buf, sizeof(fps_buf), "FPS:%u", lcd_fps);
   g_label3.text = fps_buf;
-  static char last_str_buf[8];
-  snprintf(str_buf, sizeof(str_buf), "usage percent:%u %%", cpu_usage_percent);
-  g_label.text = str_buf;
+
+  // // === DEBUG: 探查Flash偏移根因 ===
+  
+  //   static uint8_t debug_buf[12];
+  //   static bool debug_ready = false;
+  //   if (!debug_ready)
+  //   {
+  //     large_file_info_t test_info;
+  //     get_large_file_info(find_large_file_by_name("big"), &test_info);
+  //     uint32_t base = test_info.start_sector * 4096;
+  //     w25q_read_data(base - 1, debug_buf, 12);   // 读取 addr-1 ~ addr+10
+  //     debug_ready = true;
+  //   }
+  //   snprintf(str_buf, sizeof(str_buf), "%02X %02X %02X %02X",
+  //     debug_buf[0], debug_buf[1], debug_buf[2], debug_buf[3]);
+  //   g_label.text = str_buf;
+  
+  // // ================================
+
   g_rect.color = BLUE;
   g_circle.color = GREEN;
 
-  for (uint8_t i = 0; i < sizeof(last_str_buf); i++)
+  for (uint8_t i = 0; i < sizeof(str_buf); i++)
   {
-    last_str_buf[i] = 32 + (rand() % 95);
+    str_buf[i] = 32 + (rand() % 95);
   }
-    g_label2.text = last_str_buf;
+    g_label2.text = str_buf;
 
     lcd_calculate_fps();
 }

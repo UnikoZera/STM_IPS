@@ -34,7 +34,10 @@ Core/Src/lcd_ui.o: ../Core/Src/lcd_ui.c ../Core/Inc/lcd_ui.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_usb.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd_ex.h \
  ../Core/Inc/gpio.h ../Core/Inc/tim.h ../Core/Inc/lcd_font.h \
- ../Core/Inc/usb_controller.h
+ ../Core/Inc/usb_controller.h ../Core/Inc/w25q_controller.h \
+ ../Core/Inc/storage_manager.h ../Core/Inc/crc16.h \
+ ../Core/Inc/at24c_controller.h ../Core/Inc/i2c.h \
+ ../Core/Inc/w25q_controller.h
 ../Core/Inc/lcd_ui.h:
 ../Core/Inc/lcd_driver.h:
 ../Core/Inc/lcd.h:
@@ -77,3 +80,9 @@ Core/Src/lcd_ui.o: ../Core/Src/lcd_ui.c ../Core/Inc/lcd_ui.h \
 ../Core/Inc/tim.h:
 ../Core/Inc/lcd_font.h:
 ../Core/Inc/usb_controller.h:
+../Core/Inc/w25q_controller.h:
+../Core/Inc/storage_manager.h:
+../Core/Inc/crc16.h:
+../Core/Inc/at24c_controller.h:
+../Core/Inc/i2c.h:
+../Core/Inc/w25q_controller.h:

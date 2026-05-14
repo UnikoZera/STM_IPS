@@ -92,6 +92,8 @@ void lcd_draw_line_dma(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t 
 void lcd_draw_char(int16_t x, int16_t y, uint16_t fc, uint16_t bc, uint8_t sizey, char ch);
 void lcd_draw_string(int16_t x,int16_t y, uint16_t fc, uint16_t bc, uint8_t sizey, const char *p);
 void lcd_set_area_color(int16_t start_x, int16_t start_y, int16_t end_x, int16_t end_y, uint16_t color);
+void lcd_draw_picture_dma(int16_t x, int16_t y, int16_t width, int16_t height, const uint16_t *data);
+void lcd_draw_picture_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t w25q_addr);
 
 extern volatile bool lcd_dma_busy;
 extern volatile bool lcd_usb_stream_enabled;
