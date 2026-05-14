@@ -37,13 +37,13 @@ void lcd_ui_init(void)
     #pragma region 添加元素到动画管理器
 
     lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
-    // lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
-    // lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
-    // lcd_anim_manager_add_layer(&g_circle, lcd_draw_circle_layer);
-    // lcd_anim_manager_add_layer(&g_circle2, lcd_draw_circle_layer);
-    // lcd_anim_manager_add_layer(&g_label2, lcd_draw_label_layer);
-    // lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
-    // lcd_anim_manager_add_layer(&g_label3, lcd_draw_label_layer);
+    lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
+    lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
+    lcd_anim_manager_add_layer(&g_circle, lcd_draw_circle_layer);
+    lcd_anim_manager_add_layer(&g_circle2, lcd_draw_circle_layer);
+    lcd_anim_manager_add_layer(&g_label2, lcd_draw_label_layer);
+    lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
+    lcd_anim_manager_add_layer(&g_label3, lcd_draw_label_layer);
 
     #pragma endregion
 

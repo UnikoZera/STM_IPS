@@ -44,6 +44,7 @@
 #define SEND_TAIL 4
 static const uint8_t LCD_FRAME_TAIL[] = {0x0D, 0x00, 0x07, 0x21};
 
+#define LCD_USB_STREAM_ENABLE         1  // 启用USB流模式下等待USB发送完毕后再渲染，避免单缓冲区撕裂
 #define LCD_USB_STREAM_MIN_INTERVAL_MS 30U
 
 #pragma region 颜色定义
