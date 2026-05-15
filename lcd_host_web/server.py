@@ -141,15 +141,23 @@ def _stream_frames(in_path: str, width: int, height: int,
         proc.wait()
 
 
-def _rgb_to_rgb565(r: int, g: int, b: int, endian: str = '>') -> bytes:
+def _rgb_to_rgb565(r: int, g: int, b: int, endian: str = '>',
+                   brightness: float = 100.0) -> bytes:
+    if brightness != 100.0:
+        ratio = brightness / 100.0
+        r = min(255, max(0, round(r * ratio)))
+        g = min(255, max(0, round(g * ratio)))
+        b = min(255, max(0, round(b * ratio)))
     p = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
     return struct.pack(f'{endian}H', p)
 
 
-def _convert_to_rgb565(rgb_pixels: bytes, w: int, h: int, endian: str = '>') -> bytes:
+def _convert_to_rgb565(rgb_pixels: bytes, w: int, h: int,
+                       endian: str = '>', brightness: float = 100.0) -> bytes:
     out = bytearray()
     for i in range(0, len(rgb_pixels), 3):
-        out.extend(_rgb_to_rgb565(rgb_pixels[i], rgb_pixels[i + 1], rgb_pixels[i + 2]))
+        out.extend(_rgb_to_rgb565(rgb_pixels[i], rgb_pixels[i + 1], rgb_pixels[i + 2],
+                   endian, brightness))
     return bytes(out)
 
 
@@ -196,6 +204,7 @@ def convert():
         height = int(request.form.get('height', 80))
         fps = max(1, min(60, float(request.form.get('fps', 30))))
         swap = request.form.get('swap', '0') == '1'
+        brightness = max(10, min(300, float(request.form.get('brightness', 100))))
     except ValueError:
         return jsonify({'error': 'Invalid parameters'}), 400
 
@@ -215,9 +224,9 @@ def convert():
     try:
         endian = '<' if swap else '>'
         if is_video:
-            result = _process_video(in_path, width, height, fps, endian)
+            result = _process_video(in_path, width, height, fps, endian, brightness)
         else:
-            result = _process_image(in_path, width, height, endian)
+            result = _process_image(in_path, width, height, endian, brightness)
     except subprocess.CalledProcessError as e:
         msg = e.stderr.decode('utf-8', errors='replace')[-300:] if e.stderr else str(e)
         return jsonify({'error': f'ffmpeg error: {msg}'}), 500
@@ -235,14 +244,15 @@ def convert():
     return jsonify(result)
 
 
-def _process_image(in_path: str, width: int, height: int, endian: str = '>') -> dict:
+def _process_image(in_path: str, width: int, height: int,
+                   endian: str = '>', brightness: float = 100.0) -> dict:
     gen = _stream_frames(in_path, width, height, vframes=1)
     try:
         rgb, fw, fh = next(gen)
     except StopIteration:
         raise RuntimeError('ffmpeg produced no output')
 
-    data = _convert_to_rgb565(rgb, fw, fh, endian)
+    data = _convert_to_rgb565(rgb, fw, fh, endian, brightness)
 
     return {
         'type': 'image',
@@ -256,7 +266,8 @@ def _process_image(in_path: str, width: int, height: int, endian: str = '>') -> 
 
 
 def _process_video(in_path: str, width: int, height: int,
-                   output_fps: float = 30, endian: str = '>') -> dict:
+                   output_fps: float = 30, endian: str = '>',
+                   brightness: float = 100.0) -> dict:
     output_fps = max(1, min(60, output_fps))
 
     # stream frames → collect full RGB565 into temp file
@@ -265,7 +276,7 @@ def _process_video(in_path: str, width: int, height: int,
     count = 0
 
     for rgb, fw, fh in _stream_frames(in_path, width, height, fps=output_fps):
-        frame = _convert_to_rgb565(rgb, fw, fh, endian)
+        frame = _convert_to_rgb565(rgb, fw, fh, endian, brightness)
         full.extend(frame)
         if count < PREVIEW_FRAMES:
             preview.extend(frame)

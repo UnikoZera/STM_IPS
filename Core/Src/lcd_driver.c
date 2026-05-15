@@ -646,16 +646,25 @@ void lcd_dma_draw_label(const lcd_label_t *label)
 }
 
 //! 注意这个函数会要求你把照片数据放在 RAM 中，如果照片较大可能会占用较多内存，适合小图标等使用(如果内存不够可以直接调用lcd.c下的原生函数)
-void lcd_dma_draw_picture(int16_t x, int16_t y, int16_t width, int16_t height, const uint16_t *data)
+void lcd_dma_draw_picture(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t addr)
 {
-	if (data == NULL || width <= 0 || height <= 0)
+	if (addr == 0 || width <= 0 || height <= 0)
 	{
 		return;
 	}
 
-	lcd_draw_picture_dma(x, y, width, height, data);
+	lcd_draw_picture_from_w25q(x, y, width, height, addr);
 }
 
+void lcd_dma_draw_video_frame(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t start_addr, uint32_t end_addr)
+{
+	if (start_addr == 0 || width <= 0 || height <= 0 || end_addr <= start_addr)
+	{
+		return;
+	}
+
+	lcd_play_video_from_w25q(x, y, width, height, start_addr, end_addr);
+}
 
 
 void lcd_draw_rect_layer(void *ctx)
@@ -689,12 +698,23 @@ void lcd_draw_label_layer(void *ctx)
 void lcd_draw_picture_layer(void *ctx)
 {
 	lcd_picture_t *pic = (lcd_picture_t *)ctx;
-	if (pic == NULL || pic->data == NULL)
+	if (pic == NULL || pic->addr == NULL)
 	{
 		return;
 	}
 
-	lcd_draw_picture_dma(pic->x, pic->y, pic->width, pic->height, pic->data);
+	lcd_dma_draw_picture(pic->x, pic->y, pic->width, pic->height, pic->addr);
+}
+
+void lcd_draw_video_frame_layer(void *ctx)
+{
+	lcd_video_t *frame = (lcd_video_t *)ctx;
+	if (frame == NULL || frame->start_addr == NULL || frame->end_addr == NULL || frame->end_addr <= frame->start_addr)
+	{
+		return;
+	}
+
+	lcd_dma_draw_video_frame(frame->x, frame->y, frame->width, frame->height, frame->start_addr, frame->end_addr);
 }
 
 #pragma endregion

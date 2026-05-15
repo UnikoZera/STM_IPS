@@ -560,6 +560,11 @@ select:hover,input:hover{border-color:var(--text3);}
           </label>
           <span style="font-size:9px;color:var(--text3);">大端</span><span id="vpEndianLabel" style="font-size:9px;color:var(--text3);transition:all .3s;">→小端</span>
         </div>
+        <div style="margin-bottom:5px;display:flex;align-items:center;gap:10px;">
+          <span style="font-size:10.5px;color:var(--text2);flex-shrink:0;">亮度</span>
+          <input type="range" id="vpBrightness" min="10" max="300" value="100" style="flex:1;accent-color:var(--gold);">
+          <span id="vpBrightnessLabel" style="font-size:11px;color:var(--gold);font-weight:600;min-width:36px;text-align:right;">100%</span>
+        </div>
         <button class="btn btn-retry file-upload" id="btnPickVP">
           &#128206; 选择文件（图片/MP4）
           <input type="file" id="vpFileInput" accept="image/*,.mp4" onchange="onVPFileSelected(this)">
@@ -1279,7 +1284,11 @@ function saveAllSettings(){
     fileType:document.getElementById('fileType').value,
     fileName:document.getElementById('fileNameInput').value,
     leftW:$('leftPanel').style.width||'',
-    rightW:$('rightPanel').style.width||''
+    rightW:$('rightPanel').style.width||'',
+    vpWidth:document.getElementById('vpWidth').value,
+    vpHt:document.getElementById('vpHt').value,
+    vpFps:document.getElementById('vpFps').value,
+    vpBrightness:document.getElementById('vpBrightness').value
   };
   try{localStorage.setItem(SET_KEY,JSON.stringify(s));}catch(e){}
 }
@@ -1294,11 +1303,25 @@ function loadAllSettings(){
     if(s.fileName)document.getElementById('fileNameInput').value=s.fileName;
     if(s.leftW){const w=Math.max(260,Math.min(520,parseInt(s.leftW)||340));$('leftPanel').style.width=w+'px';}
     if(s.rightW){const w=Math.max(260,Math.min(520,parseInt(s.rightW)||340));$('rightPanel').style.width=w+'px';}
+    if(s.vpWidth)document.getElementById('vpWidth').value=s.vpWidth;
+    if(s.vpHt)document.getElementById('vpHt').value=s.vpHt;
+    if(s.vpFps)document.getElementById('vpFps').value=s.vpFps;
+    if(s.vpBrightness){
+      document.getElementById('vpBrightness').value=s.vpBrightness;
+      const lbl=document.getElementById('vpBrightnessLabel');
+      if(lbl) lbl.textContent=s.vpBrightness+'%';
+    }
     updateNBC();
   }catch(e){}
 }
-['baudRate','chunkSize','fileType'].forEach(function(id){
-  document.getElementById(id).addEventListener('change',saveAllSettings);
+['baudRate','chunkSize','fileType','vpWidth','vpHt','vpFps','vpBrightness'].forEach(function(id){
+  const el=document.getElementById(id);
+  if(el) el.addEventListener('change',saveAllSettings);
+});
+document.getElementById('vpBrightness').addEventListener('input',function(){
+  const lbl=document.getElementById('vpBrightnessLabel');
+  if(lbl) lbl.textContent=this.value+'%';
+  saveAllSettings();
 });
 document.getElementById('fileNameInput').addEventListener('input',function(){
   updateNBC();saveAllSettings();
@@ -1418,6 +1441,7 @@ async function startVPProcess(){
   form.append('height', h);
   form.append('fps', fps);
   form.append('swap', document.getElementById('vpSwap').checked ? '1' : '0');
+  form.append('brightness', parseInt(document.getElementById('vpBrightness').value) || 100);
 
   const SERVER = VP_SERVER;
 
@@ -1547,10 +1571,10 @@ function showVPResult(){
   pv.onclick = openVPDetail;
 
   $vp('Download').disabled = false;
-  const canSend = VP.frames.length > 0 && !isVid;
+  const canSend = VP.frames.length > 0;
   $vp('Send').disabled = !canSend;
   if(!canSend){
-    $vp('Send').title = isVid ? '视频暂不支持直接发送' : '请先转换';
+    $vp('Send').title = '请先转换';
   } else {
     $vp('Send').title = '';
   }
@@ -1752,7 +1776,6 @@ async function sendVPToDevice(){
   if(!port){ toast('请先连接串口','error'); return; }
   const r = VP.result;
   if(!r || !r.hex){ toast('没有数据','error'); return; }
-  if(r.type === 'video'){ toast('视频暂不支持直接发送到设备','warn'); return; }
 
   const raw = hexToBytes(r.hex);
   const blob = new Blob([raw]);

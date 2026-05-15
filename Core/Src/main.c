@@ -57,7 +57,8 @@
 /* USER CODE BEGIN PV */
 
 uint8_t storage_kay[45*60*2]; // 45*60的图片数据缓存区
-
+large_file_info_t test_info;
+large_file_info_t video_info;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -120,10 +121,11 @@ int main(void)
   // clear_small_file();
 
   // 读取大文件区的图片文件信息，设置UI图片背景层
-  large_file_info_t test_info;
   get_large_file_info(find_large_file_by_name("big"), &test_info);
   w25q_read_data(test_info.start_sector * 4096 - 1, storage_kay, sizeof(storage_kay)); // 从W25Q中读取图片数据到缓存区
   storage_kay[0] = storage_kay[1];
+
+  get_large_file_info(find_large_file_by_name("video"), &video_info);
   // lcd_ui_set_picture(0, 0, 45, 60, (const uint16_t *)IMG_DATA); // 设置UI图片层使用RAM缓冲区
   lcd_ui_init();
   /* USER CODE END 2 */

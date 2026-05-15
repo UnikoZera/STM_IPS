@@ -21,4 +21,5 @@
 ../Core/Src/lcd.c:555:6:lcd_set_area_color	40	static
 ../Core/Src/lcd.c:574:6:lcd_draw_line_dma	64	static
 ../Core/Src/lcd.c:643:6:lcd_draw_picture_dma	48	static
-../Core/Src/lcd.c:667:6:lcd_draw_picture_from_w25q	312	static
+../Core/Src/lcd.c:667:6:lcd_draw_picture_from_w25q	2112	static
+../Core/Src/lcd.c:709:6:lcd_play_video_from_w25q	2112	static

@@ -9,7 +9,7 @@
 #include "storage_manager.h"
 #include "w25q_controller.h"
 
-#define LCD_PIC_CHUNK_SIZE 256
+#define LCD_PIC_CHUNK_SIZE 2048
 
 volatile bool lcd_dma_busy = false;
 volatile bool lcd_usb_stream_enabled = false;
@@ -666,40 +666,100 @@ void lcd_draw_picture_dma(int16_t x, int16_t y, int16_t width, int16_t height, c
 
 void lcd_draw_picture_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t w25q_addr)
 {
-	if (x < 0 || y < 0 || x + width > LCD_W || y + height > LCD_H)
-	{
-		return;
-	}
+    if (lcd_dma_busy) return;
+    uint8_t chunk[LCD_PIC_CHUNK_SIZE];
+    uint32_t total_bytes = (uint32_t)width * height * 2;
+    uint32_t done = 0;
+    while (done < total_bytes)
+    {
+        uint32_t to_read = total_bytes - done;
+        if (to_read > LCD_PIC_CHUNK_SIZE)
+            to_read = LCD_PIC_CHUNK_SIZE;
+        w25q_fast_read_data_dma(w25q_addr + done, chunk, to_read);
+        while (w25q_dma_is_busy())
+            w25q_dma_task();
+        uint32_t pixels = to_read / 2;
+        for (uint32_t p = 0; p < pixels; p++)
+        {
+            uint32_t g_idx = done / 2 + p;
+            uint16_t img_col = (uint16_t)(g_idx % (uint32_t)width);
+            uint16_t img_row = (uint16_t)(g_idx / (uint32_t)width);
+            int16_t screen_x = x + img_col;
+            int16_t screen_y = y + img_row;
+            if (screen_x < 0 || screen_x >= LCD_W || screen_y < 0 || screen_y >= LCD_H)
+                continue;
+            uint16_t pixel_le = (uint16_t)chunk[p * 2 + 1] << 8 | chunk[p * 2];
+            lcd_write_ptr[(uint32_t)screen_y * LCD_W + (uint32_t)screen_x] =
+                swap_uint16_builtin(pixel_le);
+        }
+        done += to_read;
+    }
+}
 
-	if (lcd_dma_busy) return;
+static struct {
+    bool active;
+    int16_t x, y;
+    int16_t width, height;
+    uint32_t start_addr;
+    uint32_t end_addr;
+    uint32_t current_addr;
+    uint32_t frame_bytes;
+} s_video_ctx = {0};
 
-	uint8_t chunk[LCD_PIC_CHUNK_SIZE];
-	uint32_t total_bytes = (uint32_t)width * height * 2;
-	uint32_t done = 0;
+void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t w25q_start_addr, uint32_t w25q_end_addr)
+{
+    if (lcd_dma_busy) return;
 
-	while (done < total_bytes)
-	{
-		uint32_t to_read = total_bytes - done;
-		if (to_read > LCD_PIC_CHUNK_SIZE)
-		{
-			to_read = LCD_PIC_CHUNK_SIZE;
-		}
+    uint32_t frame_bytes = (uint32_t)width * height * 2;
+    if (frame_bytes == 0) return;
 
-		w25q_read_data(w25q_addr + done, chunk, to_read);
+    if (!s_video_ctx.active ||
+        s_video_ctx.x != x || s_video_ctx.y != y ||
+        s_video_ctx.width != width || s_video_ctx.height != height ||
+        s_video_ctx.start_addr != w25q_start_addr ||
+        s_video_ctx.end_addr != w25q_end_addr)
+    {
+        s_video_ctx.x = x;
+        s_video_ctx.y = y;
+        s_video_ctx.width = width;
+        s_video_ctx.height = height;
+        s_video_ctx.start_addr = w25q_start_addr;
+        s_video_ctx.end_addr = w25q_end_addr;
+        s_video_ctx.current_addr = w25q_start_addr;
+        s_video_ctx.frame_bytes = frame_bytes;
+        s_video_ctx.active = true;
+    }
 
-		uint32_t pixels = to_read / 2;
-		for (uint32_t p = 0; p < pixels; p++)
-		{
-			uint32_t g_idx = done / 2 + p;
-			uint16_t img_col = (uint16_t)(g_idx % (uint32_t)width);
-			uint16_t img_row = (uint16_t)(g_idx / (uint32_t)width);
-			uint16_t pixel_le = (uint16_t)chunk[p * 2 + 1] << 8 | chunk[p * 2];
-			lcd_write_ptr[(uint32_t)(y + img_row) * LCD_W + (uint32_t)(x + img_col)] =
-			    swap_uint16_builtin(pixel_le);
-		}
+    uint32_t done = 0;
+    while (done < s_video_ctx.frame_bytes)
+    {
+        uint8_t chunk[LCD_PIC_CHUNK_SIZE];
+        uint32_t to_read = s_video_ctx.frame_bytes - done;
+        if (to_read > LCD_PIC_CHUNK_SIZE)
+            to_read = LCD_PIC_CHUNK_SIZE;
+        w25q_fast_read_data_dma(s_video_ctx.current_addr + done, chunk, to_read);
+        while (w25q_dma_is_busy())
+            w25q_dma_task();
+        uint32_t pixels = to_read / 2;
+        for (uint32_t p = 0; p < pixels; p++)
+        {
+            uint32_t g_idx = done / 2 + p;
+            uint16_t img_col = (uint16_t)(g_idx % (uint32_t)s_video_ctx.width);
+            uint16_t img_row = (uint16_t)(g_idx / (uint32_t)s_video_ctx.width);
+            int16_t screen_x = s_video_ctx.x + img_col;
+            int16_t screen_y = s_video_ctx.y + img_row;
+            if (screen_x < 0 || screen_x >= LCD_W || screen_y < 0 || screen_y >= LCD_H)
+                continue;
+            uint16_t pixel_le = (uint16_t)chunk[p * 2 + 1] << 8 | chunk[p * 2];
+            lcd_write_ptr[(uint32_t)screen_y * LCD_W + (uint32_t)screen_x] =
+                swap_uint16_builtin(pixel_le);
+        }
+        done += to_read;
+    }
 
-		done += to_read;
-	}
+    s_video_ctx.current_addr += s_video_ctx.frame_bytes;
+    if (s_video_ctx.current_addr >= s_video_ctx.end_addr)
+        s_video_ctx.current_addr = s_video_ctx.start_addr;
 }
 
 #pragma endregion

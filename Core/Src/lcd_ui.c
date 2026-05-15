@@ -25,7 +25,10 @@ static lcd_label_t g_label3 = {12, 14, WHITE, BLACK, 8, "TEST"};
 static lcd_circle_t g_circle2 = {60, 58, 10, CYAN};
 static lcd_rect_t g_rect2 = {50, 24, 35, 30, MAGENTA};
 extern const uint16_t storage_kay[45 * 60]; // 来自main.c的图片数据RAM缓冲区
-static lcd_picture_t g_picture = {10, 10, 45, 60, storage_kay};
+const uint32_t img_addr = 108 * 4096 - 1; // 直接从W25Q读取图片数据的地址，验证读取和渲染流程是否正常
+static lcd_picture_t g_picture = {-10, -10, 45, 60, img_addr}; // 直接从W25Q读取图片数据并渲染到屏幕上，验证读取和渲染流程是否正常
+const uint32_t video_frame_addr = 112 * 4096 - 1; // 视频帧数据在W25Q中的地址
+static lcd_video_t g_video = {0, 0, 160, 80, video_frame_addr, video_frame_addr + 3276800}; // 直接从W25Q读取视频帧数据并渲染到屏幕上，验证读取和渲染流程是否正常
 
 #pragma endregion
 
@@ -36,15 +39,15 @@ void lcd_ui_init(void)
 
     #pragma region 添加元素到动画管理器
 
-    lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
-    lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
-    lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
-    lcd_anim_manager_add_layer(&g_circle, lcd_draw_circle_layer);
-    lcd_anim_manager_add_layer(&g_circle2, lcd_draw_circle_layer);
-    lcd_anim_manager_add_layer(&g_label2, lcd_draw_label_layer);
-    lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
-    lcd_anim_manager_add_layer(&g_label3, lcd_draw_label_layer);
-
+    // lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
+    // lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
+    // lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
+    // lcd_anim_manager_add_layer(&g_circle, lcd_draw_circle_layer);
+    // lcd_anim_manager_add_layer(&g_circle2, lcd_draw_circle_layer);
+    // lcd_anim_manager_add_layer(&g_label2, lcd_draw_label_layer);
+    // lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
+    // lcd_anim_manager_add_layer(&g_label3, lcd_draw_label_layer);
+    lcd_anim_manager_add_layer(&g_video, lcd_draw_video_frame_layer);
     #pragma endregion
 
     #pragma region 定义动画并启动(可选,不定义动画元素也会被正常渲染，但定义动画后元素会动起来)
