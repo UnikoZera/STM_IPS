@@ -14,8 +14,8 @@
 ../Core/Src/storage_manager.c:266:13:send_error	16	static
 ../Core/Src/storage_manager.c:271:13:send_continue	8	static
 ../Core/Src/storage_manager.c:283:13:flash_write_and_verify	32	static
-../Core/Src/storage_manager.c:328:13:process_host_command	96	static
-../Core/Src/storage_manager.c:652:13:storage_manager_process_host_byte	16	static
-../Core/Src/storage_manager.c:728:6:storage_manager_init	16	static
-../Core/Src/storage_manager.c:744:6:storage_manager_task	24	static
-../Core/Src/storage_manager.c:785:6:storage_is_downloading	4	static
+../Core/Src/storage_manager.c:338:13:process_host_command	96	static
+../Core/Src/storage_manager.c:662:13:storage_manager_process_host_byte	16	static
+../Core/Src/storage_manager.c:738:6:storage_manager_init	16	static
+../Core/Src/storage_manager.c:754:6:storage_manager_task	24	static
+../Core/Src/storage_manager.c:795:6:storage_is_downloading	4	static

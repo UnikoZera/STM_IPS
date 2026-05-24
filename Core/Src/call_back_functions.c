@@ -11,6 +11,8 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 {
     if (hspi == &hspi1)
     {
+        // 等待SPI完成最后一字节移位，防止LCD收到不完整数据导致白条
+        while (__HAL_SPI_GET_FLAG(hspi, SPI_FLAG_BSY) != RESET) {}
         LCD_CS_Set();
         lcd_dma_busy = false;
     }

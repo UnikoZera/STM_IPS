@@ -13,9 +13,9 @@
 ../Core/Src/storage_manager.c:262:20:erase_sector	1
 ../Core/Src/storage_manager.c:266:13:send_error	1
 ../Core/Src/storage_manager.c:271:13:send_continue	1
-../Core/Src/storage_manager.c:283:13:flash_write_and_verify	6
-../Core/Src/storage_manager.c:328:13:process_host_command	48
-../Core/Src/storage_manager.c:652:13:storage_manager_process_host_byte	13
-../Core/Src/storage_manager.c:728:6:storage_manager_init	3
-../Core/Src/storage_manager.c:744:6:storage_manager_task	6
-../Core/Src/storage_manager.c:785:6:storage_is_downloading	1
+../Core/Src/storage_manager.c:283:13:flash_write_and_verify	7
+../Core/Src/storage_manager.c:338:13:process_host_command	48
+../Core/Src/storage_manager.c:662:13:storage_manager_process_host_byte	13
+../Core/Src/storage_manager.c:738:6:storage_manager_init	3
+../Core/Src/storage_manager.c:754:6:storage_manager_task	6
+../Core/Src/storage_manager.c:795:6:storage_is_downloading	1

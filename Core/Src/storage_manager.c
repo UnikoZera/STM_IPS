@@ -304,10 +304,20 @@ static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t 
         // --- 拷贝数据到dma_write_buf ---
         memcpy(dma_write_buf, data, size);
 
-        // --- 写入W25Q（仅同步写入，SPI 2线模式下DMA TX会导致RX FIFO溢出丢数据） ---
-        w25q_write_data(addr, dma_write_buf, size);
+        // --- 写入W25Q（优先DMA，TransmitReceive_DMA解决RX FIFO溢出） ---
+        if (w25q_write_data_dma(addr, dma_write_buf, size))
+        {
+            // DMA 已启动，在后台运行，不等待也不验证
+            // 下一块的函数调用会在顶部等待DMA完成，实现flash编程与USB传输重叠
+            return true;
+        }
+        else
+        {
+            // DMA启动失败，回退同步写入+回读验证
+            w25q_write_data(addr, dma_write_buf, size);
+        }
 
-        // --- 回读验证 ---
+        // --- 回读验证（仅同步路径执行） ---
         // 使用 FastRead + dummy byte + 1ms 延时，确保时序稳定
         HAL_Delay(1);
         w25q_fast_read_data(addr, rx_buffer, size);
@@ -318,8 +328,8 @@ static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t 
         // --- 不匹配 ---
     }
 
-    // 验证失败但不抱错，允许传输继续
-    return false;
+
+    return false; // 多次重试后仍失败
 }
 #pragma endregion
 

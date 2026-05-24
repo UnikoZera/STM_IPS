@@ -715,6 +715,13 @@ void lcd_draw_video_frame_layer(void *ctx)
 		return;
 	}
 
+	// 下载时W25Q正在被DMA编程，读取会与SPI冲突导致白条
+	extern bool storage_is_downloading(void);
+	if (storage_is_downloading())
+	{
+		return;
+	}
+
 	lcd_dma_draw_video_frame(frame->x, frame->y, frame->width, frame->height, frame->start_addr, frame->end_addr);
 }
 
