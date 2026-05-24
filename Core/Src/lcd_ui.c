@@ -24,11 +24,10 @@ static lcd_label_t g_label2 = {12, 14, WHITE, BLACK, 8, "TEST"};
 static lcd_label_t g_label3 = {12, 14, WHITE, BLACK, 8, "TEST"};
 static lcd_circle_t g_circle2 = {60, 58, 10, CYAN};
 static lcd_rect_t g_rect2 = {50, 24, 35, 30, MAGENTA};
-extern const uint16_t storage_kay[45 * 60]; // 来自main.c的图片数据RAM缓冲区
-const uint32_t img_addr = 108 * 4096 - 1; // 直接从W25Q读取图片数据的地址，验证读取和渲染流程是否正常
-static lcd_picture_t g_picture = {-10, -10, 45, 60, img_addr}; // 直接从W25Q读取图片数据并渲染到屏幕上，验证读取和渲染流程是否正常
-const uint32_t video_frame_addr = 112 * 4096 - 1; // 视频帧数据在W25Q中的地址
-static lcd_video_t g_video = {0, 0, 160, 80, video_frame_addr, video_frame_addr + 3276800}; // 直接从W25Q读取视频帧数据并渲染到屏幕上，验证读取和渲染流程是否正常
+const uint32_t img_addr = 1720 * 4096; // 直接从W25Q读取图片数据的地址，验证读取和渲染流程是否正常
+static lcd_picture_t g_picture = {10, 10, 45, 60, img_addr}; // 直接从W25Q读取图片数据并渲染到屏幕上，验证读取和渲染流程是否正常
+const uint32_t video_frame_addr = 1722 * 4096; // 视频帧数据在W25Q中的地址
+static lcd_video_t g_video = {0, 0, 120, 80, video_frame_addr, video_frame_addr + 2457600}; // 直接从W25Q读取视频帧数据并渲染到屏幕上，验证读取和渲染流程是否正常
 
 #pragma endregion
 

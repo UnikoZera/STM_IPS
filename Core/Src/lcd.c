@@ -640,6 +640,7 @@ void lcd_draw_line_dma(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t 
 	}
 }
 
+// 注意这个函数需要ram地址的data参数，不能直接传入flash地址的图片数据，否则会因为访问权限问题导致硬件错误
 void lcd_draw_picture_dma(int16_t x, int16_t y, int16_t width, int16_t height, const uint16_t *data)
 {
     if (lcd_dma_busy) return;
@@ -664,6 +665,7 @@ void lcd_draw_picture_dma(int16_t x, int16_t y, int16_t width, int16_t height, c
     }
 }
 
+// 这个函数会分块从W25Q读取图片数据到RAM，然后再写入lcd_write_ptr，最后调用lcd_screen_update_dma()来刷新屏幕 (更加节省内存、但是会频繁调用W25Q的DMA读取函数，可能会有性能影响，适合大图片显示)
 void lcd_draw_picture_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t w25q_addr)
 {
     if (lcd_dma_busy) return;
