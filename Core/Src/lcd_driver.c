@@ -698,7 +698,7 @@ void lcd_draw_label_layer(void *ctx)
 void lcd_draw_picture_layer(void *ctx)
 {
 	lcd_picture_t *pic = (lcd_picture_t *)ctx;
-	if (pic == NULL || pic->addr == NULL)
+	if (pic == NULL || pic->addr == 0UL)
 	{
 		return;
 	}
@@ -709,7 +709,8 @@ void lcd_draw_picture_layer(void *ctx)
 void lcd_draw_video_frame_layer(void *ctx)
 {
 	lcd_video_t *frame = (lcd_video_t *)ctx;
-	if (frame == NULL || frame->start_addr == NULL || frame->end_addr == NULL || frame->end_addr <= frame->start_addr)
+	if (frame == NULL || frame->start_addr == 0UL || frame->end_addr == 0UL ||
+	    (uint32_t)frame->end_addr <= (uint32_t)frame->start_addr)
 	{
 		return;
 	}

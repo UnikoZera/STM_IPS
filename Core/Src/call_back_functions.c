@@ -9,13 +9,15 @@
 
 void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 {
-	if (hspi == &hspi1)
-	{
-		LCD_CS_Set();
-		lcd_dma_busy = false;
-	}
+    if (hspi == &hspi1)
+    {
+        LCD_CS_Set();
+        lcd_dma_busy = false;
+    }
     if (hspi == &hspi2)
     {
+        // 等待SPI完成最后一字节的移位输出，确保W25Q正确锁存数据
+        while (__HAL_SPI_GET_FLAG(hspi, SPI_FLAG_BSY) != RESET) {}
         W25Q_CS_HIGH();
         w25q_tx_dma_busy = false;
     }

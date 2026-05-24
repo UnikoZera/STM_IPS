@@ -498,7 +498,7 @@ select:hover,input:hover{border-color:var(--text3);}
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
           <span style="font-size:11px;color:var(--text2);white-space:nowrap;width:72px;flex-shrink:0;">数据块大小</span>
-          <input type="number" id="chunkSize" value="512" min="0" max="512" step="16" style="flex:1;" onchange="this.value=Math.max(0,Math.min(512,parseInt(this.value)||0))" oninput="this.value=Math.max(0,Math.min(512,parseInt(this.value)||0))">
+          <input type="number" id="chunkSize" value="512" min="0" max="2048" step="16" style="flex:1;" onchange="this.value=Math.max(0,Math.min(2048,parseInt(this.value)||0))" oninput="this.value=Math.max(0,Math.min(2048,parseInt(this.value)||0))">
           <span style="font-size:10px;color:var(--text3);flex-shrink:0;">字节</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -554,7 +554,7 @@ select:hover,input:hover{border-color:var(--text3);}
         <div style="margin-bottom:5px;display:flex;align-items:center;gap:10px;">
           <span style="font-size:10.5px;color:var(--text2);flex-shrink:0;">交换字节序</span>
           <label for="vpSwap" style="position:relative;display:inline-block;width:36px;height:20px;cursor:pointer;">
-            <input type="checkbox" id="vpSwap" style="position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;z-index:2;margin:0;">
+            <input type="checkbox" id="vpSwap" checked style="position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;z-index:2;margin:0;">
             <span id="vpSwapSlider" style="position:absolute;inset:0;background:var(--surface3);border-radius:10px;transition:all .3s;border:1px solid var(--border);pointer-events:none;"></span>
             <span id="vpSwapKnob" style="position:absolute;top:2px;left:2px;width:14px;height:14px;background:var(--text2);border-radius:50%;transition:all .3s;pointer-events:none;"></span>
           </label>
@@ -678,8 +678,8 @@ const LCD_W=160,LCD_H=80,LCD_TAIL=4,LCD_FRAME_SZ=LCD_W*LCD_H*2;
 const R_LCD=0xA0;
 const UH0=0xAA,UH1=0x55,UHS=5;
 const R_CONT=0xA1,R_ERR=0xE0;
-const ERRMSG={1:'CRC错误',2:'未知类型',3:'大文件区满',4:'小文件区满',5:'类型不匹配',6:'大文件扩展失败',7:'小文件扩展失败',8:'索引无效',9:'未知命令',10:'DMA失败'};
-const CHUNK_MAX=512, WRITE_TIMEOUT=8000, SEND_TIMEOUT=15000;
+const ERRMSG={1:'CRC错误',2:'未知类型',3:'大文件区满',4:'小文件区满',5:'类型不匹配',6:'大文件扩展失败',7:'小文件扩展失败',8:'索引无效',9:'未知命令',10:'DMA失败',11:'DMA等待超时',12:'写入验证失败'};
+const CHUNK_MAX=2048, WRITE_TIMEOUT=8000, SEND_TIMEOUT=15000;
 const ST_INIT=0, ST_SENDING=1, ST_WAIT_ACK=2, ST_DONE=3, ST_ERR=4;
 
 // ============= DOM refs =============
@@ -1065,7 +1065,7 @@ function setUI(state){
   else{elBtnSend.style.display='block';elBtnCancel.style.display='none';elBtnRetry.style.display='none';elBtnSend.disabled=true;elStatus.textContent='';elFileInfo.textContent='未选择文件';}
 }
 
-function chunkSz(){const v=parseInt(document.getElementById('chunkSize').value)||0;return v>0?Math.min(v,512):1;}
+function chunkSz(){const v=parseInt(document.getElementById('chunkSize').value)||0;return v>0?Math.min(v,2048):1;}
 function updateProg(pct,done,total){
   elProg.style.width=pct+'%';
   const r=Math.round(255*(1-pct/100)),g=Math.round(23*(1-pct/100)+230*(pct/100)),b=Math.round(68*(1-pct/100)+118*(pct/100));
@@ -1565,7 +1565,7 @@ function showVPResult(){
   pv.title = '点击查看大图';
 
   if(VP.frames.length > 0){
-    renderRGB565toCanvas(pv, VP.frames[0], r.width, r.height);
+    renderRGB565toCanvas(pv, VP.frames[0], r.width, r.height, r.endian === 'little');
   }
 
   pv.onclick = openVPDetail;
@@ -1594,7 +1594,7 @@ function openVPDetail(){
   cv.width = r.width;
   cv.height = r.height;
 
-  renderRGB565toCanvas(cv, VP.frames[0], r.width, r.height);
+  renderRGB565toCanvas(cv, VP.frames[0], r.width, r.height, r.endian === 'little');
   cv.style.aspectRatio = r.width+'/'+r.height;
 
   const ctrls = document.getElementById('vpDVideoCtrls');
@@ -1610,7 +1610,7 @@ function openVPDetail(){
     slider.oninput = function(){
       const idx = parseInt(this.value);
       VP.curFrame = idx;
-      renderRGB565toCanvas(cv, VP.frames[idx], r.width, r.height);
+      renderRGB565toCanvas(cv, VP.frames[idx], r.width, r.height, r.endian === 'little');
       finfo.textContent = (idx+1)+' / '+nf;
     };
     pbtn.disabled = false;
@@ -1701,20 +1701,21 @@ function toggleVPPlay(){
 
   vpDTimer = setInterval(function(){
     VP.curFrame = (VP.curFrame + 1) % nf;
-    renderRGB565toCanvas(cv, VP.frames[VP.curFrame], r.width, r.height);
+    renderRGB565toCanvas(cv, VP.frames[VP.curFrame], r.width, r.height, r.endian === 'little');
     slider.value = VP.curFrame;
     finfo.textContent = (VP.curFrame+1)+' / '+nf;
   }, interval);
 }
 
-function renderRGB565toCanvas(canvas, data, w, h){
+function renderRGB565toCanvas(canvas, data, w, h, littleEndian){
   const ctx = canvas.getContext('2d');
   if(!ctx) return;
   const img = ctx.createImageData(w, h);
   const d = img.data;
   for(let i=0; i<w*h; i++){
-    const hi = i*2, lo = hi+1;
-    const c = (data[hi]<<8) | data[lo];
+    const b0 = data[i*2], b1 = data[i*2+1];
+    // littleEndian=true: b1=high, b0=low; false: b0=high, b1=low
+    const c = littleEndian ? (b1<<8) | b0 : (b0<<8) | b1;
     d[i*4]   = ((c>>11)&0x1F)*255/31;
     d[i*4+1] = ((c>>5)&0x3F)*255/63;
     d[i*4+2] = (c&0x1F)*255/31;

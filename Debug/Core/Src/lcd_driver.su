@@ -38,6 +38,6 @@
 ../Core/Src/lcd_driver.c:692:6:lcd_draw_label_layer	24	static
 ../Core/Src/lcd_driver.c:698:6:lcd_draw_picture_layer	40	static
 ../Core/Src/lcd_driver.c:709:6:lcd_draw_video_frame_layer	40	static
-../Core/Src/lcd_driver.c:724:6:lcd_anim_exec_set_i16	16	static
-../Core/Src/lcd_driver.c:743:6:lcd_anim_exec_set_u16	16	static
-../Core/Src/lcd_driver.c:762:6:lcd_anim_exec_set_u8	16	static
+../Core/Src/lcd_driver.c:725:6:lcd_anim_exec_set_i16	16	static
+../Core/Src/lcd_driver.c:744:6:lcd_anim_exec_set_u16	16	static
+../Core/Src/lcd_driver.c:763:6:lcd_anim_exec_set_u8	16	static

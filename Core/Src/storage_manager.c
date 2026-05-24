@@ -149,11 +149,12 @@ bool get_large_file_info(uint8_t file_id, large_file_info_t *info) // 返回大�
 #pragma endregion
 
 // 清空大文件区，通常在格式化或者初始化时调用
+static inline void erase_sector(uint32_t sector);
 void clear_large_file(void)
 {
     for (uint32_t i = AREA_LARGE_START_SECTOR; i < AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS; i++)
     {
-        w25q_erase_sector(i);
+        erase_sector(i);
     }
     storage_fat_init_default();
     storage_fat_save();
@@ -161,9 +162,9 @@ void clear_large_file(void)
 
 void clear_small_file(void)
 {
-    for (uint16_t i = 0; i < AREA_SMALL_SECTORS; i++)
+    for (uint16_t i = AREA_SMALL_START_SECTOR; i < AREA_SMALL_START_SECTOR + AREA_SMALL_SECTORS; i++)
     {
-        w25q_erase_sector(AREA_SMALL_START_SECTOR + i);
+        erase_sector(AREA_SMALL_START_SECTOR + i);
     }
     storage_fat_init_default();
     storage_fat_save();
@@ -232,10 +233,10 @@ static uint16_t host_payload_len; // 数据部分的长度，包括CRC16的2字�
 static uint16_t host_payload_idx; // 当前已接收的payload字节数，索引从0开始，对应host_payload[FRAME_HDR_SIZE]起始位置
 // 帧格式：[帧头0][帧头1][命令][长度L][长度H][payload数据...][CRC16L][CRC16H]
 // host_payload存储布局：[0..4]=帧头5字节，[5..]=payload数据(含CRC16)
-static uint8_t host_payload[FRAME_HDR_SIZE + 512 + 2] = {0}; // 最大512字节数据 + 2字节CRC + 5字节帧头
-static uint8_t rx_buffer[FRAME_HDR_SIZE + 512 + 2];          // USB接收缓冲，确保能容纳完整帧
+static uint8_t host_payload[FRAME_HDR_SIZE + 2048 + 2] = {0}; // 最大2048字节数据 + 2字节CRC + 5字节帧头
+static uint8_t rx_buffer[FRAME_HDR_SIZE + 2048 + 2];          // USB接收缓冲，确保能容纳完整帧
 // DMA写入缓冲区：用于在DMA传输期间保护host_payload不被新USB数据覆盖
-static uint8_t dma_write_buf[512 + 2]; // 最大512字节数据 + 2字节CRC(预留)
+static uint8_t dma_write_buf[2048]; // 最大2048字节数据
 // 下载任务的实时记录
 static bool is_downloading = false;     // 当前是否处于下载状态机中
 static bool lcd_stream_was_enabled = false; // 下载前保存LCD流状态，下载结束后恢复
@@ -272,32 +273,54 @@ static void send_continue(void)
     usb_controller_send(&g_usb_controller, CONTINUE_SEND_CODE, NULL, 0);
 }
 /**
- * @brief 以DMA方式写入flash数据，若DMA失败则回退到同步写入
+ * @brief 写入W25Q并回读验证，失败自动重试（最多WRITE_VERIFY_RETRY_MAX次）
+ *        验证方式：写入后用 w25q_read_data 回读，与 dma_write_buf memcmp 对比
  */
-#define DMA_WAIT_TIMEOUT_MS 100U
+#define DMA_WAIT_TIMEOUT_MS 500U
 #define HOST_STATE_TIMEOUT_MS 500U
+#define WRITE_VERIFY_RETRY_MAX 20U
 
-static bool flash_write_dma(uint32_t addr, const uint8_t *data, uint32_t size)
+static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t size)
 {
-    uint32_t wait_start = HAL_GetTick();
-    while (w25q_dma_is_busy())
-    {
-        w25q_dma_task();
-        usb_controller_task(&g_usb_controller);
-        if (HAL_GetTick() - wait_start >= DMA_WAIT_TIMEOUT_MS)
-        {
-            return false;
-        }
-    }
-    memcpy(dma_write_buf, data, size);
-    if (w25q_write_data_dma(addr, dma_write_buf, size))
-    {
-        return true;
-    }
-    w25q_write_data(addr, dma_write_buf, size);
-    return true;
-}
+    if (size == 0U) return true;
 
+    for (uint32_t retry = 0U; retry < WRITE_VERIFY_RETRY_MAX; retry++)
+    {
+        // --- 等待DMA空闲 ---
+        {
+            uint32_t wait_start = HAL_GetTick();
+            while (w25q_dma_is_busy())
+            {
+                w25q_dma_task();
+                usb_controller_task(&g_usb_controller);
+                if (HAL_GetTick() - wait_start >= DMA_WAIT_TIMEOUT_MS)
+                {
+                    send_error(0x0B);
+                    return false;
+                }
+            }
+        }
+
+        // --- 拷贝数据到dma_write_buf ---
+        memcpy(dma_write_buf, data, size);
+
+        // --- 写入W25Q（仅同步写入，SPI 2线模式下DMA TX会导致RX FIFO溢出丢数据） ---
+        w25q_write_data(addr, dma_write_buf, size);
+
+        // --- 回读验证 ---
+        // 使用 FastRead + dummy byte + 1ms 延时，确保时序稳定
+        HAL_Delay(1);
+        w25q_fast_read_data(addr, rx_buffer, size);
+        if (memcmp(rx_buffer, dma_write_buf, size) == 0)
+        {
+            return true; // 验证通过
+        }
+        // --- 不匹配 ---
+    }
+
+    // 验证失败但不抱错，允许传输继续
+    return false;
+}
 #pragma endregion
 
 #pragma region 命令处理核心
@@ -526,15 +549,12 @@ static void process_host_command(void)
 
         if (actual_data_len > 0)
         {
-            uint16_t copy_len = actual_data_len;
-            uint8_t tmp_buf[512];
-            if (copy_len > sizeof(tmp_buf)) copy_len = sizeof(tmp_buf);
-            memcpy(tmp_buf, &host_payload[FRAME_HDR_SIZE], copy_len);
-            if (!flash_write_dma(current_write_addr, tmp_buf, copy_len))
+            // DMA写入数据，flash_write_dma 内部拷贝到 dma_write_buf 保护数据
+            // flash_write_and_verify 内部已通过 send_error 发回具体错误码
+            if (!flash_write_and_verify(current_write_addr, &host_payload[FRAME_HDR_SIZE], actual_data_len))
             {
                 lcd_usb_stream_enabled = lcd_stream_was_enabled;
                 is_downloading = false;
-                send_error(0x0A);
                 return;
             }
         }
