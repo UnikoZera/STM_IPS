@@ -96,6 +96,8 @@ void lcd_set_area_color(int16_t start_x, int16_t start_y, int16_t end_x, int16_t
 void lcd_draw_picture_dma(int16_t x, int16_t y, int16_t width, int16_t height, const uint16_t *data);
 void lcd_draw_picture_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t w25q_addr);
 void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t w25q_start_addr, uint32_t w25q_end_addr);
+void lcd_play_compressed_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t w25q_start_addr, uint32_t w25q_end_addr);
+
 
 extern volatile bool lcd_dma_busy;
 extern volatile bool lcd_usb_stream_enabled;

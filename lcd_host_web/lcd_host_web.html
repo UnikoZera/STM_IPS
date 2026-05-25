@@ -565,6 +565,18 @@ select:hover,input:hover{border-color:var(--text3);}
           <input type="range" id="vpBrightness" min="10" max="300" value="100" style="flex:1;accent-color:var(--gold);">
           <span id="vpBrightnessLabel" style="font-size:11px;color:var(--gold);font-weight:600;min-width:36px;text-align:right;">100%</span>
         </div>
+        <!-- 压缩质量 -->
+        <div style="margin-bottom:5px;display:flex;align-items:center;gap:10px;">
+          <span style="font-size:10.5px;color:var(--text2);flex-shrink:0;">压缩质量</span>
+          <select id="vpQuality" style="flex:1;padding:7px 9px;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);outline:none;">
+            <option value="11" selected>无损 (不压缩)</option>
+            <option value="10">极高画质 (2x2块)</option>
+            <option value="9">高画质 (4x2块)</option>
+            <option value="7">中画质 (4x4块)</option>
+
+          </select>
+          <span style="font-size:9px;color:var(--text3);flex-shrink:0;">画质越高质量体积越大</span>
+        </div>
         <button class="btn btn-retry file-upload" id="btnPickVP">
           &#128206; 选择文件（图片/MP4）
           <input type="file" id="vpFileInput" accept="image/*,.mp4" onchange="onVPFileSelected(this)">
@@ -580,6 +592,7 @@ select:hover,input:hover{border-color:var(--text3);}
         <div id="vpResult" style="display:none;margin-top:6px;padding:8px;background:rgba(0,230,118,.04);border:1px solid rgba(0,230,118,.2);border-radius:var(--rad-sm);">
           <div style="font-size:10.5px;color:var(--green);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:4px;">&#10003; 转换完成</div>
           <div id="vpResultInfo" style="font-size:11px;color:var(--text2);margin-bottom:6px;"></div>
+          <div id="vpCompressStats" style="font-size:10px;color:var(--text2);margin-bottom:6px;padding:5px 7px;background:rgba(0,188,212,.03);border-radius:4px;text-align:center;"></div>
           <canvas id="vpPreview" width="160" height="80" style="width:100%;border:1px solid var(--border);border-radius:var(--rad-sm);image-rendering:pixelated;margin-bottom:6px;"></canvas>
           <div class="btn-row" id="vpBtnRow">
             <button class="btn btn-query" id="vpDownload" onclick="downloadVPResult()" style="font-size:11px;">&#128229; 下载</button>
@@ -645,6 +658,7 @@ select:hover,input:hover{border-color:var(--text3);}
       <span class="modal-title" id="vpDTitle">&#128249; 预览</span>
       <button class="modal-close" onclick="closeVPDetail()">&times;</button>
     </div>
+    <div id="vpDCompInfo" style="font-size:10px;color:var(--text2);padding:4px 12px;text-align:center;background:rgba(0,188,212,.02);border-bottom:1px solid var(--border);"></div>
     <div class="modal-body" style="text-align:center;">
       <div id="vpDResizer" style="background:#000;border-radius:var(--rad-sm);display:inline-block;overflow:hidden;min-width:80px;cursor:ew-resize;line-height:0;position:relative;user-select:none;">
         <canvas id="vpDCanvas" style="display:block;width:100%;height:auto;border:none;image-rendering:pixelated;background:#000;pointer-events:none;"></canvas>
@@ -1288,6 +1302,7 @@ function saveAllSettings(){
     vpWidth:document.getElementById('vpWidth').value,
     vpHt:document.getElementById('vpHt').value,
     vpFps:document.getElementById('vpFps').value,
+    vpQuality:document.getElementById('vpQuality').value,
     vpBrightness:document.getElementById('vpBrightness').value
   };
   try{localStorage.setItem(SET_KEY,JSON.stringify(s));}catch(e){}
@@ -1308,13 +1323,15 @@ function loadAllSettings(){
     if(s.vpFps)document.getElementById('vpFps').value=s.vpFps;
     if(s.vpBrightness){
       document.getElementById('vpBrightness').value=s.vpBrightness;
+    if(s.vpQuality)document.getElementById('vpQuality').value=s.vpQuality;
+    else document.getElementById('vpQuality').value='11';
       const lbl=document.getElementById('vpBrightnessLabel');
       if(lbl) lbl.textContent=s.vpBrightness+'%';
     }
     updateNBC();
   }catch(e){}
 }
-['baudRate','chunkSize','fileType','vpWidth','vpHt','vpFps','vpBrightness'].forEach(function(id){
+['baudRate','chunkSize','fileType','vpWidth','vpHt','vpFps','vpQuality','vpBrightness'].forEach(function(id){
   const el=document.getElementById(id);
   if(el) el.addEventListener('change',saveAllSettings);
 });
@@ -1442,6 +1459,7 @@ async function startVPProcess(){
   form.append('fps', fps);
   form.append('swap', document.getElementById('vpSwap').checked ? '1' : '0');
   form.append('brightness', parseInt(document.getElementById('vpBrightness').value) || 100);
+  form.append('quality', parseInt(document.getElementById('vpQuality').value) || 8);
 
   const SERVER = VP_SERVER;
 
@@ -1548,9 +1566,31 @@ function showVPResult(){
   const isVid = r.type === 'video';
   const totalBytes = r.frame_count * r.frame_size;
   const totalKB = (totalBytes / 1024).toFixed(1);
-  let info = '分辨率: '+r.width+'x'+r.height+' | 帧数: '+r.frame_count+' | 总计: '+totalKB+' KB' + (r.endian ? ' | 字节序: '+r.endian : '');
+  let info = '分辨率: '+r.width+'x'+r.height+' | 帧数: '+r.frame_count+' | 原始: '+totalKB+' KB' + (r.endian ? ' | '+r.endian : '');
   if(isVid && r.fps) info += ' | FPS: '+r.fps.toFixed(1);
   $vp('ResultInfo').textContent = info;
+
+  // show compression stats
+  // rebuild frames from compressed data to show compressed quality
+  if (r.compressed_hex) {
+    rebuildVPFramesFromCompressed();
+  }
+  if(r.compressed_hex){
+    const compBytes = r.compressed_hex.length / 2;
+    const ratio = totalBytes / compBytes;
+    const qs = r.quality || 'N/A';
+    $vp('CompressStats').innerHTML =
+      '<span style="color:var(--gold);">\u21BB BL块压缩</span> ' +
+      '<span style="color:var(--text2);">| 质量:'+qs+' |</span> ' +
+      '<span style="color:var(--cyan);">压缩后:'+compBytes+' B</span> ' +
+      '<span style="color:var(--text2);">|</span> ' +
+      '<span style="color:var(--green);">比率:'+ratio.toFixed(2)+':1</span>';
+    $vp('CompressStats').style.display = 'block';
+  } else {
+    $vp('CompressStats').innerHTML =
+      '<span style="color:var(--text2);">\u25CB 无损: 1:1</span>';
+    $vp('CompressStats').style.display = 'block';
+  }
 
   $vp('Result').style.display = 'block';
   $vp('Process').style.display = 'block';
@@ -1601,6 +1641,20 @@ function openVPDetail(){
   const slider = document.getElementById('vpDSlider');
   const finfo = document.getElementById('vpDFrameInfo');
   const pbtn = document.getElementById('vpDPlayBtn');
+
+  // show compressed size info in modal
+  var compInfo = document.getElementById('vpDCompInfo');
+  if (compInfo) {
+    var rawBytes = r.frame_count * r.frame_size;
+    if (r.compressed_hex) {
+      var compBytes = r.compressed_hex.length / 2;
+      var ratio = (rawBytes / compBytes).toFixed(2);
+      compInfo.innerHTML = '原始:'+rawBytes+'B | 压缩后:'+compBytes+'B | 比率:'+ratio+':1';
+    } else {
+      compInfo.innerHTML = '原始:'+rawBytes+'B | 未压缩 (无损)';
+    }
+    compInfo.style.display = 'block';
+  }
 
   if(isVid){
     ctrls.style.display = 'block';
@@ -1724,6 +1778,99 @@ function renderRGB565toCanvas(canvas, data, w, h, littleEndian){
   ctx.putImageData(img, 0, 0);
 }
 
+/**
+ * JavaScript BL decompressor: decompress BL compressed data for preview
+ * @param {string} hex - compressed hex string
+ * @param {number} w, h - image dimensions
+ * @param {number} lvl - block level (1=2x2, 2=4x4, 3=8x4)
+ * @returns {Uint8Array} raw RGB565 bytes
+ */
+function blDecompress(hex, w, h, lvl) {
+  const raw = hexToBytes(hex);
+  if (raw[0] !== 0x42 || raw[1] !== 0x4C) return hexToBytes(hex); // not BL
+  if (lvl === 0) return raw.slice(6);  // raw: skip 6B header
+  var bw, bh, npix, bmBytes;
+  if (lvl === 1) { bw=2; bh=2; npix=4;  bmBytes=1; }
+  else if (lvl === 4) { bw=4; bh=2; npix=8;  bmBytes=2; }
+  else if (lvl === 3) { bw=8; bh=4; npix=32; bmBytes=8; }
+  else { bw=4; bh=4; npix=16; bmBytes=4; }
+
+  var blkBytes = 4 + bmBytes;
+  var bxc = Math.ceil(w / bw);
+  var byc = Math.ceil(h / bh);
+  var out = new Uint8Array(w * h * 2);
+  var off = 6;
+
+  for (var by = 0; by < byc; by++) {
+    for (var bx = 0; bx < bxc; bx++) {
+      var c0h = raw[off], c0l = raw[off+1];
+      var c1h = raw[off+2], c1l = raw[off+3];
+      // interpolate c2, c3
+      var c0v = (c0h << 8) | c0l, c1v = (c1h << 8) | c1l;
+      var c0r = (c0v>>11)&0x1F, c0g = (c0v>>5)&0x3F, c0b = c0v&0x1F;
+      var c1r = (c1v>>11)&0x1F, c1g = (c1v>>5)&0x3F, c1b = c1v&0x1F;
+      var c2v = (((c0r*2+c1r)/3)<<11)|(((c0g*2+c1g)/3)<<5)|((c0b*2+c1b)/3);
+      var c3v = (((c0r+c1r*2)/3)<<11)|(((c0g+c1g*2)/3)<<5)|((c0b+c1b*2)/3);
+      var palH = [c0h, c1h, (c2v>>8)&0xFF, (c3v>>8)&0xFF];
+      var palL = [c0l, c1l, c2v&0xFF, c3v&0xFF];
+
+      var idxs = 0;
+      for (var b = 0; b < bmBytes; b++)
+        idxs = (idxs << 8) | raw[off + 4 + b];
+      off += blkBytes;
+
+      for (var pi = 0; pi < npix; pi++) {
+        var px = bx * bw + (pi % bw);
+        var py = by * bh + Math.floor(pi / bw);
+        if (px >= w || py >= h) continue;
+        var ci = (idxs >> (2 * (npix - 1 - pi))) & 3;
+        var idx = (py * w + px) * 2;
+        out[idx] = palH[ci]; out[idx+1] = palL[ci];
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Rebuild VP.frames from compressed data for preview
+ */
+function rebuildVPFramesFromCompressed() {
+  var r = VP.result;
+  if (!r || !r.compressed_hex) return;
+  var raw = hexToBytes(r.compressed_hex);
+  var w = r.width, h = r.height;
+  VP.frames = [];
+  var pos = 0;
+  for (var i = 0; i < r.frame_count && pos < raw.length; i++) {
+    var fLvl = raw[pos + 4];
+    var frameB;
+    if (fLvl === 0) {
+      frameB = 6 + w * h * 2;  // raw: 6B header + raw pixels
+    } else {
+      var bw = fLvl == 1 ? 2 : (fLvl == 4 ? 4 : (fLvl == 3 ? 8 : 4));
+      var bh = (fLvl == 1 || fLvl == 4) ? 2 : 4;
+      var npix = bw * bh;
+      var bmB = Math.ceil(npix / 4);  // 2-bit per pixel = npix*2/8 = npix/4
+      var blkB = 4 + bmB;
+      var bxc = Math.ceil(w / bw);
+      var byc = Math.ceil(h / bh);
+      frameB = 6 + bxc * byc * blkB;
+    }
+
+    var hex = r.compressed_hex.substr(pos * 2, frameB * 2);
+    var frame = blDecompress(hex, w, h, fLvl);
+    // compressed data is always BE; swap to LE if original was LE for correct preview
+    if (r.endian === 'little') {
+      for (var j = 0; j < frame.length; j += 2) {
+        var t = frame[j]; frame[j] = frame[j+1]; frame[j+1] = t;
+      }
+    }
+    VP.frames.push(frame);
+    pos += frameB;
+  }
+}
+
 async function downloadVPResult(){
   const r = VP.result;
   if(!r || (!r.hex && !r.download_id)){ toast('没有数据','error'); return; }
@@ -1776,9 +1923,9 @@ async function downloadVPResult(){
 async function sendVPToDevice(){
   if(!port){ toast('请先连接串口','error'); return; }
   const r = VP.result;
-  if(!r || !r.hex){ toast('没有数据','error'); return; }
+  if(!r || (!r.compressed_hex && !r.hex)){ toast('没有数据','error'); return; }
 
-  const raw = hexToBytes(r.hex);
+  const raw = hexToBytes(r.compressed_hex || r.hex);
   const blob = new Blob([raw]);
   const fakeFile = new File([blob], (VP.file ? VP.file.name.replace(/\.[^.]+$/,'') : 'st7735') + '.bin', {type:'application/octet-stream'});
 

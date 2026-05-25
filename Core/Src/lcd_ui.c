@@ -10,6 +10,7 @@
 #include "lcd_ui.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "math.h"
 #include "w25q_controller.h"
 #include "storage_manager.h"
@@ -24,10 +25,8 @@ static lcd_label_t g_label2 = {12, 14, WHITE, BLACK, 8, "TEST"};
 static lcd_label_t g_label3 = {12, 14, WHITE, BLACK, 8, "TEST"};
 static lcd_circle_t g_circle2 = {60, 58, 10, CYAN};
 static lcd_rect_t g_rect2 = {50, 24, 35, 30, MAGENTA};
-const uint32_t img_addr = 1720 * 4096; // 直接从W25Q读取图片数据的地址，验证读取和渲染流程是否正常
-static lcd_picture_t g_picture = {10, 10, 45, 60, img_addr}; // 直接从W25Q读取图片数据并渲染到屏幕上，验证读取和渲染流程是否正常
-const uint32_t video_frame_addr = 64 * 4096; // 视频帧数据在W25Q中的地址
-static lcd_video_t g_video = {10, 0, 120, 80, video_frame_addr, video_frame_addr + 2457600}; // 直接从W25Q读取视频帧数据并渲染到屏幕上，验证读取和渲染流程是否正常
+static lcd_picture_t g_picture = {0};
+static lcd_video_t g_video = {0};
 
 #pragma endregion
 
@@ -36,9 +35,43 @@ void lcd_ui_init(void)
     lcd_anim_manager_init();
     lcd_anim_manager_set_bg(BLACK);
 
+    // 从文件系统获取图片文件的W25Q地址
+    {
+        int16_t idx = find_large_file_by_name("pic");
+        if (idx >= 0)
+        {
+            large_file_info_t info;
+            if (get_large_file_info((uint8_t)idx, &info))
+            {
+                g_picture.x = 10;
+                g_picture.y = 10;
+                g_picture.width = 45;
+                g_picture.height = 60;
+                g_picture.addr = info.start_sector * 4096;
+            }
+        }
+    }
+
+    // 从文件系统获取视频文件的W25Q地址
+    {
+        int16_t idx = find_large_file_by_name("extreme");
+        if (idx >= 0)
+        {
+            large_file_info_t info;
+            if (get_large_file_info((uint8_t)idx, &info))
+            {
+                g_video.x = 10;
+                g_video.y = 0;
+                g_video.width = 120;
+                g_video.height = 80;
+                g_video.start_addr = info.start_sector * 4096;
+                g_video.end_addr = g_video.start_addr + info.size;
+            }
+        }
+    }
+
     #pragma region 添加元素到动画管理器
 
-    // lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
     // lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
     // lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
     // lcd_anim_manager_add_layer(&g_circle, lcd_draw_circle_layer);
@@ -46,7 +79,8 @@ void lcd_ui_init(void)
     // lcd_anim_manager_add_layer(&g_label2, lcd_draw_label_layer);
     // lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
     // lcd_anim_manager_add_layer(&g_label3, lcd_draw_label_layer);
-    lcd_anim_manager_add_layer(&g_video, lcd_draw_video_frame_layer);
+    lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
+    // lcd_anim_manager_add_layer(&g_video, lcd_draw_video_frame_layer);
     #pragma endregion
 
     #pragma region 定义动画并启动(可选,不定义动画元素也会被正常渲染，但定义动画后元素会动起来)
@@ -209,7 +243,8 @@ void lcd_ui_change(void)
 
     lcd_calculate_fps();
 }
-
+// static uint8_t str_buf[128];
+// static uint8_t str_buf2[128];
 /**
  * @brief 调用这个函数来更新UI，通常在主循环里调用。它会处理动画状态并重新渲染UI。
  * @attention 先更新tasker再render，确保动画状态被正确更新后再渲染到屏幕上。
@@ -217,6 +252,10 @@ void lcd_ui_change(void)
  */
 void lcd_ui_updater(void)
 {
+    // sprintf(str_buf, "addr:%08d", g_video.start_addr);
+    // sprintf(str_buf2, "end:%08d", g_video.end_addr);
+    // lcd_draw_string(0, 30 , WHITE, BLACK, 8, str_buf);
+    // lcd_draw_string(0, 50 , WHITE, BLACK, 8, str_buf2);
     lcd_ui_change();            // 这个是更新UI状态的，你可以在这个函数里修改元素属性来改变UI显示的内容和样式
     lcd_anim_manager_task();    // 这个是更新动画管理器的状态，计算动画进度并调用exec_cb更新元素属性的
     lcd_anim_manager_render();  // 这个是更新屏幕ui渲染状态的

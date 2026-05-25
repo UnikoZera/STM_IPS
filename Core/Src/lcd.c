@@ -640,7 +640,7 @@ void lcd_draw_line_dma(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t 
 	}
 }
 
-// 注意这个函数需要ram地址的data参数，不能直接传入flash地址的图片数据，否则会因为访问权限问题导致硬件错误
+// 注意这个函数需要ram地址的data参数，不能直接传入flash地址的图片数据，否则会因为访问权限问题导致硬件错误(需要先把flash地址的数据读到ram中，再传入这个函数) //!(not used anymore, but keep it here for reference)
 void lcd_draw_picture_dma(int16_t x, int16_t y, int16_t width, int16_t height, const uint16_t *data)
 {
     if (lcd_dma_busy) return;
@@ -691,14 +691,14 @@ void lcd_draw_picture_from_w25q(int16_t x, int16_t y, int16_t width, int16_t hei
             if (screen_x < 0 || screen_x >= LCD_W || screen_y < 0 || screen_y >= LCD_H)
                 continue;
             uint16_t pixel_le = (uint16_t)chunk[p * 2 + 1] << 8 | chunk[p * 2];
-            lcd_write_ptr[(uint32_t)screen_y * LCD_W + (uint32_t)screen_x] =
-                swap_uint16_builtin(pixel_le);
+            lcd_write_ptr[(uint32_t)screen_y * LCD_W + (uint32_t)screen_x] = pixel_le; //
+                // swap_uint16_builtin(pixel_le);
         }
         done += to_read;
     }
 }
 
-static struct {
+static struct video_ctx_t {
     bool active;
     int16_t x, y;
     int16_t width, height;
@@ -706,11 +706,32 @@ static struct {
     uint32_t end_addr;
     uint32_t current_addr;
     uint32_t frame_bytes;
+    // compressed format fields
+    uint32_t compressed_frame_addr; // current read position in compressed stream
+    uint8_t bpp;                    // 0=raw, 4/8/16=compressed
+    uint8_t rle_chunk[256];         // rle read buffer
+    uint16_t rle_chunk_len;
+    uint16_t rle_chunk_pos;
 } s_video_ctx = {0};
+
+#define BL_MAGIC0 'B'
+#define BL_MAGIC1 'L'
 
 void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t w25q_start_addr, uint32_t w25q_end_addr)
 {
     if (lcd_dma_busy) return;
+
+    /* auto-detect BL compressed data and redirect */
+    {
+        uint8_t m[2];
+        w25q_fast_read_data_dma(w25q_start_addr, m, 2);
+        while (w25q_dma_is_busy()) w25q_dma_task();
+        if (m[0] == BL_MAGIC0 && m[1] == BL_MAGIC1)
+        {
+            lcd_play_compressed_video_from_w25q(x, y, width, height, w25q_start_addr, w25q_end_addr);
+            return;
+        }
+    }
 
     uint32_t frame_bytes = (uint32_t)width * height * 2;
     if (frame_bytes == 0) return;
@@ -762,6 +783,252 @@ void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t heigh
     s_video_ctx.current_addr += s_video_ctx.frame_bytes;
     if (s_video_ctx.current_addr >= s_video_ctx.end_addr)
         s_video_ctx.current_addr = s_video_ctx.start_addr;
+}
+
+#pragma endregion
+
+#pragma region 压缩视频解码 (BL块格式)
+
+/* BL_MAGIC0/1 and BLOCK_SIZE defined above */
+#define BLOCK_SIZE 4
+
+/**
+ * @brief DMA缓冲读取6B BL块，带自动回填
+ */
+static inline void bl_read_block(uint32_t *addr, uint32_t limit,
+                                  uint8_t out[6])
+{
+    while (s_video_ctx.rle_chunk_pos >= s_video_ctx.rle_chunk_len)
+    {
+        uint32_t remaining = limit - *addr;
+        if (remaining == 0) return;
+        uint32_t to_read = remaining > sizeof(s_video_ctx.rle_chunk)
+                               ? sizeof(s_video_ctx.rle_chunk) : remaining;
+        if (to_read < 6) to_read = 6;
+        w25q_fast_read_data_dma(*addr, s_video_ctx.rle_chunk, to_read);
+        while (w25q_dma_is_busy())
+            w25q_dma_task();
+        s_video_ctx.rle_chunk_len = (uint16_t)to_read;
+        s_video_ctx.rle_chunk_pos = 0;
+    }
+    for (int i = 0; i < 6; i++)
+        out[i] = s_video_ctx.rle_chunk[s_video_ctx.rle_chunk_pos++];
+    *addr += 6;
+}
+
+static inline void bl_read_block_var(uint32_t *addr, uint32_t limit,
+                                      uint8_t out[], int blk_bytes)
+{
+    if (s_video_ctx.rle_chunk_pos + blk_bytes > s_video_ctx.rle_chunk_len)
+    {
+        uint32_t remaining = limit - *addr;
+        uint32_t to_read = remaining > 64 ? 64 : remaining;
+        if (to_read < (uint32_t)blk_bytes) to_read = (uint32_t)blk_bytes;
+        if (remaining == 0) return;
+        w25q_fast_read_data_dma(*addr, s_video_ctx.rle_chunk, to_read);
+        while (w25q_dma_is_busy())
+            w25q_dma_task();
+        s_video_ctx.rle_chunk_len = (uint16_t)to_read;
+        s_video_ctx.rle_chunk_pos = 0;
+    }
+    for (int i = 0; i < blk_bytes; i++)
+        out[i] = s_video_ctx.rle_chunk[s_video_ctx.rle_chunk_pos++];
+    *addr += blk_bytes;
+}
+
+/**
+ * @brief 写入RGB565像素(大端)到LCD写缓冲区
+ */
+static inline void bl_put_pixel(int16_t x, int16_t y,
+                                 int16_t img_x, int16_t img_y,
+                                 uint8_t hi, uint8_t lo,
+                                 uint32_t *done)
+{
+    int16_t sx = x + img_x;
+    int16_t sy = y + img_y;
+    if (sx >= 0 && sx < LCD_W && sy >= 0 && sy < LCD_H)
+    {
+        /* Store pixel in LE memory order for 8-bit SPI DMA.
+         * Palette format in W25Q: [hi, lo] (big-endian RGB565).
+         * DMA sends LE bytes, so (lo<<8)|hi gives LE bytes[hi, lo]
+         * -> wire: hi, lo -> ST7735: (hi<<8)|lo, matching fill_screen. */
+        uint16_t px_le = (uint16_t)(lo << 8) | hi;
+        lcd_write_ptr[(uint32_t)sy * LCD_W + (uint32_t)sx] =
+            px_le;
+    }
+    (*done)++;
+}
+
+/**
+ * @brief 从W25Q播放BL格式压缩视频/图片
+ *
+ * 数据格式: [6B header] + [block数据]
+ * 每个block: color0(2B) + color1(2B) + bitmap(2B) = 6B, 16像素
+ * 视频多帧连续拼接, 按像素计数分割帧边界。
+ */
+void lcd_play_compressed_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height,
+                                          uint32_t w25q_start_addr, uint32_t w25q_end_addr)
+{
+    if (lcd_dma_busy) return;
+
+    uint32_t frame_pixels = (uint32_t)width * height;
+    if (frame_pixels == 0) return;
+
+    bool is_new = (!s_video_ctx.active ||
+                   s_video_ctx.x != x || s_video_ctx.y != y ||
+                   s_video_ctx.width != width || s_video_ctx.height != height ||
+                   s_video_ctx.start_addr != w25q_start_addr ||
+                   s_video_ctx.end_addr != w25q_end_addr);
+
+    if (is_new)
+    {
+        uint8_t hdr[6];
+        w25q_fast_read_data_dma(w25q_start_addr, hdr, 6);
+        while (w25q_dma_is_busy())
+            w25q_dma_task();
+
+        if (hdr[0] != BL_MAGIC0 || hdr[1] != BL_MAGIC1)
+        {
+            lcd_play_video_from_w25q(x, y, width, height, w25q_start_addr, w25q_end_addr);
+            return;
+        }
+
+        s_video_ctx.x = x;
+        s_video_ctx.y = y;
+        s_video_ctx.width = width;
+        s_video_ctx.height = height;
+        s_video_ctx.start_addr = w25q_start_addr;
+        s_video_ctx.end_addr = w25q_end_addr;
+        s_video_ctx.active = true;
+        s_video_ctx.bpp = hdr[4];  /* block level (1/2/3) */
+        s_video_ctx.compressed_frame_addr = w25q_start_addr + 6;
+        s_video_ctx.rle_chunk_len = 0;
+        s_video_ctx.rle_chunk_pos = 0;
+    }
+
+    // 逐块解码一帧 (支持可变块大小)
+    uint32_t done = 0;
+    uint32_t addr = s_video_ctx.compressed_frame_addr;
+    int blk_lvl = (int)s_video_ctx.bpp;
+
+    if (blk_lvl == 0)
+    {
+        /* lvl=0: raw passthrough — read RGB565 pixels directly */
+        uint8_t chunk[LCD_PIC_CHUNK_SIZE];
+        while (done < (uint32_t)frame_pixels)
+        {
+            uint32_t remain = (uint32_t)frame_pixels - done;
+            uint32_t to_read = remain * 2;
+            if (to_read > sizeof(chunk)) to_read = sizeof(chunk);
+            if (addr + to_read > w25q_end_addr) to_read = w25q_end_addr - addr;
+            if (to_read == 0) break;
+            w25q_fast_read_data_dma(addr, chunk, to_read);
+            while (w25q_dma_is_busy()) w25q_dma_task();
+            uint32_t px_in_chunk = to_read / 2;
+            for (uint32_t p = 0; p < px_in_chunk && done < (uint32_t)frame_pixels; p++)
+            {
+                uint32_t gx = done % (uint32_t)width;
+                uint32_t gy = done / (uint32_t)width;
+                int16_t img_x = (int16_t)gx;
+                int16_t img_y = (int16_t)gy;
+                uint8_t hi = chunk[p * 2];
+                uint8_t lo = chunk[p * 2 + 1];
+                int16_t sx = x + img_x;
+                int16_t sy = y + img_y;
+                if (sx >= 0 && sx < LCD_W && sy >= 0 && sy < LCD_H)
+                {
+                    uint16_t px_le = (uint16_t)(lo << 8) | hi;
+                    lcd_write_ptr[(uint32_t)sy * LCD_W + (uint32_t)sx] =
+                        px_le;
+                }
+                done++;
+            }
+            addr += to_read;
+        }
+    }
+    else
+    {
+        int bw = (blk_lvl == 1) ? 2 : (blk_lvl == 4 ? 4 : (blk_lvl == 3 ? 8 : 4));
+        int bh = (blk_lvl == 1 || blk_lvl == 4) ? 2 : 4;
+        int npix = bw * bh;
+        /* 4-colour indices: 2-bit per pixel */
+        int idx_bytes = (npix <= 4) ? 1 : (npix <= 8 ? 2 : (npix <= 16 ? 4 : 8));
+        int blk_bytes = 4 + idx_bytes;
+        uint8_t blk[12];
+
+        while (done < (uint32_t)frame_pixels)
+        {
+
+            bl_read_block_var(&addr, w25q_end_addr, blk, blk_bytes);
+            uint8_t c0h = blk[0], c0l = blk[1];
+            uint8_t c1h = blk[2], c1l = blk[3];
+
+            /* interpolate c2, c3 */
+            uint16_t c0v = (uint16_t)((c0h << 8) | c0l);
+            uint16_t c1v = (uint16_t)((c1h << 8) | c1l);
+            uint8_t c0r = (c0v >> 11) & 0x1F, c0g = (c0v >> 5) & 0x3F, c0b = c0v & 0x1F;
+            uint8_t c1r = (c1v >> 11) & 0x1F, c1g = (c1v >> 5) & 0x3F, c1b = c1v & 0x1F;
+            uint8_t c2r = (c0r * 2 + c1r) / 3, c2g = (c0g * 2 + c1g) / 3, c2b = (c0b * 2 + c1b) / 3;
+            uint8_t c3r = (c0r + c1r * 2) / 3, c3g = (c0g + c1g * 2) / 3, c3b = (c0b + c1b * 2) / 3;
+            uint16_t c2v = (uint16_t)((c2r << 11) | (c2g << 5) | c2b);
+            uint16_t c3v = (uint16_t)((c3r << 11) | (c3g << 5) | c3b);
+            uint8_t col_hi[4] = {c0h, c1h, (uint8_t)((c2v >> 8) & 0xFF), (uint8_t)((c3v >> 8) & 0xFF)};
+            uint8_t col_lo[4] = {c0l, c1l, (uint8_t)(c2v & 0xFF), (uint8_t)(c3v & 0xFF)};
+
+            uint8_t idx_buf[8];
+            for (int b = 0; b < idx_bytes; b++)
+                idx_buf[b] = blk[4 + b];
+
+            int blocks_per_row = (width + bw - 1) / bw;
+            for (int pi = 0; pi < npix && done < (uint32_t)frame_pixels; pi++)
+            {
+                /* Compute pixel position from block grid, not linear frame order. */
+                uint32_t block_index = done / npix;
+                uint32_t pixel_in_block = done % npix;
+                int16_t img_x = (int16_t)((block_index % (uint32_t)blocks_per_row) * bw
+                                          + (pixel_in_block % bw));
+                int16_t img_y = (int16_t)((block_index / (uint32_t)blocks_per_row) * bh
+                                          + (pixel_in_block / bw));
+                int bit_pos = 2 * (npix - 1 - pi);
+                int byte_idx = idx_bytes - 1 - (bit_pos / 8);
+                int bit_in_byte = bit_pos % 8;
+                int ci = (int)((idx_buf[byte_idx] >> bit_in_byte) & 3);
+                bl_put_pixel(x, y, img_x, img_y, col_hi[ci], col_lo[ci], &done);
+            }
+        }
+    }
+
+    /* fallback: if no pixels decoded (shouldn't happen without end_addr check), show checkerboard */
+    if (done == 0)
+    {
+        for (uint32_t py = 0; py < (uint32_t)height && (uint32_t)(y + py) < LCD_H; py++)
+            for (uint32_t px = 0; px < (uint32_t)width && (uint32_t)(x + px) < LCD_W; px++)
+                lcd_write_ptr[(uint32_t)(y + py) * LCD_W + (uint32_t)(x + px)] =
+                    swap_uint16_builtin(((px + py) & 1) ? 0xF800 : 0x001F);
+    }
+
+    /* Reset DMA chunk buffer so next frame's bl_read_block_var does a fresh read. */
+    s_video_ctx.rle_chunk_len = 0;
+    s_video_ctx.rle_chunk_pos = 0;
+
+    /* Skip inter-frame BL header (6 bytes) between concatenated frames.
+     * Each frame in the W25Q stream starts with:
+     *   [BL_MAGIC 2B][VER 1B][QUALITY 1B][LVL 1B][unused 1B]
+     * Init skips the first frame's header; subsequent frames need the same. */
+    if (addr + 6 <= w25q_end_addr)
+    {
+        uint8_t peek[2];
+        w25q_fast_read_data_dma(addr, peek, 2);
+        while (w25q_dma_is_busy()) w25q_dma_task();
+        if (peek[0] == BL_MAGIC0 && peek[1] == BL_MAGIC1)
+            addr += 6;
+    }
+
+    s_video_ctx.compressed_frame_addr = addr;
+    if (s_video_ctx.compressed_frame_addr >= w25q_end_addr)
+    {
+        s_video_ctx.compressed_frame_addr = w25q_start_addr + 6;
+    }
 }
 
 #pragma endregion

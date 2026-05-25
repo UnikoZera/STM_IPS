@@ -1,3 +1,3 @@
-../Core/Src/lcd_ui.c:34:6:lcd_ui_init	1
-../Core/Src/lcd_ui.c:175:6:lcd_ui_change	2
-../Core/Src/lcd_ui.c:218:6:lcd_ui_updater	1
+../Core/Src/lcd_ui.c:33:6:lcd_ui_init	5
+../Core/Src/lcd_ui.c:209:6:lcd_ui_change	2
+../Core/Src/lcd_ui.c:253:6:lcd_ui_updater	1

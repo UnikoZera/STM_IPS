@@ -52,6 +52,166 @@ def _schedule_cleanup():
     _DL_TIMER.start()
 
 
+# ----- block compression (4x4 block, 2-color + bitmap) -----------------------
+# Format:
+#   [MAGIC "BL" 2B] [VER 1B] [QUALITY 1B] [BLOCK_SIZE(=4) 1B] [unused 1B]
+#   Block data (6B per 4x4 block):
+#     color0_hi, color0_lo (RGB565 big-endian)
+#     color1_hi, color1_lo (RGB565 big-endian)
+#     bitmap_hi, bitmap_lo   (16 bits, MSB=pixel#0)
+#   For each pixel: bitmap_bit=0 -> color0, =1 -> color1
+
+BL_MAGIC = b'BL'
+BL_VERSION = 1
+BLOCK_SIZE = 4  # 4x4 pixels per block
+
+# quality -> (lvl, bw, bh, npix, idx_bytes, rm, gm, bm)
+# 4-color block: 2 base + 2 interpolated, 2-bit index/pixel
+_BLK_CFG = {
+    10: (1, 2, 2, 4,  1, 0x1F, 0x3F, 0x1F),
+     9: (4, 4, 2, 8,  2, 0x1F, 0x3F, 0x1F),
+     7: (2, 4, 4, 16, 4, 0x1F, 0x3F, 0x1F),
+}
+
+_LVL_TO_PROFILE = {
+    0: (0, 0, 0, 0),     # raw passthrough
+    4: (4, 2, 8,  2),    # 8px x 2bit = 2B indices
+    1: (2, 2, 4,  1),    # 4px x 2bit = 1B indices
+    2: (4, 4, 16, 4),    # 16px x 2bit = 4B indices
+    3: (8, 4, 32, 8),    # 32px x 2bit = 8B indices
+}
+
+
+def _compress_block(rgb565: bytes, w: int, h: int, quality: int) -> bytes:
+    _, bw, bh, npix, idx_bytes, rm, gm, bm = _BLK_CFG[quality]
+    def _lerp(a, b, n, d): return (a*(d-n)+b*n)//d
+    bxc = (w + bw - 1) // bw
+    byc = (h + bh - 1) // bh
+    out = bytearray()
+
+    for by in range(byc):
+        for bx in range(bxc):
+            r5s, g6s, b5s = [], [], []
+            for py in range(bh):
+                for px in range(bw):
+                    ix = bx * bw + px
+                    iy = by * bh + py
+                    if ix < w and iy < h:
+                        off = (iy * w + ix) * 2
+                        hi, lo = rgb565[off], rgb565[off + 1]
+                        val = (hi << 8) | lo
+                        r5s.append((val >> 11) & 0x1F)
+                        g6s.append((val >> 5) & 0x3F)
+                        b5s.append(val & 0x1F)
+                    else:
+                        r5s.append(0); g6s.append(0); b5s.append(0)
+
+            bright = [r5s[i]*19595 + g6s[i]*38470 + b5s[i]*7471
+                      for i in range(npix)]
+            med = sorted(bright)[npix // 2]
+
+            sums = [[0,0,0,0],[0,0,0,0]]
+            for i in range(npix):
+                g = 0 if bright[i] < med else 1
+                sums[g][0] += 1
+                sums[g][1] += r5s[i]; sums[g][2] += g6s[i]; sums[g][3] += b5s[i]
+
+            def _avg(s, fb):
+                return (s[1]//s[0], s[2]//s[0], s[3]//s[0]) if s[0] else fb
+            fb = (sum(r5s)//npix, sum(g6s)//npix, sum(b5s)//npix)
+            c0 = _avg(sums[0], fb); c1 = _avg(sums[1], fb)
+            c0 = (c0[0]&rm, c0[1]&gm, c0[2]&bm)
+            c1 = (c1[0]&rm, c1[1]&gm, c1[2]&bm)
+
+            # 4-colour palette: c0, c1, and 2 interpolated
+            c2 = (_lerp(c0[0],c1[0],1,3), _lerp(c0[1],c1[1],1,3), _lerp(c0[2],c1[2],1,3))
+            c3 = (_lerp(c0[0],c1[0],2,3), _lerp(c0[1],c1[1],2,3), _lerp(c0[2],c1[2],2,3))
+            pal = [c0, c1, c2, c3]
+
+            c0v = (c0[0]<<11)|(c0[1]<<5)|c0[2]
+            c1v = (c1[0]<<11)|(c1[1]<<5)|c1[2]
+            out.append((c0v>>8)&0xFF); out.append(c0v&0xFF)
+            out.append((c1v>>8)&0xFF); out.append(c1v&0xFF)
+
+            indices = 0
+            for i in range(npix):
+                pr, pg, pb = r5s[i], g6s[i], b5s[i]
+                best_d, best_i = 99999, 0
+                for ci in range(4):
+                    dr = pr-pal[ci][0]; dg = pg-pal[ci][1]; db = pb-pal[ci][2]
+                    d = dr*dr + dg*dg + db*db
+                    if d < best_d: best_d, best_i = d, ci
+                indices = (indices << 2) | best_i
+            for b in range(idx_bytes):
+                out.append((indices >> (8*(idx_bytes-1-b))) & 0xFF)
+    return bytes(out)
+
+
+def _decompress_block(data: bytes, w: int, h: int, lvl: int) -> bytes:
+    if lvl == 0:
+        return data  # raw passthrough
+    bw, bh, npix, idx_bytes = _LVL_TO_PROFILE[lvl]
+    blk_bytes = 4 + idx_bytes
+    bxc = (w + bw - 1) // bw
+    byc = (h + bh - 1) // bh
+    out = bytearray(w * h * 2)
+    off = 0
+    for by in range(byc):
+        for bx in range(bxc):
+            c0h, c0l = data[off], data[off+1]
+            c1h, c1l = data[off+2], data[off+3]
+            # read base colours as 16-bit
+            def _lerp(a, b, n, d): return (a*(d-n)+b*n)//d
+            c0v = (c0h << 8) | c0l; c1v = (c1h << 8) | c1l
+            c0r = (c0v>>11)&0x1F; c0g = (c0v>>5)&0x3F; c0b = c0v&0x1F
+            c1r = (c1v>>11)&0x1F; c1g = (c1v>>5)&0x3F; c1b = c1v&0x1F
+            c2v = ((_lerp(c0r,c1r,1,3)<<11)|(_lerp(c0g,c1g,1,3)<<5)|_lerp(c0b,c1b,1,3))
+            c3v = ((_lerp(c0r,c1r,2,3)<<11)|(_lerp(c0g,c1g,2,3)<<5)|_lerp(c0b,c1b,2,3))
+            c2h = (c2v>>8)&0xFF; c2l = c2v&0xFF
+            c3h = (c3v>>8)&0xFF; c3l = c3v&0xFF
+            cols = [(c0h,c0l),(c1h,c1l),(c2h,c2l),(c3h,c3l)]
+
+            indices = 0
+            for b in range(idx_bytes):
+                indices = (indices << 8) | data[off+4+b]
+            off += blk_bytes
+            for pi in range(npix):
+                px = bx * bw + (pi % bw)
+                py = by * bh + (pi // bw)
+                if px >= w or py >= h: continue
+                ci = (indices >> (2*(npix-1-pi))) & 3
+                out[(py*w+px)*2], out[(py*w+px)*2+1] = cols[ci][0], cols[ci][1]
+    return bytes(out)
+
+
+def compress_frame(rgb565_data: bytes, width: int, height: int,
+                   quality: int) -> bytes:
+    if quality >= 11:
+        header = BL_MAGIC + bytes([BL_VERSION, quality, 0, 0])
+        return header + rgb565_data
+    lvl = _BLK_CFG[quality][0]
+    compressed = _compress_block(rgb565_data, width, height, quality)
+    header = BL_MAGIC + bytes([BL_VERSION, quality, lvl, 0])
+    return header + compressed
+
+
+def decompress_frame(compressed: bytes, pixel_count: int) -> bytes:
+    if compressed[:2] != BL_MAGIC:
+        raise ValueError('Not BL')
+    lvl = compressed[4]
+    block_data = compressed[6:]
+    import math
+    area = pixel_count
+    for gw, gh in [(160, 80), (80, 160), (320, 240), (240, 320),
+                   (128, 128), (64, 64), (32, 32), (16, 16)]:
+        if gw * gh == area:
+            return _decompress_block(block_data, gw, gh, lvl)
+    guess_w = int(math.isqrt(area))
+    while area % guess_w != 0:
+        guess_w -= 1
+    return _decompress_block(block_data, guess_w, area // guess_w, lvl)
+
+
 def _check_ffmpeg():
     try:
         subprocess.run([FFMPEG, '-version'], capture_output=True, check=True)
@@ -63,6 +223,15 @@ def _check_ffmpeg():
 
 
 _check_ffmpeg()
+
+
+def _to_be(data: bytes) -> bytes:
+    """Convert RGB565 from little-endian to big-endian (byte-swap each pixel)."""
+    out = bytearray(len(data))
+    for i in range(0, len(data), 2):
+        out[i] = data[i + 1]
+        out[i + 1] = data[i]
+    return bytes(out)
 
 
 # ----- helpers ---------------------------------------------------------------
@@ -205,6 +374,7 @@ def convert():
         fps = max(1, min(60, float(request.form.get('fps', 30))))
         swap = request.form.get('swap', '0') == '1'
         brightness = max(10, min(300, float(request.form.get('brightness', 100))))
+        quality = max(7, min(11, int(request.form.get('quality', 11))))
     except ValueError:
         return jsonify({'error': 'Invalid parameters'}), 400
 
@@ -224,9 +394,9 @@ def convert():
     try:
         endian = '<' if swap else '>'
         if is_video:
-            result = _process_video(in_path, width, height, fps, endian, brightness)
+            result = _process_video(in_path, width, height, fps, endian, brightness, quality)
         else:
-            result = _process_image(in_path, width, height, endian, brightness)
+            result = _process_image(in_path, width, height, endian, brightness, quality)
     except subprocess.CalledProcessError as e:
         msg = e.stderr.decode('utf-8', errors='replace')[-300:] if e.stderr else str(e)
         return jsonify({'error': f'ffmpeg error: {msg}'}), 500
@@ -245,7 +415,7 @@ def convert():
 
 
 def _process_image(in_path: str, width: int, height: int,
-                   endian: str = '>', brightness: float = 100.0) -> dict:
+                   endian: str = '>', brightness: float = 100.0, quality: int = 8) -> dict:
     gen = _stream_frames(in_path, width, height, vframes=1)
     try:
         rgb, fw, fh = next(gen)
@@ -254,7 +424,10 @@ def _process_image(in_path: str, width: int, height: int,
 
     data = _convert_to_rgb565(rgb, fw, fh, endian, brightness)
 
-    return {
+    # compression always uses big-endian (MCU native)
+    comp_data = _to_be(data) if endian == '<' else data
+
+    result = {
         'type': 'image',
         'preview_hex': data.hex(),
         'width': fw,
@@ -262,43 +435,60 @@ def _process_image(in_path: str, width: int, height: int,
         'frame_count': 1,
         'frame_size': len(data),
         'fps': 30,
+        'quality': quality,
     }
+
+    compressed = compress_frame(comp_data, fw, fh, quality)
+    result['compressed_hex'] = compressed.hex()
+
+    return result
 
 
 def _process_video(in_path: str, width: int, height: int,
                    output_fps: float = 30, endian: str = '>',
-                   brightness: float = 100.0) -> dict:
+                   brightness: float = 100.0, quality: int = 8) -> dict:
     output_fps = max(1, min(60, output_fps))
 
-    # stream frames → collect full RGB565 into temp file
-    preview = bytearray()
-    full = bytearray()
+    # stream frames
+    full_compressed = bytearray()
+    preview_raw = bytearray()   # raw RGB565 for browser preview
     count = 0
 
+    fs_raw = width * height * 2  # raw frame size
     for rgb, fw, fh in _stream_frames(in_path, width, height, fps=output_fps):
         frame = _convert_to_rgb565(rgb, fw, fh, endian, brightness)
-        full.extend(frame)
+        be_frame = _to_be(frame) if endian == '<' else frame
+        full_compressed.extend(compress_frame(be_frame, width, height, quality))
+        # keep raw data for preview (first N frames)
         if count < PREVIEW_FRAMES:
-            preview.extend(frame)
+            preview_raw.extend(frame)
         count += 1
 
     if count == 0:
         raise RuntimeError('No frames extracted')
 
-    # save full data to temp file
-    name = Path(in_path).stem
-    did = _save_temp(name, bytes(full), width, height, count, output_fps)
+    frame_size_approx = len(full_compressed) // count if count else 0
 
-    return {
+    # save full compressed data to temp file
+    name = Path(in_path).stem
+    did = _save_temp(name, bytes(full_compressed), width, height, count, output_fps)
+    if did in _DL_REG:
+        _DL_REG[did]['frame_size'] = frame_size_approx
+
+    result = {
         'type': 'video',
-        'preview_hex': bytes(preview).hex(),
+        'preview_hex': bytes(preview_raw).hex(),
         'download_id': did,
         'width': width,
         'height': height,
         'frame_count': count,
-        'frame_size': width * height * 2,
+        'frame_size': fs_raw,
         'fps': output_fps,
+        'quality': quality,
     }
+    result['compressed_hex'] = bytes(full_compressed).hex()
+
+    return result
 
 
 @app.route('/download/<download_id>', methods=['GET', 'OPTIONS'])
@@ -342,20 +532,15 @@ def download(download_id=None):
         ent['mtime'] = time.time()  # extend lifetime
         w, h = ent['width'], ent['height']
         fc = ent['frame_count']
-        fs = ent['frame_size']
         name = ent['name']
         raw = Path(ent['path']).read_bytes()
         buf = io.BytesIO()
-        if fc == 1:
-            buf.write(raw)
-            fname = f'{name}_{w}x{h}.bin'
-        else:
-            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for i in range(fc):
-                    zf.writestr(f'frame_{i:04d}.bin', raw[i * fs:(i + 1) * fs])
-                zf.writestr('_info.txt',
-                            f'width={w}\nheight={h}\nframes={fc}\nframe_size={fs}')
-            fname = f'{name}_{w}x{h}.zip'
+        # compressed data: download as single blob (variable-length frames)
+        buf.write(raw)
+        info_txt = f'# STM IPS Compressed Video\n'
+        info_txt += f'width={w}\nheight={h}\nframes={fc}\ncompressed_size={len(raw)}\n'
+        buf.write(info_txt.encode())
+        fname = f'{name}_{w}x{h}_qc.bin'
         buf.seek(0)
         return send_file(buf, as_attachment=True, download_name=fname)
 
