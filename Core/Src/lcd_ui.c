@@ -38,15 +38,15 @@ void lcd_ui_init(void)
 
     // 从文件系统获取图片文件的W25Q地址
     {
-        int16_t idx = find_large_file_by_name("baka_u");
+        int16_t idx = find_large_file_by_name("pic_mp");
         if (idx >= 0)
         {
             large_file_info_t info;
             if (get_large_file_info((uint8_t)idx, &info))
             {
                 g_picture.x = 10;
-                g_picture.y = 10;
-                g_picture.width = 80;
+                g_picture.y = 0;
+                g_picture.width = 120;
                 g_picture.height = 80;
                 g_picture.addr = info.start_sector * 4096;
             }

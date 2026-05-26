@@ -1,3 +1,3 @@
-../Core/Src/lcd_ui.c:34:6:lcd_ui_init	320	static
+../Core/Src/lcd_ui.c:34:6:lcd_ui_init	360	static
 ../Core/Src/lcd_ui.c:210:6:lcd_ui_change	16	static
-../Core/Src/lcd_ui.c:254:6:lcd_ui_updater	16	static
+../Core/Src/lcd_ui.c:254:6:lcd_ui_updater	8	static

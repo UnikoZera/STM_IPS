@@ -1,2 +1,2 @@
-../Core/Src/crc16.c:46:10:crc16_usb_calc	4	static
-../Core/Src/crc16.c:64:10:crc16_usb_packing	8	static
+../Core/Src/crc16.c:46:10:crc16_usb_calc	24	static
+../Core/Src/crc16.c:64:10:crc16_usb_packing	32	static

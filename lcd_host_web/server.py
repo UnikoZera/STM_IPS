@@ -404,7 +404,10 @@ def convert():
             else:
                 result = _process_video(in_path, width, height, fps, endian, brightness, quality)
         else:
-            result = _process_image(in_path, width, height, endian, brightness, quality)
+            if codec == 'mjpeg':
+                result = _process_image_mjpeg(in_path, width, height, quality)
+            else:
+                result = _process_image(in_path, width, height, endian, brightness, quality)
     except subprocess.CalledProcessError as e:
         msg = e.stderr.decode('utf-8', errors='replace')[-300:] if e.stderr else str(e)
         return jsonify({'error': f'ffmpeg error: {msg}'}), 500
@@ -540,6 +543,34 @@ def _process_video_mjpeg(in_path: str, width: int, height: int,
         'frame_size': width * height * 2,
         'fps': output_fps,
         'original_duration': original_duration,
+        'quality': quality,
+        'codec': 'mjpeg',
+        'endian': 'big',
+    }
+    result['compressed_hex'] = compressed.hex()
+    return result
+
+
+def _process_image_mjpeg(in_path: str, width: int, height: int,
+                          quality: int = 80) -> dict:
+    """Process a single image with MJPEG compression."""
+    _q = max(1, min(100, quality))
+    ffmpeg_q = max(2, min(31, round(32 - _q / 100 * 30)))
+    frames = []
+    for jpeg_bytes in _stream_mjpeg_frames(in_path, width, height,
+                                            vframes=1, quality=ffmpeg_q):
+        frames.append(jpeg_bytes)
+    if not frames:
+        raise RuntimeError('No frame extracted from image')
+    compressed = _pack_mjpeg(frames, width, height, quality)
+    result = {
+        'type': 'image',
+        'preview_hex': '',
+        'width': width,
+        'height': height,
+        'frame_count': 1,
+        'frame_size': width * height * 2,
+        'fps': 30,
         'quality': quality,
         'codec': 'mjpeg',
         'endian': 'big',

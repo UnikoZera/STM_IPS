@@ -683,6 +683,28 @@ void lcd_draw_picture_from_w25q(int16_t x, int16_t y, int16_t width, int16_t hei
     w25q_fast_read_data_dma(w25q_addr, hdr, 6);
     while (w25q_dma_is_busy()) w25q_dma_task();
 
+    /* Check for MJPEG magic */
+    if (hdr[0] == 'M' && hdr[1] == 'J' && hdr[2] == 'P' && hdr[3] == 'G')
+    {
+        /* frame_count already in hdr[4..5] from the 6-byte read */
+        uint16_t frame_count = (uint16_t)hdr[4] | ((uint16_t)hdr[5] << 8);
+
+        /* Scan frame size prefixes to compute total end address */
+        uint32_t end_addr = w25q_addr + 14;
+        for (uint16_t i = 0; i < frame_count; i++)
+        {
+            uint8_t sz[4];
+            w25q_fast_read_data_dma(end_addr, sz, 4);
+            while (w25q_dma_is_busy()) w25q_dma_task();
+            uint32_t frame_size = (uint32_t)sz[0] | ((uint32_t)sz[1] << 8) |
+                                  ((uint32_t)sz[2] << 16) | ((uint32_t)sz[3] << 24);
+            end_addr += 4 + frame_size;
+        }
+
+        lcd_play_mjpeg_video(x, y, width, height, w25q_addr, end_addr);
+        return;
+    }
+
     bool is_bl = (hdr[0] == BL_MAGIC0 && hdr[1] == BL_MAGIC1);
 
     if (is_bl && hdr[4] != 0)
