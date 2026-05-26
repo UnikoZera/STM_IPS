@@ -1,5 +1,4 @@
-../Core/Src/lcd_mjpeg.c:36:8:lcd_mjpeg_last_error	1
-../Core/Src/lcd_mjpeg.c:41:22:lcd_mjpeg_get_state	1
-../Core/Src/lcd_mjpeg.c:54:22:mjpeg_read_cb	4
-../Core/Src/lcd_mjpeg.c:85:13:write_pixel	5
-../Core/Src/lcd_mjpeg.c:120:6:lcd_play_mjpeg_video	42
+../Core/Src/lcd_mjpeg.c:46:22:mjpeg_read_cb	6
+../Core/Src/lcd_mjpeg.c:31:8:lcd_mjpeg_last_error	1
+../Core/Src/lcd_mjpeg.c:36:22:lcd_mjpeg_get_state	1
+../Core/Src/lcd_mjpeg.c:108:6:lcd_play_mjpeg_video	74

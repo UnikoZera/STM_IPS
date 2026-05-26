@@ -65,7 +65,7 @@ main-build: stm_ips.elf secondary-outputs
 
 # Tool invocations
 stm_ips.elf stm_ips.map: $(OBJS) $(USER_OBJS) D:\mcu\projects\stm_ips\STM32F401RCTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "stm_ips.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"D:\mcu\projects\stm_ips\STM32F401RCTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="stm_ips.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+	arm-none-eabi-gcc -o "stm_ips.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"D:\mcu\projects\stm_ips\STM32F401RCTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="stm_ips.map" -Wl,--gc-sections -static -L../Middlewares/ST/ARM/DSP/Lib --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

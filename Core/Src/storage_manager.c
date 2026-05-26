@@ -152,7 +152,13 @@ bool get_large_file_info(uint8_t file_id, large_file_info_t *info) // 返回大�
 static inline void erase_sector(uint32_t sector);
 void clear_large_file(void)
 {
-    for (uint32_t i = AREA_LARGE_START_SECTOR; i < AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS; i++)
+    large_file_info_t temp = {0};
+    for (int i = 0; i < MAX_LARGE_FILES; i++)
+    {
+        if(!get_large_file_info(i, &temp))
+            break; // 获取到了最后一个文件的位置
+    }
+    for (uint32_t i = AREA_LARGE_START_SECTOR; i <= (temp.start_sector + temp.sector_count); i++)
     {
         erase_sector(i);
     }

@@ -37,7 +37,6 @@ static const uint16_t crc16_usb_table[256] = {
     0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040,
 };
 
-
 /**
  * @brief 计算 CRC16/USB（纯数据部分，查 Flash 表）
  * @param data  数据首地址

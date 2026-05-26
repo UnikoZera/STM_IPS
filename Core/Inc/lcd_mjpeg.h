@@ -22,6 +22,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "arm_math.h"
 
 #ifdef __cplusplus
 extern "C" {

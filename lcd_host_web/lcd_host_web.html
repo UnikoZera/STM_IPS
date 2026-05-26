@@ -16,6 +16,13 @@
   --header-bg:linear-gradient(180deg,rgba(8,13,24,.95),rgba(2,5,10,.98));
   --btn-connect-bg:linear-gradient(135deg,var(--cyan),#0097a7);
   --btn-send-bg:linear-gradient(135deg,var(--magenta),#651fff);
+  /* ── Glass / Material ── */
+  --glass-bg:rgba(8,13,24,.72);
+  --glass-border:rgba(255,255,255,.04);
+  --glass-shine:rgba(255,255,255,.02);
+  --ease-out-expo:cubic-bezier(.16,1,.3,1);
+  --ease-spring:cubic-bezier(.34,1.56,.64,1);
+  --ease-smooth:cubic-bezier(.4,0,.2,1);
 }
 
 .light body{background:var(--bg)!important;}
@@ -35,16 +42,23 @@
 body{
   font-family:-apple-system,'Segoe UI',system-ui,sans-serif;
   font-size:14px;
-  background:radial-gradient(ellipse at 50% 0%,#0b1225 0%,var(--bg) 70%);
+  background:radial-gradient(ellipse at 50% 0%,#0f1a30 0%,var(--bg) 70%);
   color:var(--text);height:100vh;
   display:flex;flex-direction:column;overflow:hidden;
   -webkit-font-smoothing:antialiased;
+  animation:bgDrift 30s ease-in-out infinite;
+  background-size:200% 200%;
 }
 body{transition:background .3s,color .25s;}
 body::before{
-  content:'';position:fixed;inset:0;z-index:-1;opacity:.03;transition:opacity .3s;
-  background-image:radial-gradient(circle at 1px 1px,rgba(0,188,212,.15) 1px,transparent 0);
+  content:'';position:fixed;inset:0;z-index:-1;opacity:.04;transition:opacity .3s;
+  background-image:radial-gradient(circle at 1px 1px,rgba(0,188,212,.12) 1px,transparent 0);
   background-size:32px 32px;
+}
+body::after{
+  content:'';position:fixed;inset:0;z-index:-1;opacity:.03;pointer-events:none;
+  background:radial-gradient(ellipse at 80% 20%,rgba(0,188,212,.06) 0%,transparent 50%),
+             radial-gradient(ellipse at 20% 80%,rgba(124,77,255,.04) 0%,transparent 50%);
 }
 /* ── Animations ── */
 @keyframes bounceIn{
@@ -62,6 +76,48 @@ body::before{
 @keyframes borderGlow{0%,100%{border-color:var(--border)}50%{border-color:var(--cyan)}}
 @keyframes canvasGlow{0%,100%{border-color:var(--border);box-shadow:none}50%{border-color:var(--cyan);box-shadow:0 0 24px rgba(0,188,212,.3)}}
 
+@keyframes shimmer{
+  0%{background-position:200% 0}
+  100%{background-position:-200% 0}
+}
+@keyframes glowPulse{
+  0%,100%{opacity:.4}
+  50%{opacity:.9}
+}
+@keyframes scaleIn{
+  0%{opacity:0;transform:scale(.92)}
+  100%{opacity:1;transform:scale(1)}
+}
+@keyframes fadeUp{
+  0%{opacity:0;transform:translateY(8px)}
+  100%{opacity:1;transform:translateY(0)}
+}
+@keyframes ripple{
+  0%{box-shadow:0 0 0 0 rgba(0,188,212,.3)}
+  100%{box-shadow:0 0 0 12px rgba(0,188,212,0)}
+}
+@keyframes float{
+  0%,100%{transform:translateY(0)}
+  50%{transform:translateY(-3px)}
+}
+@keyframes toastIn{
+  0%{opacity:0;transform:translateX(100%) scale(.85)}
+  60%{transform:translateX(-8px) scale(1.02)}
+  100%{opacity:1;transform:translateX(0) scale(1)}
+}
+@keyframes toastOut{
+  0%{opacity:1;transform:translateX(0) scale(1)}
+  100%{opacity:0;transform:translateX(60%) scale(.9)}
+}
+@keyframes slideUpFade{
+  0%{opacity:0;transform:translateY(16px)}
+  100%{opacity:1;transform:translateY(0)}
+}
+@keyframes bgDrift{
+  0%{background-position:0% 0%}
+  50%{background-position:100% 100%}
+  100%{background-position:0% 0%}
+}
 @keyframes borderDance{0%{border-color:var(--border)}25%{border-color:var(--cyan)}50%{border-color:var(--magenta)}75%{border-color:var(--gold)}100%{border-color:var(--border)}}
 @keyframes fadeScale{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
 @keyframes statusPulse{0%,100%{box-shadow:0 0 4px var(--green)}50%{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,230,118,.15)}}
@@ -138,6 +194,11 @@ main{
   border-bottom:1px solid var(--border);
   text-transform:uppercase;letter-spacing:1.6px;
   display:flex;align-items:center;gap:8px;flex-shrink:0;user-select:none;
+  position:relative;overflow:hidden;
+}
+.panel-hd::after{
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--glass-shine),transparent);
 }
 .panel-hd::before{content:'';width:3px;height:14px;background:linear-gradient(180deg,var(--cyan),var(--magenta));border-radius:2px;filter:saturate(1.3);}
 .panel-hd .hd-badge{font-size:10px;color:var(--text2);margin-left:auto;font-weight:400;letter-spacing:0;}
@@ -221,7 +282,7 @@ main{
 }
 .btn:hover::before{opacity:1;}
 .btn:hover::after{opacity:1;}
-.btn:active{transform:scale(.94)}
+.btn:active{transform:scale(.94);transition-duration:.08s;}
 .btn:disabled{opacity:.3;cursor:not-allowed;filter:none;transform:none!important;box-shadow:none!important;}
 .btn:disabled:hover::before,.btn:disabled:hover::after{opacity:0;}
 .btn-connect{
@@ -431,7 +492,7 @@ select:hover,input:hover{border-color:var(--text3);}
 #vpResult{animation:fadeScale .35s cubic-bezier(.34,1.56,.64,1);}
 #vpBtnRow{animation:slideUp .3s cubic-bezier(.34,1.56,.64,1) .1s both;}
 #vpDVideoCtrls .btn-query{transition:all .25s cubic-bezier(.4,0,.2,1);}
-#vpDPlayBtn:not(:disabled):hover{transform:translateY(-2px) scale(1.04);box-shadow:0 0 16px rgba(0,188,212,.25);}
+#vpDPlayBtn:not(:disabled):hover{box-shadow:0 0 16px rgba(0,188,212,.25);}
 #vpDetailModal .modal-content{animation:slideUp .35s cubic-bezier(.34,1.56,.64,1);}
 
 /* ── Scrollbar ── */
@@ -440,6 +501,96 @@ select:hover,input:hover{border-color:var(--text3);}
 ::-webkit-scrollbar-thumb{background:#1f2a3a;border-radius:3px;border:none;}
 ::-webkit-scrollbar-thumb:hover{background:#35455a;}
 ::-webkit-scrollbar-corner{background:transparent;}
+
+/* ── Custom Range Slider ── */
+input[type=range]{
+  -webkit-appearance:none;appearance:none;
+  background:transparent;cursor:pointer;height:20px;
+  accent-color:var(--cyan);
+  outline:none!important;border:none;
+}
+input[type=range]:focus{outline:none!important;border:none;box-shadow:none;}
+input[type=range]::-moz-focus-inner{border:0;outline:none;}
+input[type=range]:focus-visible{outline:none!important;border:none;box-shadow:none;}
+input[type=range]::-webkit-slider-runnable-track{
+  height:4px;border-radius:2px;
+  background:linear-gradient(90deg,var(--surface3),var(--border));
+  transition:background .3s;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;
+  width:14px;height:14px;border-radius:50%;
+  margin-top:-5px;
+  background:linear-gradient(135deg,var(--cyan),#0097a7);
+  box-shadow:0 0 10px rgba(0,188,212,.3);
+  transition:box-shadow .25s var(--ease-out-expo),transform .2s var(--ease-out-expo);
+  cursor:grab;
+  animation:thumbFloat 3s ease-in-out infinite;
+}
+@keyframes thumbFloat{
+  0%,100%{box-shadow:0 0 10px rgba(0,188,212,.3),0 0 0 0 rgba(0,188,212,0)}
+  50%{box-shadow:0 0 16px rgba(0,188,212,.45),0 0 0 5px rgba(0,188,212,.06)}
+}
+input[type=range]::-webkit-slider-thumb:hover{
+  animation:none;
+  box-shadow:0 0 20px rgba(0,188,212,.5),0 0 0 8px rgba(0,188,212,.08);
+  transform:scale(1.15);
+}
+input[type=range]::-webkit-slider-thumb:active{
+  animation:none;
+  box-shadow:0 0 28px rgba(0,188,212,.65),0 0 0 12px rgba(0,188,212,.06);
+  transform:scale(1.25);cursor:grabbing;
+  transition-duration:.1s;
+}
+input[type=range]::-moz-range-track{
+  height:4px;border-radius:2px;
+  background:var(--surface3);border:none;
+}
+input[type=range]::-moz-range-progress{
+  height:4px;border-radius:2px;
+  background:var(--cyan);
+}
+input[type=range]::-moz-range-thumb{
+  width:14px;height:14px;border-radius:50%;border:none;
+  background:linear-gradient(135deg,var(--cyan),#0097a7);
+  box-shadow:0 0 10px rgba(0,188,212,.3);
+  cursor:grab;
+}
+
+/* ── Modal Enhancements ── */
+#vpDetailModal{background:rgba(2,5,10,.82);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);}
+.modal-content{box-shadow:0 24px 80px rgba(0,0,0,.7),0 0 60px rgba(0,188,212,.06)!important;}
+
+/* ── Toast ── */
+.toast{animation:toastIn .4s var(--ease-out-expo) both!important;}
+.toast.hiding{animation:toastOut .3s var(--ease-smooth) both!important;}
+
+/* ── File Items ── */
+.file-item{transition:all .35s var(--ease-out-expo),padding-left .25s!important;}
+.file-item:hover{padding-left:16px!important;background:rgba(0,188,212,.02);}
+
+/* ── Log Lines ── */
+#log .log-line{animation:fadeUp .25s var(--ease-out-expo) both;border-radius:4px;transition:background .2s,padding-left .2s;}
+#log .log-line:hover{padding-left:12px;background:rgba(0,188,212,.03);}
+
+/* ── Card Enhancements ── */
+.card:hover{border-color:var(--cyan);box-shadow:0 0 32px var(--glow-cyan),0 8px 24px rgba(0,0,0,.5);transform:translateY(-2px) scale(1.005);}
+
+/* ── Progress Bar ── */
+.progress-fill{position:relative;overflow:hidden;}
+.progress-fill::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.12),transparent);
+  background-size:200% 100%;
+  animation:shimmer 2s ease-in-out infinite;
+  pointer-events:none;
+}
+
+/* ── Light Theme Overrides ── */
+.light input[type=range]::-webkit-slider-runnable-track{background:#d0d4dc;}
+.light input[type=range]::-moz-range-track{background:#d0d4dc;}
+.light input[type=range]::-moz-range-progress{background:var(--cyan);}
+.light #vpDetailModal{background:rgba(240,242,245,.88);}
 
 /* ── Responsive ── */
 @media(max-width:900px){main{flex-direction:column;}.panel-left,.panel-right{width:100%!important;max-width:none!important;min-width:0!important;flex:auto;}.panel-center{min-width:0;}.splitter{display:none;}.lcd-fixed{max-height:300px;overflow-y:auto;}}
@@ -593,8 +744,8 @@ select:hover,input:hover{border-color:var(--text3);}
           <span style="font-size:9px;color:var(--text3);flex-shrink:0;">越高画质越好</span>
         </div>
         <button class="btn btn-retry file-upload" id="btnPickVP">
-          &#128206; 选择文件（图片/MP4）
-          <input type="file" id="vpFileInput" accept="image/*,.mp4" onchange="onVPFileSelected(this)">
+          &#128206; 选择文件（图片/视频）
+          <input type="file" id="vpFileInput" accept="image/*,.mp4,.webm,.mkv,.avi,.mov,.flv,.wmv" onchange="onVPFileSelected(this)">
         </button>
         <div id="vpFileInfo" style="font-size:11px;color:var(--text2);margin:4px 0;word-break:break-all;">未选择文件</div>
         <button class="btn btn-send" id="vpProcess" onclick="startVPProcess()" disabled style="margin-top:4px;">&#9889; 开始转换</button>
@@ -686,7 +837,7 @@ select:hover,input:hover{border-color:var(--text3);}
           <span style="font-size:11px;color:var(--text2);line-height:34px;" id="vpDFrameInfo">0 / 0</span>
           <span id="vpDFpsInfo" style="font-size:10px;color:var(--text3);line-height:34px;"></span>
         </div>
-        <input type="range" id="vpDSlider" min="0" max="0" value="0" style="width:100%;accent-color:var(--cyan);">
+        <input type="range" id="vpDSlider" min="0" max="0" value="0" style="width:100%;">
       </div>
     </div>
   </div>
@@ -729,6 +880,7 @@ let writeTimer=null, sendTimer=null;
 let lastFileListData=null;
 let lcdFrameCount=0, lcdCanvas=null, lcdCtx=null;
 let lcdStreamWasOn=false;
+let lcdHostIntent = null; // 'enable' | 'disable' | null — 最后一次主机的操作意图
 let isTransferring=false;
 let lcdLastFrameTime=0, lcdWatchTimer=null;
 let lcdQueryTid=null;
@@ -792,7 +944,13 @@ function handleResp(cmd,payload){
       const en=payload[0];
       updateLcdUI(en);
       if(!en&&lcdAckResolve){lcdAckResolve();lcdAckResolve=null;}
-      log('MCU \u2192 LCD流 '+(en?'已开启':'已关闭'),'recv');
+      // 优先用主机意图确定日志文本：主机明确操作时按意图显示，
+      // 避免 MCU 响应滞后/滞留帧导致的错误日志
+      var logState = en ? '已开启' : '已关闭';
+      if (lcdHostIntent === 'enable') logState = '已开启';
+      else if (lcdHostIntent === 'disable') logState = '已关闭';
+      log('MCU \u2192 LCD流 ' + logState, 'recv');
+      lcdHostIntent = null; // 消费后清除
     }
   }
   else if(cmd===R_LCD){
@@ -1124,7 +1282,8 @@ async function connectSerial(){
     lcdLastFrameTime=0;lcdFrameCount=0;clearLcdCanvas();
     if(lcdWatchTimer){clearInterval(lcdWatchTimer);}
     lcdWatchTimer=setInterval(lcdWatchCheck,300);
-    setTimeout(function(){lcdStreamQuery();},300);
+    setTimeout(async function(){ await lcdStreamEnable(); },300);
+    setTimeout(function(){queryFileList();},600);
     saveAllSettings();
   }catch(e){log('连接失败: '+e.message,'error');toast('连接失败','error');}
 }
@@ -1230,21 +1389,22 @@ function updateLcdUI(enabled){
 
 async function lcdStreamEnable(){
   if(!port){toast('未连接','error');return;}
+  lcdHostIntent = 'enable';
   await writeSer(frame(C_LCD,new Uint8Array([0x01])));
   log('HOST \u2192 开启LCD流','send');
-  setTimeout(function(){lcdStreamQuery();},300);
 }
 
 async function lcdStreamDisable(){
   if(!port){toast('未连接','error');return;}
+  lcdHostIntent = 'disable';
   await writeSer(frame(C_LCD,new Uint8Array([0x00])));
   log('HOST \u2192 关闭LCD流','send');
-  setTimeout(function(){lcdStreamQuery();},300);
 }
 
 async function lcdStreamQuery(){
   if(!port){toast('未连接','error');return;}
   if(lcdQueryTid){clearTimeout(lcdQueryTid);lcdQueryTid=null;}
+  lcdHostIntent = null; // 查询不改变意图
   await writeSer(frame(C_LCD,new Uint8Array(0)));
   log('HOST \u2192 查询LCD流状态','send');
 }
@@ -1279,8 +1439,8 @@ function toast(msg,type){
 }
 function removeToast(d,timer){
   if(timer)clearTimeout(timer);
-  d.style.opacity='0';d.style.transition='opacity .25s';
-  setTimeout(function(){if(d.parentNode)d.parentNode.removeChild(d);},260);
+  d.classList.add('hiding');
+  setTimeout(function(){if(d.parentNode)d.parentNode.removeChild(d);},350);
 }
 
 /* ===== LCD Stream Watch ===== */
@@ -1454,7 +1614,7 @@ function onVPFileSelected(input){
   $vp('ProgPct').textContent = '';
   $vp('ProgInfo').textContent = '';
 
-  const isVideo = f.name.toLowerCase().endsWith('.mp4');
+  const isVideo = /\.(mp4|webm|mkv|avi|mov|flv|wmv)$/i.test(f.name);
   const fpsRow = $vp('FpsRow');
   if(fpsRow) fpsRow.style.display = isVideo ? 'flex' : 'none';
   const sz = f.size < 1024 ? f.size+'B' : f.size < 1048576 ? (f.size/1024).toFixed(1)+'KB' : (f.size/1048576).toFixed(2)+'MB';
@@ -1472,7 +1632,7 @@ async function startVPProcess(){
   const w = parseInt($vp('Width').value) || 160;
   const h = parseInt($vp('Ht').value) || 80;
   const fps = Math.max(1, Math.min(60, parseFloat($vp('Fps').value) || 30));
-  const isVideo = VP.file.name.toLowerCase().endsWith('.mp4');
+  const isVideo = /\.(mp4|webm|mkv|avi|mov|flv|wmv)$/i.test(VP.file.name);
 
   if(w < 1 || w > 1024 || h < 1 || h > 1024){
     toast('尺寸范围: 1-1024','error'); return;
@@ -1532,10 +1692,14 @@ async function startVPProcess(){
       }
     }
 
-    updateVPProg(100);
-    $vp('Status').innerHTML = '&#10003; 转换完成';
+    // 解码帧数据（MJPEG 模式下耗时，需先提示用户等待）
+    $vp('Status').innerHTML = '<span class="spinner"></span> 正在解码...';
+    $vp('ProgInfo').textContent = '(生成预览中)';
 
     await showVPResult();
+
+    updateVPProg(100);
+    $vp('Status').innerHTML = '&#10003; 转换完成';
     toast('转换完成: '+VP.result.frame_count+' 帧','success');
   } catch(e){
     stopVpProgSim();
@@ -1665,7 +1829,7 @@ async function showVPResult(){
 }
 
 /* ===== VP 详情弹窗 ===== */
-let vpDPlaying = false, vpDTimer = null, vpDragging = false;
+let vpDPlaying = false, vpDTimer = null, vpDragging = false, vpRafStart = 0, vpSliderDrag = false, vpFrameDurationMs = 0;
 
 function openVPDetail(){
   VP.curFrame = 0;
@@ -1711,6 +1875,27 @@ function openVPDetail(){
       renderRGB565toCanvas(cv, VP.frames[idx], r.width, r.height, r.endian === 'little');
       finfo.textContent = (idx+1)+' / '+nf;
     };
+    // 拖动进度条时不暂停播放——rAF 跳过画布/滑块更新，松开后校正时间
+    function onSliderSeekStart(){
+      vpSliderDrag = true;
+    }
+    function onSliderSeekEnd(){
+      vpSliderDrag = false;
+      if(vpDPlaying){
+        // 从拖拽位置继续播放
+        var dragIdx = parseInt(slider.value);
+        VP.curFrame = dragIdx;
+        vpRafStart = performance.now() - dragIdx * vpFrameDurationMs;
+        // 立即渲染新帧
+        renderRGB565toCanvas(cv, VP.frames[dragIdx], r.width, r.height, r.endian === 'little');
+      }
+    }
+    slider.addEventListener('pointerdown', onSliderSeekStart);
+    slider.addEventListener('mousedown', onSliderSeekStart);
+    slider.addEventListener('touchstart', onSliderSeekStart);
+    slider.addEventListener('pointerup', onSliderSeekEnd);
+    slider.addEventListener('mouseup', onSliderSeekEnd);
+    slider.addEventListener('touchend', onSliderSeekEnd);
     pbtn.disabled = false;
     vpDPlaying = false;
     pbtn.innerHTML = '&#9654; 播放';
@@ -1771,7 +1956,7 @@ function initVPDrag(){
 }
 
 function closeVPDetail(){
-  if(vpDTimer){ clearInterval(vpDTimer); vpDTimer = null; }
+  if(vpDTimer){ cancelAnimationFrame(vpDTimer); vpDTimer = null; }
   vpDPlaying = false;
   const el = document.getElementById('vpDetailModal');
   el.classList.add('closing');
@@ -1787,7 +1972,7 @@ function toggleVPPlay(){
   const nf = VP.frames.length;
 
   if(vpDPlaying){
-    if(vpDTimer){ clearInterval(vpDTimer); vpDTimer = null; }
+    if(vpDTimer){ cancelAnimationFrame(vpDTimer); vpDTimer = null; }
     vpDPlaying = false;
     btn.innerHTML = '&#9654; 播放';
     return;
@@ -1795,14 +1980,43 @@ function toggleVPPlay(){
 
   vpDPlaying = true;
   btn.innerHTML = '&#9646; 暂停';
-  const interval = (r.fps && nf > 1) ? 1000/r.fps : 33;
+  // Use elapsed-time-based playback instead of setInterval
+  // Calculate frame duration from original video duration / frame count
+  // This guarantees correct speed even if ffmpeg's frame count doesn't
+  // match duration*fps exactly (VFR, rounding, etc.)
+  vpFrameDurationMs = 0;
+  if (r.original_duration && r.original_duration > 0 && nf > 1) {
+    vpFrameDurationMs = (r.original_duration * 1000) / nf;
+  } else {
+    var fpsVal = (r.fps && nf > 1) ? r.fps : 30;
+    vpFrameDurationMs = 1000 / fpsVal;
+  }
+  var frameDuration = vpFrameDurationMs;
+  // 从当前位置帧开始播放，不归零
+  var startFrame = (VP.curFrame !== undefined ? VP.curFrame : 0) % nf;
+  vpRafStart = performance.now() - startFrame * frameDuration;
+  var lastFrame = startFrame - 1;
+  // 立即渲染当前帧（避免首个 rAF 前空白）
+  renderRGB565toCanvas(cv, VP.frames[startFrame], r.width, r.height, r.endian === 'little');
 
-  vpDTimer = setInterval(function(){
-    VP.curFrame = (VP.curFrame + 1) % nf;
-    renderRGB565toCanvas(cv, VP.frames[VP.curFrame], r.width, r.height, r.endian === 'little');
-    slider.value = VP.curFrame;
-    finfo.textContent = (VP.curFrame+1)+' / '+nf;
-  }, interval);
+  function playLoop(now){
+    if(!vpDPlaying){ return; }
+    var elapsed = now - vpRafStart;
+    var frameIndex = Math.floor(elapsed / frameDuration) % nf;
+    if(frameIndex !== lastFrame){
+      VP.curFrame = frameIndex;
+      lastFrame = frameIndex;
+      // 用户拖动滑块时不覆盖画布/滑块显示（oninput 处理渲染）
+      if(!vpSliderDrag){
+        renderRGB565toCanvas(cv, VP.frames[frameIndex], r.width, r.height, r.endian === 'little');
+        slider.value = frameIndex;
+        finfo.textContent = (frameIndex+1)+' / '+nf;
+      }
+    }
+    vpDTimer = requestAnimationFrame(playLoop);
+  }
+
+  vpDTimer = requestAnimationFrame(playLoop);
 }
 
 function renderRGB565toCanvas(canvas, data, w, h, littleEndian){
@@ -1909,7 +2123,19 @@ async function rebuildMJPEGFrames() {
       }
       VP.frames.push(rgba);
       bitmap.close();
-    } catch(e) { break; }
+    } catch(e) {
+      console.warn('MJPEG 解码失败 ['+i+']:', e.message);
+      break;
+    }
+  }
+  // 校验：实际解码帧数与服务器标注不一致时用实际数修正
+  if (VP.frames.length !== r.frame_count) {
+    console.warn('MJPEG: 实际解码 ' + VP.frames.length + '/' + r.frame_count + ' 帧');
+  }
+  // 回退：如果 original_duration 无效，用 (帧数 / fps) 计算
+  if (!r.original_duration || r.original_duration <= 0) {
+    var fpsEst = (r.fps && r.fps > 0) ? r.fps : 30;
+    r.original_duration = VP.frames.length / fpsEst;
   }
 }
 

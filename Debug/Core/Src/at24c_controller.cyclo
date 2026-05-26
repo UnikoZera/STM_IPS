@@ -1,5 +1,4 @@
-../Core/Src/at24c_controller.c:11:13:at24c_wait_ready	3
-../Core/Src/at24c_controller.c:32:6:at24c_write_byte	3
-../Core/Src/at24c_controller.c:52:6:at24c_read_byte	3
-../Core/Src/at24c_controller.c:73:6:at24c_write_buffer	15
-../Core/Src/at24c_controller.c:124:6:at24c_read_buffer	4
+../Core/Src/at24c_controller.c:32:6:at24c_write_byte	5
+../Core/Src/at24c_controller.c:52:6:at24c_read_byte	2
+../Core/Src/at24c_controller.c:73:6:at24c_write_buffer	20
+../Core/Src/at24c_controller.c:124:6:at24c_read_buffer	3

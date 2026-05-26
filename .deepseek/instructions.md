@@ -8,7 +8,6 @@
 **Tree:**
 ```
 FILE: .cproject
-DIR: .deepseek
 DIR: .git
   FILE: COMMIT_EDITMSG
   FILE: FETCH_HEAD

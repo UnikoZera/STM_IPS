@@ -5,10 +5,10 @@
 ../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:400:20:USBD_Stop	2
 ../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:440:20:USBD_RunTestMode	1
 ../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:465:20:USBD_SetClassConfig	2
-../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:505:20:USBD_ClrClassConfig	2
-../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:546:20:USBD_LL_SetupStage	5
-../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:586:20:USBD_LL_DataOutStage	16
-../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:684:20:USBD_LL_DataInStage	15
+../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:505:20:USBD_ClrClassConfig	1
+../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:546:20:USBD_LL_SetupStage	4
+../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:586:20:USBD_LL_DataOutStage	8
+../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:684:20:USBD_LL_DataInStage	12
 ../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:777:20:USBD_LL_Reset	4
 ../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:845:20:USBD_LL_SetSpeed	1
 ../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c:859:20:USBD_LL_Suspend	2

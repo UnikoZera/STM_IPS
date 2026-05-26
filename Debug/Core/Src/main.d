@@ -38,8 +38,9 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../USB_DEVICE/Target/usbd_conf.h ../Core/Inc/gpio.h ../Core/Inc/lcd.h \
  ../Core/Inc/spi.h ../Core/Inc/gpio.h ../Core/Inc/tim.h \
  ../Core/Inc/lcd_font.h ../Core/Inc/usb_controller.h \
- ../Core/Inc/lcd_mjpeg.h ../Core/Inc/lcd_driver.h ../Core/Inc/lcd.h \
- ../Core/Inc/lcd_ui.h ../Core/Inc/lcd_driver.h \
+ ../Core/Inc/lcd_mjpeg.h ../Middlewares/ST/ARM/DSP/Inc/arm_math.h \
+ ../Drivers/CMSIS/Include/cmsis_compiler.h ../Core/Inc/lcd_driver.h \
+ ../Core/Inc/lcd.h ../Core/Inc/lcd_ui.h ../Core/Inc/lcd_driver.h \
  ../Core/Inc/w25q_controller.h ../Core/Inc/at24c_controller.h \
  ../Core/Inc/i2c.h ../Core/Inc/usb_controller.h \
  ../Core/Inc/storage_manager.h ../Core/Inc/crc16.h \
@@ -94,6 +95,8 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Inc/lcd_font.h:
 ../Core/Inc/usb_controller.h:
 ../Core/Inc/lcd_mjpeg.h:
+../Middlewares/ST/ARM/DSP/Inc/arm_math.h:
+../Drivers/CMSIS/Include/cmsis_compiler.h:
 ../Core/Inc/lcd_driver.h:
 ../Core/Inc/lcd.h:
 ../Core/Inc/lcd_ui.h:

@@ -55,7 +55,7 @@ void lcd_ui_init(void)
 
     // 从文件系统获取视频文件的W25Q地址
     {
-        int16_t idx = find_large_file_by_name("test_8");
+        int16_t idx = find_large_file_by_name("qwq");
         if (idx >= 0)
         {
             large_file_info_t info;

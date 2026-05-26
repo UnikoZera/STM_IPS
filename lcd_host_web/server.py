@@ -14,7 +14,8 @@ from flask import Flask, request, send_file, jsonify, make_response, abort
 
 app = Flask(__name__, static_url_path='', static_folder='.')
 
-ALLOWED_EXT = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp', '.mp4'}
+ALLOWED_EXT = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp', '.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv'}
+VIDEO_EXT = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv'}
 FFMPEG = 'ffmpeg'
 FFPROBE = 'ffprobe'
 HERE = Path(__file__).parent
@@ -385,7 +386,7 @@ def convert():
     if not (1 <= width <= 1024) or not (1 <= height <= 1024):
         return jsonify({'error': 'Dimensions out of range (1-1024)'}), 400
     ext = Path(file.filename).suffix.lower()
-    is_video = ext == '.mp4'
+    is_video = ext in VIDEO_EXT
     if ext not in ALLOWED_EXT:
         return jsonify({'error': f'Unsupported file type: {ext}'}), 400
 
@@ -462,9 +463,9 @@ def _stream_mjpeg_frames(in_path: str, width: int, height: int,
     cmd = [FFMPEG, '-y', '-i', in_path,
            '-vf', f'scale={width}:{height}:flags=lanczos',
            '-q:v', str(max(2, min(31, quality))),
-           '-pix_fmt', 'yuvj420p',
-           '-f', 'image2', pat]
+           '-pix_fmt', 'yuvj420p']
     if fps > 0: cmd += ['-r', str(fps)]
+    cmd += ['-f', 'image2', pat]
     if vframes > 0: cmd += ['-vframes', str(vframes)]
     subprocess.run(cmd, capture_output=True, timeout=300)
 
@@ -497,9 +498,8 @@ def _pack_mjpeg(frames: list, width: int, height: int, quality: int) -> bytes:
 
 def _process_video_mjpeg(in_path: str, width: int, height: int,
                           output_fps: float = 30, quality: int = 80) -> dict:
-    """Process video with MJPEG compression."""
+    """Process video with MJPEG compression (single ffmpeg pass)."""
     output_fps = max(1, min(60, output_fps))
-    count = 0
     all_frames = []
 
     # Map user-friendly quality (higher=better) to ffmpeg -q:v (lower=better)
@@ -507,32 +507,39 @@ def _process_video_mjpeg(in_path: str, width: int, height: int,
     _q = max(1, min(100, quality))
     ffmpeg_q = max(2, min(31, round(32 - _q / 100 * 30)))
 
-    # Pass 1: extract RGB565 frames for browser preview (PPM is fast, no cap)
-    preview_raw = bytearray()
-    for rgb, fw, fh in _stream_frames(in_path, width, height, fps=output_fps):
-        frame = _convert_to_rgb565(rgb, fw, fh, '>')
-        preview_raw.extend(frame)
-
-    # Pass 2: MJPEG encoding (all frames)
+    # Single pass: extract JPEG frames directly
+    # Browser decodes JPEG -> RGB565 for preview via rebuildMJPEGFrames(),
+    # so no separate raw preview pass needed — eliminates frame-count mismatch
     for jpeg_bytes in _stream_mjpeg_frames(in_path, width, height,
                                             fps=output_fps,
                                             quality=ffmpeg_q):
         all_frames.append(jpeg_bytes)
-        count += 1
+
+    count = len(all_frames)
     if count == 0:
         raise RuntimeError('No frames extracted')
+
+    # Probe original video duration for accurate playback timing
+    try:
+        dur_cmd = [FFPROBE, '-v', 'error', '-show_entries', 'format=duration',
+                   '-of', 'csv=p=0', in_path]
+        dur_r = subprocess.run(dur_cmd, capture_output=True, text=True, timeout=10)
+        original_duration = float(dur_r.stdout.strip())
+    except Exception:
+        original_duration = 0
     compressed = _pack_mjpeg(all_frames, width, height, quality)
     name = Path(in_path).stem
     did = _save_temp(name, compressed, width, height, count, output_fps)
     result = {
         'type': 'video',
-        'preview_hex': bytes(preview_raw).hex(),
+        'preview_hex': '',
         'download_id': did,
         'width': width,
         'height': height,
         'frame_count': count,
         'frame_size': width * height * 2,
         'fps': output_fps,
+        'original_duration': original_duration,
         'quality': quality,
         'codec': 'mjpeg',
         'endian': 'big',
