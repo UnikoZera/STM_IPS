@@ -8,6 +8,7 @@
  */
 
 #include "lcd_ui.h"
+#include "lcd_mjpeg.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +38,7 @@ void lcd_ui_init(void)
 
     // 从文件系统获取图片文件的W25Q地址
     {
-        int16_t idx = find_large_file_by_name("low_pic");
+        int16_t idx = find_large_file_by_name("baka_u");
         if (idx >= 0)
         {
             large_file_info_t info;
@@ -45,8 +46,8 @@ void lcd_ui_init(void)
             {
                 g_picture.x = 10;
                 g_picture.y = 10;
-                g_picture.width = 45;
-                g_picture.height = 60;
+                g_picture.width = 80;
+                g_picture.height = 80;
                 g_picture.addr = info.start_sector * 4096;
             }
         }
@@ -54,16 +55,16 @@ void lcd_ui_init(void)
 
     // 从文件系统获取视频文件的W25Q地址
     {
-        int16_t idx = find_large_file_by_name("pure");
+        int16_t idx = find_large_file_by_name("test_8");
         if (idx >= 0)
         {
             large_file_info_t info;
             if (get_large_file_info((uint8_t)idx, &info))
             {
-                g_video.x = 10;
+                g_video.x = 0;
                 g_video.y = 0;
-                g_video.width = 120;
-                g_video.height = 80;
+                g_video.width = 80;
+                g_video.height = 40;
                 g_video.start_addr = info.start_sector * 4096;
                 g_video.end_addr = g_video.start_addr + info.size;
             }
@@ -79,8 +80,8 @@ void lcd_ui_init(void)
     // lcd_anim_manager_add_layer(&g_label2, lcd_draw_label_layer);
     // lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
     // lcd_anim_manager_add_layer(&g_label3, lcd_draw_label_layer);
-    lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
-    // lcd_anim_manager_add_layer(&g_video, lcd_draw_video_frame_layer);
+    // lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
+    lcd_anim_manager_add_layer(&g_video, lcd_draw_video_frame_layer);
     #pragma endregion
 
     #pragma region 定义动画并启动(可选,不定义动画元素也会被正常渲染，但定义动画后元素会动起来)

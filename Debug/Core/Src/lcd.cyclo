@@ -22,7 +22,7 @@
 ../Core/Src/lcd.c:576:6:lcd_draw_line_dma	16
 ../Core/Src/lcd.c:646:6:lcd_draw_picture_dma	10
 ../Core/Src/lcd.c:677:6:lcd_draw_picture_from_w25q	31
-../Core/Src/lcd.c:804:6:lcd_play_video_from_w25q	22
-../Core/Src/lcd.c:903:20:bl_read_block_var	6
-../Core/Src/lcd.c:926:20:bl_put_pixel	5
-../Core/Src/lcd.c:953:6:lcd_play_compressed_video_from_w25q	50
+../Core/Src/lcd.c:804:6:lcd_play_video_from_w25q	26
+../Core/Src/lcd.c:909:20:bl_read_block_var	6
+../Core/Src/lcd.c:932:20:bl_put_pixel	5
+../Core/Src/lcd.c:959:6:lcd_play_compressed_video_from_w25q	50

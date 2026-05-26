@@ -807,14 +807,20 @@ void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t heigh
 
     /* auto-detect BL compressed data and redirect */
     {
-        uint8_t m[2];
-        w25q_fast_read_data_dma(w25q_start_addr, m, 2);
+        uint8_t m[4];
+        w25q_fast_read_data_dma(w25q_start_addr, m, 4);
         while (w25q_dma_is_busy()) w25q_dma_task();
         if (m[0] == BL_MAGIC0 && m[1] == BL_MAGIC1)
         {
             lcd_play_compressed_video_from_w25q(x, y, width, height, w25q_start_addr, w25q_end_addr);
             return;
         }
+        else if (m[0] == 'M' && m[1] == 'J' && m[2] == 'P' && m[3] == 'G')
+        {
+            lcd_play_mjpeg_video(x, y, width, height, w25q_start_addr, w25q_end_addr);
+            return;
+        }
+        /* 既不是 BL 也不是 MJPEG，继续下方原始 RGB565 播放 */
     }
 
     uint32_t frame_bytes = (uint32_t)width * height * 2;

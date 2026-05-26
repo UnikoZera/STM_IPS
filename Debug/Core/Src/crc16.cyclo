@@ -1,3 +1,2 @@
-../Core/Src/crc16.c:12:6:crc16_usb_init_table	4
-../Core/Src/crc16.c:35:10:crc16_usb_calc	3
-../Core/Src/crc16.c:57:10:crc16_usb_packing	3
+../Core/Src/crc16.c:47:10:crc16_usb_calc	2
+../Core/Src/crc16.c:65:10:crc16_usb_packing	3

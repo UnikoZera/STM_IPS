@@ -36,7 +36,7 @@ Core/Src/storage_manager.o: ../Core/Src/storage_manager.c \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd_ex.h \
  ../Core/Inc/w25q_controller.h ../Core/Inc/spi.h \
  ../Core/Inc/usb_controller.h ../Core/Inc/lcd.h ../Core/Inc/gpio.h \
- ../Core/Inc/tim.h ../Core/Inc/lcd_font.h
+ ../Core/Inc/tim.h ../Core/Inc/lcd_font.h ../Core/Inc/lcd_mjpeg.h
 ../Core/Inc/storage_manager.h:
 ../Core/Inc/crc16.h:
 ../Core/Inc/at24c_controller.h:
@@ -82,3 +82,4 @@ Core/Src/storage_manager.o: ../Core/Src/storage_manager.c \
 ../Core/Inc/gpio.h:
 ../Core/Inc/tim.h:
 ../Core/Inc/lcd_font.h:
+../Core/Inc/lcd_mjpeg.h:

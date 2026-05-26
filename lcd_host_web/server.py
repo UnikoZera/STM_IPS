@@ -374,7 +374,11 @@ def convert():
         fps = max(1, min(60, float(request.form.get('fps', 30))))
         swap = request.form.get('swap', '0') == '1'
         brightness = max(10, min(300, float(request.form.get('brightness', 100))))
-        quality = max(7, min(11, int(request.form.get('quality', 11))))
+        codec = request.form.get('codec', 'bl').strip().lower()
+        if codec == 'mjpeg':
+            quality = max(1, min(100, int(request.form.get('quality', 80))))
+        else:
+            quality = max(7, min(11, int(request.form.get('quality', 11))))
     except ValueError:
         return jsonify({'error': 'Invalid parameters'}), 400
 
@@ -394,7 +398,10 @@ def convert():
     try:
         endian = '<' if swap else '>'
         if is_video:
-            result = _process_video(in_path, width, height, fps, endian, brightness, quality)
+            if codec == 'mjpeg':
+                result = _process_video_mjpeg(in_path, width, height, fps, quality)
+            else:
+                result = _process_video(in_path, width, height, fps, endian, brightness, quality)
         else:
             result = _process_image(in_path, width, height, endian, brightness, quality)
     except subprocess.CalledProcessError as e:
@@ -410,7 +417,8 @@ def convert():
 
     result['original_name'] = file.filename
     result['hex'] = result.pop('preview_hex', '')
-    result['endian'] = 'little' if swap else 'big'
+    if codec != 'mjpeg':
+        result['endian'] = 'little' if swap else 'big'
     return jsonify(result)
 
 
@@ -441,6 +449,95 @@ def _process_image(in_path: str, width: int, height: int,
     compressed = compress_frame(comp_data, fw, fh, quality)
     result['compressed_hex'] = compressed.hex()
 
+    return result
+
+
+def _stream_mjpeg_frames(in_path: str, width: int, height: int,
+                          fps: float = 0, vframes: int = 0,
+                          quality: int = 80):
+    """Extract individual JPEG frames via ffmpeg to temp files,
+    then read them back. Avoids pipe-level SOI/EOI splitting issues."""
+    tmpdir = Path(tempfile.mkdtemp(prefix='mjpeg_'))
+    pat = str(tmpdir / 'frame_%04d.jpg')
+    cmd = [FFMPEG, '-y', '-i', in_path,
+           '-vf', f'scale={width}:{height}:flags=lanczos',
+           '-q:v', str(max(2, min(31, quality))),
+           '-pix_fmt', 'yuvj420p',
+           '-f', 'image2', pat]
+    if fps > 0: cmd += ['-r', str(fps)]
+    if vframes > 0: cmd += ['-vframes', str(vframes)]
+    subprocess.run(cmd, capture_output=True, timeout=300)
+
+    frames = sorted(tmpdir.iterdir())
+    for f in frames:
+        data = f.read_bytes()
+        if len(data) > 0 and data[0] == 0xFF and data[1] == 0xD8:
+            yield data
+    # Cleanup
+    import shutil
+    try:
+        shutil.rmtree(str(tmpdir))
+    except OSError:
+        pass
+
+
+def _pack_mjpeg(frames: list, width: int, height: int, quality: int) -> bytes:
+    """Pack MJPEG frames into the W25Q file format."""
+    header = bytearray(b'MJPG')
+    header.extend(struct.pack('<H', len(frames)))  # frame_count at offset 4
+    header.extend(struct.pack('<H', width))         # width  at offset 6
+    header.extend(struct.pack('<H', height))        # height at offset 8
+    header.extend(b'\x00' * 4)                      # reserved
+    body = bytearray()
+    for frame in frames:
+        body.extend(struct.pack('<I', len(frame)))   # 4B size prefix
+        body.extend(frame)                           # JPEG bytes
+    return bytes(header) + bytes(body)
+
+
+def _process_video_mjpeg(in_path: str, width: int, height: int,
+                          output_fps: float = 30, quality: int = 80) -> dict:
+    """Process video with MJPEG compression."""
+    output_fps = max(1, min(60, output_fps))
+    count = 0
+    all_frames = []
+
+    # Map user-friendly quality (higher=better) to ffmpeg -q:v (lower=better)
+    # user: 1-100 -> ffmpeg_q: 31-2
+    _q = max(1, min(100, quality))
+    ffmpeg_q = max(2, min(31, round(32 - _q / 100 * 30)))
+
+    # Pass 1: extract RGB565 frames for browser preview (PPM is fast, no cap)
+    preview_raw = bytearray()
+    for rgb, fw, fh in _stream_frames(in_path, width, height, fps=output_fps):
+        frame = _convert_to_rgb565(rgb, fw, fh, '>')
+        preview_raw.extend(frame)
+
+    # Pass 2: MJPEG encoding (all frames)
+    for jpeg_bytes in _stream_mjpeg_frames(in_path, width, height,
+                                            fps=output_fps,
+                                            quality=ffmpeg_q):
+        all_frames.append(jpeg_bytes)
+        count += 1
+    if count == 0:
+        raise RuntimeError('No frames extracted')
+    compressed = _pack_mjpeg(all_frames, width, height, quality)
+    name = Path(in_path).stem
+    did = _save_temp(name, compressed, width, height, count, output_fps)
+    result = {
+        'type': 'video',
+        'preview_hex': bytes(preview_raw).hex(),
+        'download_id': did,
+        'width': width,
+        'height': height,
+        'frame_count': count,
+        'frame_size': width * height * 2,
+        'fps': output_fps,
+        'quality': quality,
+        'codec': 'mjpeg',
+        'endian': 'big',
+    }
+    result['compressed_hex'] = compressed.hex()
     return result
 
 

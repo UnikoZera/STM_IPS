@@ -13,6 +13,7 @@
 #include "tim.h"
 #include "lcd_font.h"
 #include "usb_controller.h"
+#include "lcd_mjpeg.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>

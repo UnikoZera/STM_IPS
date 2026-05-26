@@ -1,0 +1,5 @@
+../Core/Src/lcd_mjpeg.c:36:8:lcd_mjpeg_last_error	1
+../Core/Src/lcd_mjpeg.c:41:22:lcd_mjpeg_get_state	1
+../Core/Src/lcd_mjpeg.c:54:22:mjpeg_read_cb	4
+../Core/Src/lcd_mjpeg.c:85:13:write_pixel	5
+../Core/Src/lcd_mjpeg.c:120:6:lcd_play_mjpeg_video	42

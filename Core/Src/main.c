@@ -109,7 +109,6 @@ int main(void)
   MX_TIM9_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-  crc16_usb_init_table();
   usb_controller_init(&g_usb_controller);
   lcd_init();
 
@@ -119,10 +118,6 @@ int main(void)
   // clear_large_file();
   // clear_small_file();
 
-  // 读取大文件区的图片文件信息，设置UI图片背景层
-  get_large_file_info(find_large_file_by_name("big"), &test_info);
-
-  get_large_file_info(find_large_file_by_name("video"), &video_info);
   lcd_ui_init();
   
   /* USER CODE END 2 */

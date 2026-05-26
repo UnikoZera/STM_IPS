@@ -1,4 +1,5 @@
-Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
+Core/Src/lcd_mjpeg.o: ../Core/Src/lcd_mjpeg.c ../Core/Inc/lcd.h \
+ ../Core/Inc/spi.h ../Core/Inc/main.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h \
  ../Core/Inc/stm32f4xx_hal_conf.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rcc.h \
@@ -32,18 +33,12 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_usb.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd_ex.h \
- ../Core/Inc/dma.h ../Core/Inc/main.h ../Core/Inc/i2c.h ../Core/Inc/spi.h \
- ../Core/Inc/tim.h ../USB_DEVICE/App/usb_device.h \
- ../Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_def.h \
- ../USB_DEVICE/Target/usbd_conf.h ../Core/Inc/gpio.h ../Core/Inc/lcd.h \
- ../Core/Inc/spi.h ../Core/Inc/gpio.h ../Core/Inc/tim.h \
- ../Core/Inc/lcd_font.h ../Core/Inc/usb_controller.h \
- ../Core/Inc/lcd_mjpeg.h ../Core/Inc/lcd_driver.h ../Core/Inc/lcd.h \
- ../Core/Inc/lcd_ui.h ../Core/Inc/lcd_driver.h \
- ../Core/Inc/w25q_controller.h ../Core/Inc/at24c_controller.h \
- ../Core/Inc/i2c.h ../Core/Inc/usb_controller.h \
- ../Core/Inc/storage_manager.h ../Core/Inc/crc16.h \
- ../Core/Inc/at24c_controller.h ../Core/Inc/w25q_controller.h
+ ../Core/Inc/gpio.h ../Core/Inc/tim.h ../Core/Inc/lcd_font.h \
+ ../Core/Inc/usb_controller.h ../Core/Inc/lcd_mjpeg.h \
+ ../Core/Inc/lcd_mjpeg.h ../Core/Inc/w25q_controller.h \
+ ../Core/Inc/picojpeg.h
+../Core/Inc/lcd.h:
+../Core/Inc/spi.h:
 ../Core/Inc/main.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h:
 ../Core/Inc/stm32f4xx_hal_conf.h:
@@ -78,31 +73,11 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_usb.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pcd_ex.h:
-../Core/Inc/dma.h:
-../Core/Inc/main.h:
-../Core/Inc/i2c.h:
-../Core/Inc/spi.h:
-../Core/Inc/tim.h:
-../USB_DEVICE/App/usb_device.h:
-../Middlewares/ST/STM32_USB_Device_Library/Core/Inc/usbd_def.h:
-../USB_DEVICE/Target/usbd_conf.h:
-../Core/Inc/gpio.h:
-../Core/Inc/lcd.h:
-../Core/Inc/spi.h:
 ../Core/Inc/gpio.h:
 ../Core/Inc/tim.h:
 ../Core/Inc/lcd_font.h:
 ../Core/Inc/usb_controller.h:
 ../Core/Inc/lcd_mjpeg.h:
-../Core/Inc/lcd_driver.h:
-../Core/Inc/lcd.h:
-../Core/Inc/lcd_ui.h:
-../Core/Inc/lcd_driver.h:
+../Core/Inc/lcd_mjpeg.h:
 ../Core/Inc/w25q_controller.h:
-../Core/Inc/at24c_controller.h:
-../Core/Inc/i2c.h:
-../Core/Inc/usb_controller.h:
-../Core/Inc/storage_manager.h:
-../Core/Inc/crc16.h:
-../Core/Inc/at24c_controller.h:
-../Core/Inc/w25q_controller.h:
+../Core/Inc/picojpeg.h:
