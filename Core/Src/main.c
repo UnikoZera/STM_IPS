@@ -56,8 +56,6 @@
 
 /* USER CODE BEGIN PV */
 
-large_file_info_t test_info;
-large_file_info_t video_info;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -109,11 +107,12 @@ int main(void)
   MX_TIM9_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
+
   usb_controller_init(&g_usb_controller);
   lcd_init();
 
   bool w25q_ok = w25q_init();
-  bool storage_init_ok = storage_manager_init();
+  bool storage_ok = storage_manager_init();
 
   // clear_large_file();
   // clear_small_file();
@@ -139,7 +138,7 @@ int main(void)
       lcd_draw_string(10, 10, RED, BLACK, 8, "W25Q FAIL"); // hopefully this won't happen, if it does then the system is basically unusable anyway
     }
 
-    if (storage_init_ok)
+    if (storage_ok)
     {
       storage_manager_task();
     }
@@ -150,7 +149,6 @@ int main(void)
     // lcd_draw_string(10, 50, YELLOW, BLACK, 8, "STM IPS"); // 显示标题，确认系统至少部分功能正常
 
     usb_controller_task(&g_usb_controller);
-    // storage_manager_task();
 
     /* USER CODE END WHILE */
 

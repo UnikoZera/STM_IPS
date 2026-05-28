@@ -108,6 +108,8 @@ void lcd_set_address(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
 
 void lcd_init(void)
 {
+    HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2);
+
 	LCD_RES_Clr();
 	HAL_Delay(50);
 	LCD_RES_Set();
@@ -191,12 +193,13 @@ void lcd_init(void)
 	lcd_write_data(0xA0); // 160
 
 	lcd_write_cmd(0x2C);
+    set_lcd_brightness(75);
 }
 
 void set_lcd_brightness(uint8_t brightness)
 {
-	if (brightness > 100)
-		brightness = 100; // 限制亮度范围
+    brightness = brightness > 100 ? 100 : brightness;   // 限制亮度在0-100范围内
+    brightness = brightness < 5 ? 5 : brightness;       // 最小亮度限制在5%，过低可能导致屏幕完全看不见
 	__HAL_TIM_SetCompare(&htim9, TIM_CHANNEL_2, brightness);
 }
 

@@ -10,5 +10,6 @@
 
 #include "w25q_controller.h"
 #include "lcd.h"
+#include "tim.h"
 
 #endif /* INC_CALL_BACK_FUNCTIONS_H_ */

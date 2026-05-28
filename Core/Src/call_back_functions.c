@@ -44,3 +44,11 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
         w25q_on_spi_error_callback();
     }
 }
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance == TIM3)
+    {
+        /* CODE */
+    }
+}

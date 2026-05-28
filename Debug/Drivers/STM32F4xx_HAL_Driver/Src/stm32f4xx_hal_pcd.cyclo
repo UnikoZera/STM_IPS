@@ -1,10 +1,9 @@
-../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:123:19:HAL_PCD_Init	9
-../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:258:19:HAL_PCD_DeInit	3
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:297:13:HAL_PCD_MspInit	1
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:123:19:HAL_PCD_Init	10
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:312:13:HAL_PCD_MspDeInit	1
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:258:19:HAL_PCD_DeInit	3
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:1015:19:HAL_PCD_Start	4
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:1040:19:HAL_PCD_Stop	4
-../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:1068:6:HAL_PCD_IRQHandler	57
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:1532:6:HAL_PCD_WKUP_IRQHandler	2
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:1559:13:HAL_PCD_DataOutStageCallback	1
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:1576:13:HAL_PCD_DataInStageCallback	1
@@ -28,11 +27,9 @@
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:1961:19:HAL_PCD_EP_SetStall	5
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2004:19:HAL_PCD_EP_ClrStall	4
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2040:19:HAL_PCD_EP_Abort	2
+../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:1068:6:HAL_PCD_IRQHandler	85
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2066:19:HAL_PCD_EP_Flush	3
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2089:19:HAL_PCD_ActivateRemoteWakeup	1
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2099:19:HAL_PCD_DeActivateRemoteWakeup	1
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2128:18:HAL_PCD_GetState	1
 ../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2140:19:HAL_PCD_SetTestMode	2
-../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2182:26:PCD_WriteEmptyTxFifo	8
-../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2242:26:PCD_EP_OutXfrComplete_int	16
-../Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pcd.c:2354:26:PCD_EP_OutSetupPacket_int	5

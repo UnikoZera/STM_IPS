@@ -1,30 +1,30 @@
-/*
+﻿/*
  * lcd_mjpeg.c
  *
- *  Created on: 2026年3月15日
+ *  Created on: 2026年4月5日
  *      Author: UnikoZera
  *
- *  MJPEG 视频解码实现
+ *  MJPEG 视频解码实现 (优化版)
  *
  *  依赖: lcd.h (lcd_write_ptr, lcd_dma_busy, LCD_W, LCD_H)
- *        w25q_controller.h (w25q_fast_read_data, w25q_dma_is_busy, w25q_dma_task)
+ *        w25q_controller.h (w25q_fast_read_data, w25q_dma_busy, w25q_dma_task)
  *        picojpeg.h (pjpeg_decode_init, pjpeg_decode_mcu, pjpeg_image_info_t)
  *
- *  工作流程:
- *    1. lcd_play_mjpeg_video() 每调用一次处理一帧
- *    2. 首次调用/位置变化时读取 14B 文件头, 初始化 picojpeg
- *    3. 读取 4B 帧大小前缀 + JPEG 数据
- *    4. 循环 pjpeg_decode_mcu() 解码所有 MCU
- *    5. 每解码一个 MCU，将 RGB 写到 lcd_write_ptr 缓冲区
- *    6. 播完最后一帧回到文件头循环
+ *  优化项:
+ *    1. Flash 缓存 512B -> 1024B, 减少 DMA 读取次数
+ *    2. MCU 解码热循环: 非裁剪快速路径, 跳过逐像素边界检查
+ *    3. RGB565 内联函数, 编译器自动内联优化
+ *    4. 本地指针缓存 MCU R/G/B buf, 避免重复解引用
+ *    5. 移除每帧调试 dump 读取, 节省一次 Flash 访问
+ *    6. 快速路径内层循环添加 img_x < img_w 裁剪, 支持任意分辨率
  */
 
-#include "lcd.h"             /* lcd_write_ptr, lcd_dma_busy, LCD_W, LCD_H */
-#include "lcd_mjpeg.h"       /* mjpeg_state_t, MJPEG_MAGIC, 错误码 */
-#include "w25q_controller.h" /* w25q_fast_read_data, w25q_dma_* */
-#include "picojpeg.h"        /* pjpeg_* */
+#include "lcd.h"
+#include "lcd_mjpeg.h"
+#include "w25q_controller.h"
+#include "picojpeg.h"
 
-#include <string.h> /* memcpy */
+#include <string.h>
 
 static mjpeg_state_t s_mjpeg = {0};
 
@@ -38,59 +38,58 @@ const mjpeg_state_t *lcd_mjpeg_get_state(void)
     return &s_mjpeg;
 }
 
-#define MJPEG_CACHE_SIZE 512
+/* ---- Flash 缓存 (1024B, 减少约 50% DMA 命中失败) ---- */
+#define MJPEG_CACHE_SIZE 1024
 static uint8_t s_flash_cache[MJPEG_CACHE_SIZE];
-static uint32_t s_cache_addr = 0xFFFFFFFF; // 当前缓存对应的 Flash 起始地址
-static uint32_t s_cache_len = 0;           // 当前缓存的有效长度
+static uint32_t s_cache_addr = 0xFFFFFFFF;
+static uint32_t s_cache_len  = 0;
 
 static unsigned char mjpeg_read_cb(unsigned char *pBuf, unsigned char buf_size,
                                    unsigned char *pBytesActuallyRead,
                                    void *pCallback_data)
 {
-    uint32_t *pOffset = (uint32_t *)pCallback_data;
-    uint32_t remaining = s_mjpeg.frame_size - *pOffset;
-    uint32_t to_read = (buf_size > remaining) ? remaining : buf_size;
-
-    if (to_read > 0)
+    uint32_t *pOffset   = (uint32_t *)pCallback_data;
+    uint32_t  remaining = s_mjpeg.frame_size - *pOffset;
+    if (remaining == 0)
     {
-        uint32_t target_addr = s_mjpeg.frame_data_addr + *pOffset;
-
-        // 检查请求的数据是否完全在 Cache 中
-        if (s_cache_addr != 0xFFFFFFFF && target_addr >= s_cache_addr &&
-            (target_addr + to_read) <= (s_cache_addr + s_cache_len))
-        {
-            uint32_t offset_in_cache = target_addr - s_cache_addr;
-            memcpy(pBuf, &s_flash_cache[offset_in_cache], to_read);
-        }
-        else
-        {
-            // Cache Miss: 触发大块读取
-            uint32_t chunk_to_read = remaining;
-            if (chunk_to_read > MJPEG_CACHE_SIZE)
-                chunk_to_read = MJPEG_CACHE_SIZE;
-
-            w25q_fast_read_data(target_addr, s_flash_cache, (uint16_t)chunk_to_read);
-            while (w25q_dma_is_busy())
-                w25q_dma_task(); // 等待 DMA 完成
-
-            s_cache_addr = target_addr;
-            s_cache_len = chunk_to_read;
-
-            memcpy(pBuf, s_flash_cache, to_read);
-        }
-        *pOffset += to_read;
+        *pBytesActuallyRead = 0;
+        return 0;
     }
 
+    uint32_t to_read = buf_size;
+    if (to_read > remaining)
+        to_read = remaining;
+
+    uint32_t target_addr = s_mjpeg.frame_data_addr + *pOffset;
+
+    /* Cache hit? */
+    if (target_addr >= s_cache_addr &&
+        (target_addr + to_read) <= (s_cache_addr + s_cache_len))
+    {
+        memcpy(pBuf, &s_flash_cache[target_addr - s_cache_addr], to_read);
+    }
+    else
+    {
+        /* Cache miss: 读取整块 */
+        uint32_t chunk = remaining;
+        if (chunk > MJPEG_CACHE_SIZE)
+            chunk = MJPEG_CACHE_SIZE;
+
+        w25q_fast_read_data(target_addr, s_flash_cache, (uint16_t)chunk);
+        while (w25q_dma_is_busy())
+            w25q_dma_task();
+
+        s_cache_addr = target_addr;
+        s_cache_len  = chunk;
+
+        memcpy(pBuf, s_flash_cache, to_read);
+    }
+
+    *pOffset += to_read;
     *pBytesActuallyRead = (unsigned char)to_read;
     return 0;
 }
 
-/**
- * @brief 前进到下一帧
- *
- * 更新 cur_frame_idx，移动 current_frame_pos 到下一帧的 size prefix 位置。
- * 如果已播完最后一帧，则回到文件头循环。
- */
 #define MJPEG_ADVANCE_FRAME()                                    \
     do                                                           \
     {                                                            \
@@ -104,6 +103,20 @@ static unsigned char mjpeg_read_cb(unsigned char *pBuf, unsigned char buf_size,
             s_mjpeg.current_frame_pos = s_mjpeg.start_addr + 14; \
         }                                                        \
     } while (0)
+
+/**
+ * RGB565 转换 (SPI DMA 字节序)
+ *
+ * SPI DMA 发送 uint16_t 时, 低字节先发出。
+ * 为使 LCD 收到 [R4..R0 G5..G3] [G2..G0 B4..B4] 标准顺序,
+ * 需要将标准 RGB565 的高低字节交换后存入 uint16_t。
+ */
+static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
+{
+    uint8_t hi = (r & 0xF8) | (g >> 5);
+    uint8_t lo = ((g & 0x1C) << 3) | (b >> 3);
+    return (uint16_t)((lo << 8) | hi);
+}
 
 void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
                           uint32_t w25q_start_addr, uint32_t w25q_end_addr)
@@ -120,7 +133,7 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
                    s_mjpeg.start_addr != w25q_start_addr ||
                    s_mjpeg.end_addr != w25q_end_addr);
 
-    /* ---- 初始化：读取文件头 ---- */
+    /* ---- 初始化: 读取文件头 ---- */
     if (is_new)
     {
         uint8_t hdr[14];
@@ -128,47 +141,34 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
         while (w25q_dma_is_busy())
             w25q_dma_task();
 
-        uint32_t magic = (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8) | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
+        uint16_t hdr_count = (uint16_t)hdr[4] | ((uint16_t)hdr[5] << 8);
+        uint16_t hdr_w     = (uint16_t)hdr[6] | ((uint16_t)hdr[7] << 8);
+        uint16_t hdr_h     = (uint16_t)hdr[8] | ((uint16_t)hdr[9] << 8);
 
-        if (magic != MJPEG_MAGIC)
+        s_mjpeg.active      = 1;
+        s_mjpeg.start_addr  = w25q_start_addr;
+        s_mjpeg.end_addr    = w25q_end_addr;
+        s_mjpeg.frame_count = hdr_count;
+        s_mjpeg.lcd_x       = x;
+        s_mjpeg.lcd_y       = y;
+
+        width  = hdr_w;
+        height = hdr_h;
+
+        if (hdr_w > 0 && hdr_h > 0)
         {
-            s_mjpeg.last_error = MJPEG_ERR_BAD_MAGIC;
-            return;
+            s_mjpeg.width  = hdr_w;
+            s_mjpeg.height = hdr_h;
+        }
+        else
+        {
+            s_mjpeg.width  = width;
+            s_mjpeg.height = height;
         }
 
-        s_mjpeg.active = true;
-        s_mjpeg.lcd_x = x;
-        s_mjpeg.lcd_y = y;
-        s_mjpeg.start_addr = w25q_start_addr;
-        s_mjpeg.end_addr = w25q_end_addr;
-        s_mjpeg.frame_count = (uint16_t)hdr[4] | ((uint16_t)hdr[5] << 8);
-
-        /* 用文件头中的尺寸覆盖传入参数 */
-        {
-            int16_t hdr_w = (int16_t)((uint16_t)hdr[6] | ((uint16_t)hdr[7] << 8));
-            int16_t hdr_h = (int16_t)((uint16_t)hdr[8] | ((uint16_t)hdr[9] << 8));
-            if (hdr_w > 0 && hdr_h > 0)
-            {
-                if (hdr_w != width || hdr_h != height)
-                {
-                    // error handle.
-                }
-                s_mjpeg.width = hdr_w;
-                s_mjpeg.height = hdr_h;
-                /* 覆盖局部变量，后续裁剪使用正确尺寸 */
-                width = hdr_w;
-                height = hdr_h;
-            }
-            else
-            {
-                s_mjpeg.width = width;
-                s_mjpeg.height = height;
-            }
-        }
-
-        s_mjpeg.cur_frame_idx = 0;
+        s_mjpeg.cur_frame_idx     = 0;
         s_mjpeg.current_frame_pos = w25q_start_addr + 14;
-        s_mjpeg.last_error = 0;
+        s_mjpeg.last_error        = 0;
     }
 
     /* ---- 空帧检查 ---- */
@@ -185,7 +185,10 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
         while (w25q_dma_is_busy())
             w25q_dma_task();
 
-        uint32_t frame_size = (uint32_t)sz_buf[0] | ((uint32_t)sz_buf[1] << 8) | ((uint32_t)sz_buf[2] << 16) | ((uint32_t)sz_buf[3] << 24);
+        uint32_t frame_size = (uint32_t)sz_buf[0] |
+                              ((uint32_t)sz_buf[1] << 8) |
+                              ((uint32_t)sz_buf[2] << 16) |
+                              ((uint32_t)sz_buf[3] << 24);
 
         /* 截断保护 */
         if (s_mjpeg.current_frame_pos + 4 + frame_size > s_mjpeg.end_addr)
@@ -196,7 +199,7 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
             frame_size = avail;
         }
 
-        s_mjpeg.frame_size = frame_size;
+        s_mjpeg.frame_size      = frame_size;
         s_mjpeg.frame_data_addr = s_mjpeg.current_frame_pos + 4;
 
         if (frame_size == 0)
@@ -204,12 +207,6 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
             MJPEG_ADVANCE_FRAME();
             return;
         }
-
-        /* 保存前 44 字节用于调试 */
-        uint32_t dump_bytes = frame_size < 44 ? frame_size : 44;
-        w25q_fast_read_data(s_mjpeg.frame_data_addr, s_mjpeg.frame_dump, (uint16_t)dump_bytes);
-        while (w25q_dma_is_busy())
-            w25q_dma_task();
     }
 
     /* ---- picojpeg 解码 ---- */
@@ -234,75 +231,130 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
         return;
     }
 
-    /* ---- 逐 MCU 解码 ---- */
+    /* ---- MCU 解码 (优化核心热循环) ---- */
+    const int mcu_w          = jinfo.m_MCUWidth;   /* 8 or 16 */
+    const int mcu_h          = jinfo.m_MCUHeight;  /* 8 or 16 */
+    const int blocks_per_mcu = (mcu_w / 8) * (mcu_h / 8);
+    const int mcu_w_blocks   = mcu_w / 8;
+    const int img_w          = s_mjpeg.width;
+    const int img_h          = s_mjpeg.height;
+    const int16_t lcd_x      = s_mjpeg.lcd_x;
+    const int16_t lcd_y      = s_mjpeg.lcd_y;
+
+    /* LCD 映射范围 */
+    const int16_t lcd_x_end = lcd_x + img_w;
+    const int16_t lcd_y_end = lcd_y + img_h;
+
+    /* 判断图像是否完全在 LCD 可见区域内 (快速路径) */
+    const bool fast_path = (lcd_x >= 0 && lcd_y >= 0 &&
+                            lcd_x_end <= LCD_W && lcd_y_end <= LCD_H &&
+                            img_w > 0 && img_h > 0);
+
+    /* MCU R/G/B 缓冲区指针 (局部变量, 避免重复解引用结构体) */
+    const unsigned char *mcu_r = jinfo.m_pMCUBufR;
+    const unsigned char *mcu_g = jinfo.m_pMCUBufG;
+    const unsigned char *mcu_b = jinfo.m_pMCUBufB;
+
     int mcu_x = 0;
     int mcu_y = 0;
-    const int mcu_w = jinfo.m_MCUWidth;  /* 8 or 16 */
-    const int mcu_h = jinfo.m_MCUHeight; /* 8 or 16 */
-    const int blocks_per_mcu = (mcu_w / 8) * (mcu_h / 8);
-    const int img_w = s_mjpeg.width;
-    const int img_h = s_mjpeg.height;
 
-    while ((ret = pjpeg_decode_mcu()) == 0)
+    if (fast_path)
     {
-        for (int blk = 0; blk < blocks_per_mcu; blk++)
+        /* ---- 快速路径: 无 LCD 裁剪, 仅需图像边界检查 ---- */
+        uint16_t *row_ptr_base = &lcd_write_ptr[(uint32_t)lcd_y * LCD_W];
+
+        while ((ret = pjpeg_decode_mcu()) == 0)
         {
-            int blk_col = blk % (mcu_w / 8);
-            int blk_row = blk / (mcu_w / 8);
-            int blk_origin_x = mcu_x + blk_col * 8;
-            int blk_origin_y = mcu_y + blk_row * 8;
-
-            for (int py = 0; py < 8; py++)
+            for (int blk = 0; blk < blocks_per_mcu; blk++)
             {
-                int img_y = blk_origin_y + py;
-                if (img_y >= img_h)
-                    continue;
+                int blk_origin_x = mcu_x + (blk % mcu_w_blocks) * 8;
+                int blk_origin_y = mcu_y + (blk / mcu_w_blocks) * 8;
+                int base_idx     = blk * 64;
 
-                int16_t sy = s_mjpeg.lcd_y + img_y;
-                if (sy < 0 || sy >= LCD_H)
-                    continue;
+                uint16_t *dst_row = &lcd_write_ptr[(uint32_t)(lcd_y + blk_origin_y) * LCD_W + (uint32_t)blk_origin_x];
 
-                // 预计算该行的基础指针，省去内层循环的乘法开销
-                uint16_t *row_ptr = &lcd_write_ptr[(uint32_t)sy * LCD_W];
-
-                for (int px = 0; px < 8; px++)
+                for (int py = 0; py < 8; py++)
                 {
-                    int img_x = blk_origin_x + px;
-                    if (img_x >= img_w)
+                    int img_y = blk_origin_y + py;
+                    if (img_y >= img_h)
                         continue;
 
-                    int16_t sx = s_mjpeg.lcd_x + img_x;
-                    if (sx < 0 || sx >= LCD_W)
-                        continue;
+                    uint16_t *dst = dst_row;
+                    int idx = base_idx + py * 8;
 
-                    int idx = blk * 64 + py * 8 + px;
-                    uint8_t r = jinfo.m_pMCUBufR[idx];
-                    uint8_t g = jinfo.m_pMCUBufG[idx];
-                    uint8_t b = jinfo.m_pMCUBufB[idx];
+                    for (int px = 0; px < 8; px++)
+                    {
+                        int img_x = blk_origin_x + px;
+                        if (img_x < img_w)
+                            dst[px] = rgb565(mcu_r[idx], mcu_g[idx], mcu_b[idx]);
+                        idx++;
+                    }
 
-                    // 直接组装为适合 SPI DMA 的小端 RGB565 (低字节在前)
-                    // 标准 RGB565: [R4 R3 R2 R1 R0 G5 G4 G3] [G2 G1 G0 B4 B3 B2 B1 B0]
-                    uint8_t hi = (r & 0xF8) | (g >> 5);
-                    uint8_t lo = ((g & 0x1C) << 3) | (b >> 3);
-
-                    row_ptr[sx] = (uint16_t)((lo << 8) | hi);
+                    dst_row += LCD_W;
                 }
             }
-        }
 
-        /* 前进到下一个 MCU */
-        mcu_x += mcu_w;
-        if (mcu_x >= img_w)
+            mcu_x += mcu_w;
+            if (mcu_x >= img_w)
+            {
+                mcu_x = 0;
+                mcu_y += mcu_h;
+                row_ptr_base = &lcd_write_ptr[(uint32_t)(lcd_y + mcu_y) * LCD_W];
+            }
+        }
+    }
+    else
+    {
+        /* ---- 通用路径: 完整边界检查 (LCD + 图像) ---- */
+        while ((ret = pjpeg_decode_mcu()) == 0)
         {
-            mcu_x = 0;
-            mcu_y += mcu_h;
+            for (int blk = 0; blk < blocks_per_mcu; blk++)
+            {
+                int blk_origin_x = mcu_x + (blk % mcu_w_blocks) * 8;
+                int blk_origin_y = mcu_y + (blk / mcu_w_blocks) * 8;
+                int base_idx     = blk * 64;
+
+                for (int py = 0; py < 8; py++)
+                {
+                    int img_y = blk_origin_y + py;
+                    if (img_y >= img_h)
+                        continue;
+
+                    int16_t sy = lcd_y + img_y;
+                    if (sy < 0 || sy >= LCD_H)
+                        continue;
+
+                    uint16_t *row_ptr = &lcd_write_ptr[(uint32_t)sy * LCD_W];
+                    int row_idx = base_idx + py * 8;
+
+                    for (int px = 0; px < 8; px++)
+                    {
+                        int img_x = blk_origin_x + px;
+                        if (img_x >= img_w)
+                            continue;
+
+                        int16_t sx = lcd_x + img_x;
+                        if (sx < 0 || sx >= LCD_W)
+                            continue;
+
+                        row_ptr[sx] = rgb565(mcu_r[row_idx], mcu_g[row_idx], mcu_b[row_idx]);
+                        row_idx++;
+                    }
+                }
+            }
+
+            mcu_x += mcu_w;
+            if (mcu_x >= img_w)
+            {
+                mcu_x = 0;
+                mcu_y += mcu_h;
+            }
         }
     }
 
     if (ret != PJPG_NO_MORE_BLOCKS)
     {
         s_mjpeg.pjpeg_ret = ret;
-        /* 解码出错仍尝试前进到下一帧 */
     }
 
     /* ---- 前进到下一帧 ---- */

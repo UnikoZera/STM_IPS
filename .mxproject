@@ -47,9 +47,9 @@ SourceFiles=;
 
 [ThirdPartyIp]
 ThirdPartyIpNumber=1
-ThirdPartyIpName#0=STMicroelectronics.X-CUBE-ALGOBUILD.1.4.0
+ThirdPartyIpName#0=STMicroelectronics.X-CUBE-ALGOBUILD.1.5.0
 
-[ThirdPartyIp#STMicroelectronics.X-CUBE-ALGOBUILD.1.4.0]
+[ThirdPartyIp#STMicroelectronics.X-CUBE-ALGOBUILD.1.5.0]
 library=Middlewares\ST\ARM\DSP\Lib\libarm_cortexM4lf_math.a;
 header=Middlewares\ST\ARM\DSP\Inc\arm_math.h;
 

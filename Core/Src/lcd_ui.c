@@ -19,11 +19,11 @@
 
 #pragma region UI元素定义
 
+static lcd_label_t fps_label = {12, 14, WHITE, BLACK, 8, "FPS: 0"};
+static lcd_label_t usage_label = {6, 4, WHITE, BLACK, 8, "USAGE: 0%%"};
 static lcd_rect_t g_rect = {0, 24, 28, 20, RED};
 static lcd_circle_t g_circle = {20, 58, 10, YELLOW};
-static lcd_label_t g_label = {6, 4, WHITE, BLACK, 8, "DMA ANIM"};
-static lcd_label_t g_label2 = {12, 14, WHITE, BLACK, 8, "TEST"};
-static lcd_label_t g_label3 = {12, 14, WHITE, BLACK, 8, "TEST"};
+static lcd_label_t g_label = {12, 14, WHITE, BLACK, 8, "TEST"};
 static lcd_circle_t g_circle2 = {60, 58, 10, CYAN};
 static lcd_rect_t g_rect2 = {50, 24, 35, 30, MAGENTA};
 static lcd_picture_t g_picture = {0};
@@ -36,15 +36,17 @@ void lcd_ui_init(void)
     lcd_anim_manager_init();
     lcd_anim_manager_set_bg(BLACK);
 
+    #pragma region 从文件系统获取图片和视频文件的地址并初始化对应的UI元素(可以看成是动态加载资源的示例，实际使用时你可以根据需要加载不同的文件来显示不同的图片和视频)
+
     // 从文件系统获取图片文件的W25Q地址
     {
-        int16_t idx = find_large_file_by_name("pic_mp");
+        int16_t idx = find_large_file_by_name("idk");
         if (idx >= 0)
         {
             large_file_info_t info;
             if (get_large_file_info((uint8_t)idx, &info))
             {
-                g_picture.x = 10;
+                g_picture.x = 0;
                 g_picture.y = 0;
                 g_picture.width = 120;
                 g_picture.height = 80;
@@ -55,7 +57,7 @@ void lcd_ui_init(void)
 
     // 从文件系统获取视频文件的W25Q地址
     {
-        int16_t idx = find_large_file_by_name("qwq");
+        int16_t idx = find_large_file_by_name("okay_jksdf");
         if (idx >= 0)
         {
             large_file_info_t info;
@@ -63,23 +65,25 @@ void lcd_ui_init(void)
             {
                 g_video.x = 0;
                 g_video.y = 0;
-                g_video.width = 80;
-                g_video.height = 40;
+                g_video.width = 160;
+                g_video.height = 80;
                 g_video.start_addr = info.start_sector * 4096;
                 g_video.end_addr = g_video.start_addr + info.size;
             }
         }
     }
 
+    #pragma endregion
+
     #pragma region 添加元素到动画管理器
 
-    // lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
+    lcd_anim_manager_add_layer(&usage_label, lcd_draw_label_layer);
+    lcd_anim_manager_add_layer(&fps_label, lcd_draw_label_layer);
     // lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
     // lcd_anim_manager_add_layer(&g_circle, lcd_draw_circle_layer);
     // lcd_anim_manager_add_layer(&g_circle2, lcd_draw_circle_layer);
-    // lcd_anim_manager_add_layer(&g_label2, lcd_draw_label_layer);
+    // lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
     // lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
-    // lcd_anim_manager_add_layer(&g_label3, lcd_draw_label_layer);
     // lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
     lcd_anim_manager_add_layer(&g_video, lcd_draw_video_frame_layer);
     #pragma endregion
@@ -115,16 +119,16 @@ void lcd_ui_init(void)
     lcd_anim_start(&circle_anim_y);
 
     lcd_anim_config_t circle2_anim_y = {
-      .target = &g_circle2.y,
-      .start_value = 20,
-      .end_value = LCD_H - 20,
+      .target = &g_circle2.x,
+      .start_value = 0,
+      .end_value = LCD_W - 20,
       .duration_ms = 900,
       .delay_ms = 0,
       .repeat = true,
-      .yoyo = false,
+      .yoyo = true,
       .exec_cb = lcd_anim_exec_set_i16,
       .done_cb = NULL,
-      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_OUT_CIRC),
+      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_EXPO),
     };
     lcd_anim_start(&circle2_anim_y);
 
@@ -143,7 +147,7 @@ void lcd_ui_init(void)
     lcd_anim_start(&rect2_anim_x);
 
     lcd_anim_config_t label_anim_color = {
-      .target = &g_label.fg_color,
+      .target = &usage_label.fg_color,
       .start_value = RED,
       .end_value = WHITE,
       .duration_ms = 1000,
@@ -157,7 +161,7 @@ void lcd_ui_init(void)
     lcd_anim_start(&label_anim_color);
 
     lcd_anim_config_t label2_anim_color = {
-      .target = &g_label2.fg_color,
+      .target = &g_label.fg_color,
       .start_value = CYAN,
       .end_value = MAGENTA,
       .duration_ms = 3000,
@@ -171,7 +175,7 @@ void lcd_ui_init(void)
     lcd_anim_start(&label2_anim_color);
 
     lcd_anim_config_t label3_anim_color = {
-      .target = &g_label3.x,
+      .target = &fps_label.x,
       .start_value = 0,
       .end_value = 60,
       .duration_ms = 3000,
@@ -185,7 +189,7 @@ void lcd_ui_init(void)
     lcd_anim_start(&label3_anim_color);
 
     lcd_anim_config_t label3_anim_color2 = {
-      .target = &g_label3.y,
+      .target = &fps_label.y,
       .start_value = 14,
       .end_value = 40,
       .duration_ms = 1000,
@@ -209,43 +213,27 @@ void lcd_ui_init(void)
  */
 void lcd_ui_change(void)
 {
-  lcd_calculate_usage();
   static char str_buf[32];
   static char fps_buf[16];
+  static char usage_buf[16];
+
   snprintf(fps_buf, sizeof(fps_buf), "FPS:%u", lcd_fps);
-  g_label3.text = fps_buf;
-
-  // // === DEBUG: 探查Flash偏移根因 ===
-  
-  //   static uint8_t debug_buf[12];
-  //   static bool debug_ready = false;
-  //   if (!debug_ready)
-  //   {
-  //     large_file_info_t test_info;
-  //     get_large_file_info(find_large_file_by_name("big"), &test_info);
-  //     uint32_t base = test_info.start_sector * 4096;
-  //     w25q_read_data(base - 1, debug_buf, 12);   // 读取 addr-1 ~ addr+10
-  //     debug_ready = true;
-  //   }
-  //   snprintf(str_buf, sizeof(str_buf), "%02X %02X %02X %02X",
-  //     debug_buf[0], debug_buf[1], debug_buf[2], debug_buf[3]);
-  //   g_label.text = str_buf;
-  
-  // // ================================
-
+  snprintf(usage_buf, sizeof(usage_buf), "Usage:%u%%", cpu_usage_percent);
+  fps_label.text = fps_buf;
+  usage_label.text = usage_buf;
   g_rect.color = BLUE;
   g_circle.color = GREEN;
-
+  
   for (uint8_t i = 0; i < sizeof(str_buf); i++)
   {
     str_buf[i] = 32 + (rand() % 95);
   }
-    g_label2.text = str_buf;
-
-    lcd_calculate_fps();
+  g_label.text = str_buf;
+  
+  lcd_calculate_usage();
+  lcd_calculate_fps();
 }
-// static uint8_t str_buf[128];
-// static uint8_t str_buf2[128];
+
 /**
  * @brief 调用这个函数来更新UI，通常在主循环里调用。它会处理动画状态并重新渲染UI。
  * @attention 先更新tasker再render，确保动画状态被正确更新后再渲染到屏幕上。
@@ -253,10 +241,6 @@ void lcd_ui_change(void)
  */
 void lcd_ui_updater(void)
 {
-    // sprintf(str_buf, "addr:%08d", g_video.start_addr);
-    // sprintf(str_buf2, "end:%08d", g_video.end_addr);
-    // lcd_draw_string(0, 30 , WHITE, BLACK, 8, str_buf);
-    // lcd_draw_string(0, 50 , WHITE, BLACK, 8, str_buf2);
     lcd_ui_change();            // 这个是更新UI状态的，你可以在这个函数里修改元素属性来改变UI显示的内容和样式
     lcd_anim_manager_task();    // 这个是更新动画管理器的状态，计算动画进度并调用exec_cb更新元素属性的
     lcd_anim_manager_render();  // 这个是更新屏幕ui渲染状态的
