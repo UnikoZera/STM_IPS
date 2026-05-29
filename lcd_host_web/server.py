@@ -16,8 +16,37 @@ app = Flask(__name__, static_url_path='', static_folder='.')
 
 ALLOWED_EXT = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp', '.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv'}
 VIDEO_EXT = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv'}
-FFMPEG = 'ffmpeg'
-FFPROBE = 'ffprobe'
+def _find_ffmpeg():
+    """Try system ffmpeg first, fall back to imageio-ffmpeg bundled binary."""
+    import shutil
+    if shutil.which('ffmpeg') and shutil.which('ffprobe'):
+        return 'ffmpeg', 'ffprobe'
+    try:
+        import imageio_ffmpeg
+        exe = Path(imageio_ffmpeg.get_ffmpeg_exe())
+        return str(exe), str(exe.parent / ('ffprobe.exe' if os.name == 'nt' else 'ffprobe'))
+    except Exception:
+        pass
+    return 'ffmpeg', 'ffprobe'
+
+FFMPEG, FFPROBE = _find_ffmpeg()
+_NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW
+def _run_silent(*args, **kwargs):
+    """Run subprocess without showing a console window."""
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    kwargs.setdefault('startupinfo', si)
+    kwargs.setdefault('creationflags', _NO_WINDOW)
+    return subprocess.run(*args, **kwargs)
+
+def _popen_silent(*args, **kwargs):
+    """Popen subprocess without showing a console window."""
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    kwargs.setdefault('startupinfo', si)
+    kwargs.setdefault('creationflags', _NO_WINDOW)
+    return subprocess.Popen(*args, **kwargs)
+
 HERE = Path(__file__).parent
 PREVIEW_FRAMES = 999999  # include all frames in preview
 DOWNLOAD_TTL = 300        # seconds before temp files are cleaned
@@ -215,7 +244,7 @@ def decompress_frame(compressed: bytes, pixel_count: int) -> bytes:
 
 def _check_ffmpeg():
     try:
-        subprocess.run([FFMPEG, '-version'], capture_output=True, check=True)
+        _run_silent([FFMPEG, '-version'], capture_output=True, check=True)
     except (FileNotFoundError, subprocess.CalledProcessError):
         raise RuntimeError(
             'ffmpeg 未找到，请安装 ffmpeg 并加入 PATH。\n'
@@ -241,7 +270,7 @@ def _probe(path: str) -> dict:
     cmd = [FFPROBE, '-v', 'error', '-select_streams', 'v:0',
            '-show_entries', 'stream=nb_frames,r_frame_rate,avg_frame_rate',
            '-of', 'json', path]
-    r = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    r = _run_silent(cmd, capture_output=True, text=True, check=True)
     data = json.loads(r.stdout)
     s = data.get('streams', [{}])[0]
 
@@ -261,7 +290,7 @@ def _probe(path: str) -> dict:
         cmd2 = [FFPROBE, '-v', 'error', '-select_streams', 'v:0',
                 '-count_frames', '-show_entries', 'stream=nb_read_frames',
                 '-of', 'csv=p=0', path]
-        r2 = subprocess.run(cmd2, capture_output=True, text=True)
+        r2 = _run_silent(cmd2, capture_output=True, text=True)
         try:
             nf = int(r2.stdout.strip())
         except ValueError:
@@ -281,7 +310,7 @@ def _stream_frames(in_path: str, width: int, height: int,
         cmd += ['-vframes', str(vframes)]
     cmd.append('pipe:1')
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+    proc = _popen_silent(cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL)
     try:
         while True:
@@ -470,7 +499,7 @@ def _stream_mjpeg_frames(in_path: str, width: int, height: int,
     if fps > 0: cmd += ['-r', str(fps)]
     cmd += ['-f', 'image2', pat]
     if vframes > 0: cmd += ['-vframes', str(vframes)]
-    subprocess.run(cmd, capture_output=True, timeout=300)
+    _run_silent(cmd, capture_output=True, timeout=300)
 
     frames = sorted(tmpdir.iterdir())
     for f in frames:
@@ -526,7 +555,7 @@ def _process_video_mjpeg(in_path: str, width: int, height: int,
     try:
         dur_cmd = [FFPROBE, '-v', 'error', '-show_entries', 'format=duration',
                    '-of', 'csv=p=0', in_path]
-        dur_r = subprocess.run(dur_cmd, capture_output=True, text=True, timeout=10)
+        dur_r = _run_silent(dur_cmd, capture_output=True, text=True, timeout=10)
         original_duration = float(dur_r.stdout.strip())
     except Exception:
         original_duration = 0

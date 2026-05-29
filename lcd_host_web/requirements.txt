@@ -1,1 +1,2 @@
-flask>=3.0
+﻿flask>=3.0
+imageio-ffmpeg>=0.4.9

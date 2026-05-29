@@ -452,8 +452,7 @@ main{
 .spinner{display:inline-block;width:13px;height:13px;border:2px solid var(--text2);border-top-color:var(--cyan);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:5px;}
 
 /* ── Toggle switch ── */
-#vpSwap:checked + #vpSwapSlider{background:var(--cyan)!important;border-color:var(--cyan)!important;}
-#vpSwap:checked ~ #vpSwapKnob{left:18px!important;background:#fff!important;}
+
 
 /* ── Hide number spinners ── */
 input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
@@ -702,15 +701,7 @@ input[type=range]::-moz-range-thumb{
           <input type="number" id="vpFps" value="30" min="1" max="60" step="1" style="flex:1;">
           <span style="font-size:10px;color:var(--text3);">1-60</span>
         </div>
-        <div id="vpEndianGroup" style="margin-bottom:5px;display:flex;align-items:center;gap:10px;">
-          <span style="font-size:10.5px;color:var(--text2);flex-shrink:0;">交换字节序</span>
-          <label for="vpSwap" style="position:relative;display:inline-block;width:36px;height:20px;cursor:pointer;">
-            <input type="checkbox" id="vpSwap" checked style="position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;z-index:2;margin:0;">
-            <span id="vpSwapSlider" style="position:absolute;inset:0;background:var(--surface3);border-radius:10px;transition:all .3s;border:1px solid var(--border);pointer-events:none;"></span>
-            <span id="vpSwapKnob" style="position:absolute;top:2px;left:2px;width:14px;height:14px;background:var(--text2);border-radius:50%;transition:all .3s;pointer-events:none;"></span>
-          </label>
-          <span style="font-size:9px;color:var(--text3);">大端</span><span id="vpEndianLabel" style="font-size:9px;color:var(--text3);transition:all .3s;">→小端</span>
-        </div>
+        
         <div style="margin-bottom:5px;display:flex;align-items:center;gap:10px;">
           <span style="font-size:10.5px;color:var(--text2);flex-shrink:0;">亮度</span>
           <input type="range" id="vpBrightness" min="10" max="300" value="100" style="flex:1;accent-color:var(--gold);">
@@ -1505,11 +1496,11 @@ function loadAllSettings(){
     }
     if(s.vpBrightness){
       document.getElementById('vpBrightness').value=s.vpBrightness;
-    if(s.vpQuality)document.getElementById('vpQuality').value=s.vpQuality;
-    else document.getElementById('vpQuality').value='11';
       const lbl=document.getElementById('vpBrightnessLabel');
       if(lbl) lbl.textContent=s.vpBrightness+'%';
     }
+    if(s.vpQuality)document.getElementById('vpQuality').value=s.vpQuality;
+    else document.getElementById('vpQuality').value='11';
     updateNBC();
   }catch(e){}
 }
@@ -1531,7 +1522,6 @@ function onVpCodecChange(){
   const v=document.getElementById('vpCodec').value;
   document.getElementById('vpBlQualityGroup').style.display=(v==='bl')?'flex':'none';
   document.getElementById('vpMjpegQualityGroup').style.display=(v==='mjpeg')?'flex':'none';
-  document.getElementById('vpEndianGroup').style.display='none';
   saveAllSettings();
 }
 document.getElementById('fileNameInput').addEventListener('input',function(){
@@ -1651,7 +1641,7 @@ async function startVPProcess(){
   form.append('width', w);
   form.append('height', h);
   form.append('fps', fps);
-  form.append('swap', document.getElementById('vpSwap').checked ? '1' : '0');
+  form.append('swap', '1');
   form.append('brightness', parseInt(document.getElementById('vpBrightness').value) || 100);
   const codec = document.getElementById('vpCodec').value;
   form.append('codec', codec);
