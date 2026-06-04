@@ -210,17 +210,6 @@ static void bitmap_mark_block_used(uint32_t start_sector, uint32_t count)
 }
 
 /**
- * @brief 标记一段连续sector为空闲
- */
-static void bitmap_mark_block_free(uint32_t start_sector, uint32_t count)
-{
-    for (uint32_t i = 0; i < count; i++)
-    {
-        bitmap_clear_used(start_sector + i);
-    }
-}
-
-/**
  * @brief 擦除并释放大文件占用的扇区（用于删除操作）
  */
 static void erase_and_free_large_sectors(uint32_t start_sector, uint32_t sector_count)
@@ -339,7 +328,6 @@ static uint32_t current_sector_count = 0;
 static uint32_t small_file_start_addr = 0;
 static uint8_t error_payload = 0x00;
 static uint32_t small_last_erased_sector = 0xFFFFFFFF;
-static uint32_t large_last_erased_sector = 0xFFFFFFFF;
 
 #pragma endregion
 
@@ -350,6 +338,15 @@ static void clear_host_payload(void)
     memset(host_payload, 0x00, sizeof(host_payload));
 }
 
+static void reset_host_state(void)
+{
+    host_state = STATE_WAIT_HEAD0;
+    host_state_tick = HAL_GetTick();
+    clear_host_payload();
+}
+
+extern volatile bool lcd_usb_stream_enabled; // from lcd_ui.c
+
 static void send_error(uint8_t error_type)
 {
     error_payload = error_type;
@@ -359,6 +356,18 @@ static void send_error(uint8_t error_type)
 static void send_continue(void)
 {
     usb_controller_send(&g_usb_controller, CONTINUE_SEND_CODE, NULL, 0);
+}
+
+static void abort_download_common(void)
+{
+    lcd_usb_stream_enabled = lcd_stream_was_enabled;
+    is_downloading = false;
+}
+
+static void abort_download_with_error(uint8_t error_type)
+{
+    abort_download_common();
+    send_error(error_type);
 }
 
 /**
@@ -423,8 +432,6 @@ static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t 
 #pragma endregion
 
 #pragma region 命令处理核心
-
-extern volatile bool lcd_usb_stream_enabled; // from lcd_ui.c
 
 static void process_host_command(void)
 {
@@ -549,22 +556,13 @@ static void process_host_command(void)
                 uint32_t allocated_first_sector = allocate_large_sectors(required_sectors);
                 if (allocated_first_sector == 0xFFFFFFFF)
                 {
-                    lcd_usb_stream_enabled = lcd_stream_was_enabled;
-                    is_downloading = false;
-                    send_error(0x03);
+                    abort_download_with_error(0x03);
                     return;
                 }
                 current_start_sector = allocated_first_sector;
                 current_write_addr = allocated_first_sector * W25Q_SECTOR_SIZE;
                 current_sector_count = required_sectors;
                 current_allocated_size = required_sectors * W25Q_SECTOR_SIZE;
-                // 只擦除当前包数据需要的扇区，避免预擦除大量扇区导致卡死
-                uint32_t write_end_addr = current_write_addr + actual_data_len;
-                uint32_t last_sector_needed = (write_end_addr - 1) / W25Q_SECTOR_SIZE;
-                erase_start_sector = allocated_first_sector;
-                erase_end_sector = last_sector_needed + 1;
-                large_last_erased_sector = last_sector_needed;
-                need_erase = true;
             }
             else
             {
@@ -572,9 +570,7 @@ static void process_host_command(void)
                 uint32_t allocated_addr = allocate_small_space(W25Q_SECTOR_SIZE);
                 if (allocated_addr == 0xFFFFFFFF)
                 {
-                    lcd_usb_stream_enabled = lcd_stream_was_enabled;
-                    is_downloading = false;
-                    send_error(0x04);
+                    abort_download_with_error(0x04);
                     return;
                 }
                 small_file_start_addr = allocated_addr;
@@ -618,33 +614,11 @@ static void process_host_command(void)
                         bitmap_mark_block_used(current_start_sector + current_sector_count, additional_sectors);
                         current_sector_count = new_total_sectors;
                         current_allocated_size = current_sector_count * W25Q_SECTOR_SIZE;
-                        erase_start_sector = current_start_sector + current_sector_count - additional_sectors;
-                        erase_end_sector = erase_start_sector + additional_sectors;
-                        large_last_erased_sector = erase_end_sector - 1;
-                        need_erase = true;
                     }
                     else
                     {
-                        lcd_usb_stream_enabled = lcd_stream_was_enabled;
-                        is_downloading = false;
-                        send_error(0x06);
+                        abort_download_with_error(0x06);
                         return;
-                    }
-                }
-            }
-            // 检查是否需要擦除更多扇区（预分配方式下按需擦除）
-            if (!need_erase && host_cmd == 0x11)
-            {
-                uint32_t write_end = current_write_addr + actual_data_len;
-                if (write_end > 0)
-                {
-                    uint32_t last_needed = (write_end - 1) / W25Q_SECTOR_SIZE;
-                    if (last_needed > large_last_erased_sector)
-                    {
-                        erase_start_sector = large_last_erased_sector + 1;
-                        erase_end_sector = last_needed + 1;
-                        large_last_erased_sector = last_needed;
-                        need_erase = true;
                     }
                 }
             }
@@ -662,9 +636,7 @@ static void process_host_command(void)
                     }
                     else
                     {
-                        lcd_usb_stream_enabled = lcd_stream_was_enabled;
-                        is_downloading = false;
-                        send_error(0x07);
+                        abort_download_with_error(0x07);
                         return;
                     }
                 }
@@ -678,15 +650,12 @@ static void process_host_command(void)
             }
         }
 
-        if (need_erase)
+        if (need_erase && host_cmd == 0x45)
         {
             for (uint32_t s = erase_start_sector; s < erase_end_sector; s++)
             {
                 w25q_erase_sector(s * W25Q_SECTOR_SIZE);
-                if (host_cmd == 0x45)
-                {
-                    small_last_erased_sector = s;
-                }
+                small_last_erased_sector = s;
             }
         }
 
@@ -694,8 +663,7 @@ static void process_host_command(void)
         {
             if (!flash_write_and_verify(current_write_addr, &host_payload[FRAME_HDR_SIZE], actual_data_len))
             {
-                lcd_usb_stream_enabled = lcd_stream_was_enabled;
-                is_downloading = false;
+                abort_download_common();
                 return;
             }
         }
@@ -854,9 +822,7 @@ static void storage_manager_process_host_byte(uint8_t byte)
         }
         else
         {
-            host_state = STATE_WAIT_HEAD0;
-            host_state_tick = HAL_GetTick();
-            clear_host_payload();
+            reset_host_state();
         }
         break;
     case STATE_WAIT_CMD:
@@ -900,9 +866,7 @@ static void storage_manager_process_host_byte(uint8_t byte)
         host_payload[8] = byte;
         if (host_payload_len > sizeof(host_payload) - FRAME_HDR_SIZE || host_payload_len < 2)
         {
-            host_state = STATE_WAIT_HEAD0;
-            host_state_tick = HAL_GetTick();
-            clear_host_payload();
+            reset_host_state();
         }
         else
         {
@@ -917,9 +881,7 @@ static void storage_manager_process_host_byte(uint8_t byte)
         if (host_payload_idx >= host_payload_len)
         {
             process_host_command();
-            host_state = STATE_WAIT_HEAD0;
-            host_state_tick = HAL_GetTick();
-            clear_host_payload();
+            reset_host_state();
         }
         break;
     }
@@ -931,14 +893,11 @@ static void storage_manager_process_host_byte(uint8_t byte)
 
 bool storage_manager_init(void)
 {
-    clear_host_payload();
-    host_state = STATE_WAIT_HEAD0;
-    host_state_tick = HAL_GetTick();
+    reset_host_state();
     bool fat_ok = storage_fat_load();
     small_last_erased_sector = (global_fat.small_next_addr > 0)
         ? ((global_fat.small_next_addr - 1) / W25Q_SECTOR_SIZE)
         : (AREA_SMALL_START_SECTOR - 1);
-    large_last_erased_sector = 0xFFFFFFFF;
     return fat_ok;
 }
 
@@ -958,9 +917,7 @@ void storage_manager_task(void)
             if (host_payload_idx >= host_payload_len)
             {
                 process_host_command();
-                host_state = STATE_WAIT_HEAD0;
-                host_state_tick = HAL_GetTick();
-                clear_host_payload();
+                reset_host_state();
             }
         }
         else
@@ -971,9 +928,7 @@ void storage_manager_task(void)
     }
     if (host_state != STATE_WAIT_HEAD0 && HAL_GetTick() - host_state_tick >= HOST_STATE_TIMEOUT_MS)
     {
-        host_state = STATE_WAIT_HEAD0;
-        host_state_tick = HAL_GetTick();
-        clear_host_payload();
+        reset_host_state();
     }
 }
 
