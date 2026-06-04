@@ -4,20 +4,21 @@
  *  Created on: 2026年4月27日
  *      Author: UnikoZera
  *
- *      可以产生发给单片机的测试代码：BB 44 11 04 00 31 32 89 C6
- *                              BB 44 20 02 00 2B BE
- *    这里说明一下usb主机与存储管理器之间的协议设计思路：
- * 1. 主机每次发送一个完整的命令帧，包含：帧头(2字节) + 命令(1字节) + 长度(2字节) + 数据(payload + CRC16(2字节))
- * 2. 数据全是uint8_t类型。别的其他均为小端格式。长度字段的值是数据部分的字节数加上CRC16的2字节。
- * 3. 关于参数：帧头主机端默认为 0xBB 0x44，长度的意思是 数据长度 + CRC16长度(2字节)，数据部分根据命令不同有不同的格式和意义， // !CRC16是帧头到crc16数据前的所有字节的校验和。
- * 4. 关于结束命令：一般来讲,大文件或者小文件的命令会分多次发送,主机端在发送完所有数据后会发送一个结束命令(0x14)，告知单片机当前文件传输完成，单片机收到结束命令后会进行必要的收尾处理（如注册文件信息到FAT表等）。如果在传输过程中发生错误，单片机会发送一个错误响应(0xE0)，主机端收到错误响应后可以选择重试或者放弃当前文件的传输。
+ *  Host command protocol frame:
+ *    [0][1]: Frame header 0xBB 0x44 (2B)
+ *    [2]:   Command (1B)
+ *    [3-6]: Total file size uint32 LE (4B) — 0 for non-data commands (first packet only)
+ *    [7-8]: Packet length uint16 LE (2B) = payload_len + 2 (CRC16)
+ *    [9+]:  Payload data
+ *    [last-2][last-1]: CRC16 (2B) over header + payload (before CRC)
  *
- *  协议命令列表：
- *    0x11 - 开始下载大文件(图片等)，payload: 数据 + CRC16
- *    0x45 - 开始下载小文件(文本等)，payload: 数据 + CRC16
- *    0x14 - 结束下载，payload: 文件的名字(不超过16B) +  CRC16
- *    0x19 - 删除文件，payload: 文件类型(1B) + 文件索引(1B) + CRC16
- *    0x20 - 查询文件列表，无payload(仅CRC16校验)
+ *  Commands:
+ *    0x11 - Start/continue downloading large file, payload: data + CRC16
+ *    0x45 - Start/continue downloading small file, payload: data + CRC16
+ *    0x14 - End download, payload: filename(<=16B) + CRC16
+ *    0x19 - Delete file, payload: file_type(1B) + file_index(1B) + CRC16
+ *    0x20 - Query file list + slot info, no payload (only CRC16)
+ *    0x10 - LCD stream control, payload: [sub_cmd(1B)] + CRC16
  */
 
 #include "storage_manager.h"
@@ -26,42 +27,41 @@
 #pragma region 文件系统与分配表实现
 
 // ======================== 文件系统/分配表定义 ========================
-#define FAT_MAGIC_NUMBER 0x0D000721
+#define FAT_MAGIC_NUMBER 0x0D000722   // bumped version for new bitmap-based FAT
 #define W25Q_SECTOR_SIZE 4096
 #define W25Q_TOTAL_SECTORS 4096
 // --- 分区映射表 ---
-// [区段 1] 保留区: Sector 0 ~ 1 (8KB) 不做任何操作，纯空置
+// [区段 1] 保留区: Sector 0 ~ 1 (8KB) 纯空置
 #define AREA_RESERVED_START_SECTOR 0
 #define AREA_RESERVED_SECTORS 2
-// [区段 2] 小文件区:紧凑字节级排列 (不推荐频繁删除的文件，删除后会有碎片但不影响使用)
-// Sector 2 ~ 63 (共 62 个扇区 / 248KB)
+// [区段 2] 小文件区: Sector 2 ~ 63 (共 62 个扇区 / 248KB)
 #define AREA_SMALL_START_SECTOR 2
 #define AREA_SMALL_SECTORS 62
 #define AREA_SMALL_START_ADDR (AREA_SMALL_START_SECTOR * W25Q_SECTOR_SIZE)
 #define AREA_SMALL_END_ADDR ((AREA_SMALL_START_SECTOR + AREA_SMALL_SECTORS) * W25Q_SECTOR_SIZE)
-// [区段 3] 大文件区:按大块扇区对齐位图分配 (推荐频繁删除的文件，删除后通过位图清空对应扇区即可，不会有碎片问题)
-// Sector 64 ~ 4031 (共 3968 个扇区 / 15.5MB)
+// [区段 3] 大文件区: Sector 64 ~ 4031 (共 3968 个扇区 / 15.5MB) — 位图管理
 #define AREA_LARGE_START_SECTOR 64
 #define AREA_LARGE_SECTORS 3968
-// [区段 4] 用户自定义区
-// Sector 4032 ~ 4095 (共 64 个扇区 / 256KB)
+#define LARGE_BITMAP_SIZE ((AREA_LARGE_SECTORS + 7) / 8)  // 496 bytes
+// [区段 4] 用户自定义区: Sector 4032 ~ 4095 (共 64 个扇区 / 256KB)
 #define AREA_USER_START_SECTOR 4032
 #define AREA_USER_SECTORS 64
-// 存放在 AT24C 中的总分配表 (FAT)
+
+// 存储在 AT24C 中的总分配表 (FAT)
 typedef struct
 {
     uint32_t magic;
     // 小文件分配器状态 (线性挤压式)
-    uint32_t small_next_addr; // 小文件区下一个可分配的地址，向上挤压分配，不回收碎片。初始值为 AREA_SMALL_START_ADDR
+    uint32_t small_next_addr; // 小文件区下一个可分配的地址，向上挤压分配，不回收碎片
     uint16_t small_file_count;
     small_file_info_t small_files[MAX_SMALL_FILES];
-    // 大文件分配器状态 (线性挤压式，以sector为单位)
-    uint32_t large_next_sector; // 大文件区下一个可分配的起始扇区，向上挤压分配。初始值为 AREA_LARGE_START_SECTOR
+    // 大文件位图: 每个bit代表一个sector, 1=已分配, 0=空闲
+    uint8_t large_sector_bitmap[LARGE_BITMAP_SIZE];
     uint16_t large_file_count;
     large_file_info_t large_files[MAX_LARGE_FILES];
 } storage_fat_t;
 
-static storage_fat_t global_fat; // 全局分配表，启动时从AT24C加载，运行时保持更新，并定期或在关键操作后写回AT24C以持久化。
+static storage_fat_t global_fat;
 
 #define FAT_STORAGE_ADDR 0x0000  // FAT在AT24C中的存储地址
 
@@ -75,7 +75,7 @@ static void storage_fat_init_default(void)
     global_fat.magic = FAT_MAGIC_NUMBER;
     global_fat.small_next_addr = AREA_SMALL_START_ADDR;
     global_fat.small_file_count = 0;
-    global_fat.large_next_sector = AREA_LARGE_START_SECTOR;
+    memset(global_fat.large_sector_bitmap, 0, LARGE_BITMAP_SIZE);
     global_fat.large_file_count = 0;
 }
 
@@ -102,7 +102,7 @@ void storage_fat_save(void)
     at24c_write_buffer(FAT_STORAGE_ADDR, (uint8_t *)&global_fat, sizeof(storage_fat_t));
 }
 
-int16_t find_small_file_by_name(const char *name) // 返回小文件索引，找不到返回-1
+int16_t find_small_file_by_name(const char *name)
 {
     for (uint16_t i = 0; i < global_fat.small_file_count; i++)
     {
@@ -114,7 +114,7 @@ int16_t find_small_file_by_name(const char *name) // 返回小文件索引，找
     return -1;
 }
 
-int16_t find_large_file_by_name(const char *name) // 返回大文件索引，找不到返回-1
+int16_t find_large_file_by_name(const char *name)
 {
     for (uint16_t i = 0; i < global_fat.large_file_count; i++)
     {
@@ -126,7 +126,7 @@ int16_t find_large_file_by_name(const char *name) // 返回大文件索引，找
     return -1;
 }
 
-bool get_small_file_info(uint8_t file_id, small_file_info_t *info) // 返回小文件信息，找不到返回false
+bool get_small_file_info(uint8_t file_id, small_file_info_t *info)
 {
     if (file_id < global_fat.small_file_count && global_fat.small_files[file_id].is_valid)
     {
@@ -136,7 +136,7 @@ bool get_small_file_info(uint8_t file_id, small_file_info_t *info) // 返回小�
     return false;
 }
 
-bool get_large_file_info(uint8_t file_id, large_file_info_t *info) // 返回大文件信息，找不到返回false
+bool get_large_file_info(uint8_t file_id, large_file_info_t *info)
 {
     if (file_id < global_fat.large_file_count && global_fat.large_files[file_id].is_valid)
     {
@@ -148,29 +148,110 @@ bool get_large_file_info(uint8_t file_id, large_file_info_t *info) // 返回大�
 
 #pragma endregion
 
-// 清空大文件区，通常在格式化或者初始化时调用
-static inline void erase_sector(uint32_t sector);
-void clear_large_file(void)
+#pragma region 大文件区位图管理
+
+// 位图辅助宏
+#define BITMAP_BYTE(b)    ((b) >> 3)
+#define BITMAP_MASK(b)    (1 << ((b) & 7))
+
+static inline bool bitmap_test_used(uint32_t sector)
 {
-    large_file_info_t temp = {0};
-    for (int i = 0; i < MAX_LARGE_FILES; i++)
-    {
-        if(!get_large_file_info(i, &temp))
-            break; // 获取到了最后一个文件的位置
-    }
-    for (uint32_t i = AREA_LARGE_START_SECTOR; i <= (temp.start_sector + temp.sector_count); i++)
-    {
-        erase_sector(i);
-    }
-    storage_fat_init_default();
-    storage_fat_save();
+    uint32_t idx = sector - AREA_LARGE_START_SECTOR;
+    return (global_fat.large_sector_bitmap[BITMAP_BYTE(idx)] & BITMAP_MASK(idx)) != 0;
 }
 
-void clear_small_file(void)
+static inline void bitmap_set_used(uint32_t sector)
 {
+    uint32_t idx = sector - AREA_LARGE_START_SECTOR;
+    global_fat.large_sector_bitmap[BITMAP_BYTE(idx)] |= BITMAP_MASK(idx);
+}
+
+static inline void bitmap_clear_used(uint32_t sector)
+{
+    uint32_t idx = sector - AREA_LARGE_START_SECTOR;
+    global_fat.large_sector_bitmap[BITMAP_BYTE(idx)] &= ~BITMAP_MASK(idx);
+}
+
+/**
+ * @brief 在大文件区寻找连续的 free_sectors 个空闲扇区
+ * @param free_sectors 需要的连续扇区数
+ * @return 起始sector号，失败返回 0xFFFFFFFF
+ */
+static uint32_t bitmap_find_free_block(uint32_t free_sectors)
+{
+    uint32_t consecutive = 0;
+    for (uint32_t s = AREA_LARGE_START_SECTOR; s < AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS; s++)
+    {
+        if (!bitmap_test_used(s))
+        {
+            consecutive++;
+            if (consecutive >= free_sectors)
+            {
+                return s - free_sectors + 1;
+            }
+        }
+        else
+        {
+            consecutive = 0;
+        }
+    }
+    return 0xFFFFFFFF; // 没找到足够的连续空间
+}
+
+/**
+ * @brief 标记一段连续sector为已分配
+ */
+static void bitmap_mark_block_used(uint32_t start_sector, uint32_t count)
+{
+    for (uint32_t i = 0; i < count; i++)
+    {
+        bitmap_set_used(start_sector + i);
+    }
+}
+
+/**
+ * @brief 标记一段连续sector为空闲
+ */
+static void bitmap_mark_block_free(uint32_t start_sector, uint32_t count)
+{
+    for (uint32_t i = 0; i < count; i++)
+    {
+        bitmap_clear_used(start_sector + i);
+    }
+}
+
+/**
+ * @brief 擦除并释放大文件占用的扇区（用于删除操作）
+ */
+static void erase_and_free_large_sectors(uint32_t start_sector, uint32_t sector_count)
+{
+    for (uint32_t i = 0; i < sector_count; i++)
+    {
+        w25q_erase_sector((start_sector + i) * W25Q_SECTOR_SIZE);
+        bitmap_clear_used(start_sector + i);
+    }
+}
+
+#pragma endregion
+
+// 清空大文件区（用于格式化）
+static inline void erase_sector(uint32_t sector)
+{
+    w25q_erase_sector(sector * W25Q_SECTOR_SIZE);
+}
+
+void clear_all_files(void)
+{
+    for (uint32_t i = AREA_LARGE_START_SECTOR; i < AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS; i++)
+    {
+        if (bitmap_test_used(i))
+        {
+            erase_sector(i);
+        }
+    }
     for (uint16_t i = AREA_SMALL_START_SECTOR; i < AREA_SMALL_START_SECTOR + AREA_SMALL_SECTORS; i++)
     {
-        erase_sector(AREA_SMALL_START_SECTOR + i);
+        erase_sector(i);
     }
     storage_fat_init_default();
     storage_fat_save();
@@ -179,8 +260,7 @@ void clear_small_file(void)
 #pragma region 分配器核心
 
 /**
- * @brief 对于小文件区，直接线性挤压式分配，返回下一个可用地址并推进指针。
- * 适合不频繁删除的小文件，删除后不回收空间。
+ * @brief 小文件区线性挤压式分配
  */
 static uint32_t allocate_small_space(uint32_t required_bytes)
 {
@@ -194,17 +274,16 @@ static uint32_t allocate_small_space(uint32_t required_bytes)
 }
 
 /**
- * @brief 对于大文件区，线性挤压式分配，以sector(4KB)为单位。
- * 适合大文件，删除后不回收空间，但以sector为单位方便擦除操作。
+ * @brief 大文件区位图分配：找到连续的 required_sectors 个空闲扇区并标记
  */
 static uint32_t allocate_large_sectors(uint32_t required_sectors)
 {
-    uint32_t sector = global_fat.large_next_sector;
-    if (sector + required_sectors > AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS)
+    uint32_t sector = bitmap_find_free_block(required_sectors);
+    if (sector == 0xFFFFFFFF)
     {
         return 0xFFFFFFFF;
     }
-    global_fat.large_next_sector += required_sectors;
+    bitmap_mark_block_used(sector, required_sectors);
     return sector;
 }
 
@@ -214,7 +293,7 @@ static uint32_t allocate_large_sectors(uint32_t required_sectors)
 
 #define HOST_FRAME_HEAD_0 0xBBU
 #define HOST_FRAME_HEAD_1 0x44U
-#define FRAME_HDR_SIZE 5U // 帧头(2B) + 命令(1B) + 长度(2B)
+#define FRAME_HDR_SIZE 9U
 #define RETRY_SEND_ERROR_CODE 0xE0U
 #define CONTINUE_SEND_CODE 0xA1U
 
@@ -223,6 +302,10 @@ typedef enum
     STATE_WAIT_HEAD0,
     STATE_WAIT_HEAD1,
     STATE_WAIT_CMD,
+    STATE_WAIT_TOTAL_SIZE_0,
+    STATE_WAIT_TOTAL_SIZE_1,
+    STATE_WAIT_TOTAL_SIZE_2,
+    STATE_WAIT_TOTAL_SIZE_3,
     STATE_WAIT_LEN_L,
     STATE_WAIT_LEN_H,
     STATE_WAIT_PAYLOAD // 包括crc16在内的完整数据段
@@ -235,18 +318,18 @@ typedef enum
 static host_cmd_state_t host_state = STATE_WAIT_HEAD0;
 static uint32_t host_state_tick = 0;
 static uint8_t host_cmd;
-static uint16_t host_payload_len; // 数据部分的长度，包括CRC16的2字节，但不包括帧头、命令和长度字段本身
-static uint16_t host_payload_idx; // 当前已接收的payload字节数，索引从0开始，对应host_payload[FRAME_HDR_SIZE]起始位置
-// 帧格式：[帧头0][帧头1][命令][长度L][长度H][payload数据...][CRC16L][CRC16H]
-// host_payload存储布局：[0..4]=帧头5字节，[5..]=payload数据(含CRC16)
-static uint8_t host_payload[FRAME_HDR_SIZE + 2048 + 2] = {0}; // 最大2048字节数据 + 2字节CRC + 5字节帧头
-static uint8_t rx_buffer[FRAME_HDR_SIZE + 2048 + 2];          // USB接收缓冲，确保能容纳完整帧
-// DMA写入缓冲区：用于在DMA传输期间保护host_payload不被新USB数据覆盖
-static uint8_t dma_write_buf[2048]; // 最大2048字节数据
-// 下载任务的实时记录
-static bool is_downloading = false;     // 当前是否处于下载状态机中
-static bool lcd_stream_was_enabled = false; // 下载前保存LCD流状态，下载结束后恢复
-static uint32_t current_write_addr = 0; // 当前正在写入的物理地址
+// host_total_file_size 是发送文件的完整大小（仅第一包有效）, host_payload_len 是本包数据段长度(含CRC)
+static uint32_t host_total_file_size = 0;
+static uint16_t host_payload_len;
+static uint16_t host_payload_idx;
+// host_payload存储布局：[0..8]=帧头9字节，[9..]=payload数据(含CRC16)
+static uint8_t host_payload[FRAME_HDR_SIZE + 2048 + 2] = {0};
+static uint8_t rx_buffer[FRAME_HDR_SIZE + 2048 + 2];
+static uint8_t dma_write_buf[2048];
+
+static bool is_downloading = false;
+static bool lcd_stream_was_enabled = false;
+static uint32_t current_write_addr = 0;
 static uint32_t current_file_size = 0;
 static uint32_t current_allocated_size = 0;
 static uint8_t current_file_type = 0;
@@ -256,6 +339,7 @@ static uint32_t current_sector_count = 0;
 static uint32_t small_file_start_addr = 0;
 static uint8_t error_payload = 0x00;
 static uint32_t small_last_erased_sector = 0xFFFFFFFF;
+static uint32_t large_last_erased_sector = 0xFFFFFFFF;
 
 #pragma endregion
 
@@ -265,19 +349,18 @@ static void clear_host_payload(void)
 {
     memset(host_payload, 0x00, sizeof(host_payload));
 }
-static inline void erase_sector(uint32_t sector)
-{
-    w25q_erase_sector(sector * W25Q_SECTOR_SIZE);
-}
+
 static void send_error(uint8_t error_type)
 {
     error_payload = error_type;
     usb_controller_send(&g_usb_controller, RETRY_SEND_ERROR_CODE, &error_payload, 1);
 }
+
 static void send_continue(void)
 {
     usb_controller_send(&g_usb_controller, CONTINUE_SEND_CODE, NULL, 0);
 }
+
 /**
  * @brief 写入W25Q并回读验证，失败自动重试（最多WRITE_VERIFY_RETRY_MAX次）
  *        验证方式：写入后用 w25q_read_data 回读，与 dma_write_buf memcmp 对比
@@ -341,6 +424,8 @@ static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t 
 
 #pragma region 命令处理核心
 
+extern volatile bool lcd_usb_stream_enabled; // from lcd_ui.c
+
 static void process_host_command(void)
 {
     if (host_payload_len < 2) return;
@@ -350,42 +435,45 @@ static void process_host_command(void)
         return;
     }
 
-    // CRC校验通过，继续处理命令
     uint16_t actual_data_len = host_payload_len - 2;
     // ==================== 0x19: 删除文件 ====================
     if (host_cmd == 0x19)
     {
         if (host_payload_len < 4)
-            return; // 至少需要：文件类型(1B) + 文件索引(1B) + CRC16(2B)
+            return;
         uint8_t file_type_to_delete = host_payload[FRAME_HDR_SIZE];
         uint8_t file_index = host_payload[FRAME_HDR_SIZE + 1];
+
         if (file_type_to_delete == 0x11)
         {
             if (file_index >= global_fat.large_file_count || !global_fat.large_files[file_index].is_valid)
             {
-                send_error(0x08); // 文件索引无效
+                send_error(0x08);
                 return;
             }
-            global_fat.large_files[file_index].is_valid = 0;
+            // 擦除W25Q扇区并释放位图
+            large_file_info_t *fi = &global_fat.large_files[file_index];
+            erase_and_free_large_sectors(fi->start_sector, fi->sector_count);
+            fi->is_valid = 0;
             storage_fat_save();
         }
         else if (file_type_to_delete == 0x45)
         {
             if (file_index >= global_fat.small_file_count || !global_fat.small_files[file_index].is_valid)
             {
-                send_error(0x08); // 文件索引无效
+                send_error(0x08);
                 return;
             }
-            global_fat.small_files[file_index].is_valid = 0;
+            global_fat.small_files[file_index].is_valid = 0; // sorry, no recycle for small file space.
             storage_fat_save();
         }
         else
         {
-            send_error(0x02); // 未知文件类型
+            send_error(0x02);
         }
         return;
     }
-    // ==================== 0x14: 结束下载并且获取文件名字 ====================
+    // ==================== 0x14: 结束下载 ====================
     if (host_cmd == 0x14)
     {
         if (!is_downloading)
@@ -434,7 +522,7 @@ static void process_host_command(void)
         uint32_t erase_end_sector = 0;
         bool need_erase = false;
 
-        if (!is_downloading)
+        if (!is_downloading) // 新下载请求
         {
             is_downloading = true;
             lcd_stream_was_enabled = lcd_usb_stream_enabled;
@@ -450,7 +538,15 @@ static void process_host_command(void)
 
             if (host_cmd == 0x11)
             {
-                uint32_t allocated_first_sector = allocate_large_sectors(1);
+                // 大文件: 根据 host_total_file_size 预分配扇区
+                uint32_t total_size = host_total_file_size;
+                if (total_size == 0)
+                {
+                    // 如果没有总大小信息，至少分配1个扇区
+                    total_size = W25Q_SECTOR_SIZE;
+                }
+                uint32_t required_sectors = (total_size + W25Q_SECTOR_SIZE - 1) / W25Q_SECTOR_SIZE;
+                uint32_t allocated_first_sector = allocate_large_sectors(required_sectors);
                 if (allocated_first_sector == 0xFFFFFFFF)
                 {
                     lcd_usb_stream_enabled = lcd_stream_was_enabled;
@@ -460,15 +556,20 @@ static void process_host_command(void)
                 }
                 current_start_sector = allocated_first_sector;
                 current_write_addr = allocated_first_sector * W25Q_SECTOR_SIZE;
-                current_sector_count = 1;
-                current_allocated_size = W25Q_SECTOR_SIZE;
+                current_sector_count = required_sectors;
+                current_allocated_size = required_sectors * W25Q_SECTOR_SIZE;
+                // 只擦除当前包数据需要的扇区，避免预擦除大量扇区导致卡死
+                uint32_t write_end_addr = current_write_addr + actual_data_len;
+                uint32_t last_sector_needed = (write_end_addr - 1) / W25Q_SECTOR_SIZE;
                 erase_start_sector = allocated_first_sector;
-                erase_end_sector = allocated_first_sector + 1;
+                erase_end_sector = last_sector_needed + 1;
+                large_last_erased_sector = last_sector_needed;
                 need_erase = true;
             }
             else
             {
-                uint32_t allocated_addr = allocate_small_space(actual_data_len);
+                // 小文件: 保持原有线性分配逻辑
+                uint32_t allocated_addr = allocate_small_space(W25Q_SECTOR_SIZE);
                 if (allocated_addr == 0xFFFFFFFF)
                 {
                     lcd_usb_stream_enabled = lcd_stream_was_enabled;
@@ -478,51 +579,77 @@ static void process_host_command(void)
                 }
                 small_file_start_addr = allocated_addr;
                 current_write_addr = allocated_addr;
-                current_allocated_size = actual_data_len;
-                uint32_t end_sector = (allocated_addr + actual_data_len - 1) / W25Q_SECTOR_SIZE;
-                if (end_sector > small_last_erased_sector)
-                {
-                    erase_start_sector = small_last_erased_sector + 1;
-                    erase_end_sector = end_sector + 1;
-                    need_erase = true;
-                }
+                current_allocated_size = W25Q_SECTOR_SIZE;
+                erase_start_sector = allocated_addr / W25Q_SECTOR_SIZE;
+                erase_end_sector = erase_start_sector + 1;
+                need_erase = true;
             }
-        }
-        else if (current_file_type != host_cmd)
-        {
-            lcd_usb_stream_enabled = lcd_stream_was_enabled;
-            is_downloading = false;
-            send_error(0x05);
-            return;
         }
         else
         {
+            // 正在下载中，处理后续数据包
+            if (current_file_type != host_cmd)
+            {
+                send_error(0x05);
+                return;
+            }
+
             if (host_cmd == 0x11)
             {
-                uint32_t needed_size = current_write_addr + actual_data_len - (current_start_sector * W25Q_SECTOR_SIZE);
-                if (needed_size > current_allocated_size)
+                // 大文件扩展：如果当前分配空间不足则扩展
+                if (current_file_size + actual_data_len > current_allocated_size)
                 {
-                    uint32_t new_sectors_needed = (needed_size + W25Q_SECTOR_SIZE - 1) / W25Q_SECTOR_SIZE;
-                    if (new_sectors_needed > current_sector_count)
+                    uint32_t additional_bytes = (current_file_size + actual_data_len) - current_allocated_size;
+                    uint32_t additional_sectors = (additional_bytes + W25Q_SECTOR_SIZE - 1) / W25Q_SECTOR_SIZE;
+                    uint32_t new_total_sectors = current_sector_count + additional_sectors;
+                    // 检查后续扇区是否可用
+                    bool can_extend = true;
+                    for (uint32_t i = 0; i < additional_sectors; i++)
                     {
-                        uint32_t extend_end = current_start_sector + new_sectors_needed;
-                        if (extend_end > AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS)
+                        uint32_t s = current_start_sector + current_sector_count + i;
+                        if (s >= AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS || bitmap_test_used(s))
                         {
-                            lcd_usb_stream_enabled = lcd_stream_was_enabled;
-                            is_downloading = false;
-                            send_error(0x06);
-                            return;
+                            can_extend = false;
+                            break;
                         }
-                        erase_start_sector = current_start_sector + current_sector_count;
-                        erase_end_sector = extend_end;
+                    }
+                    if (can_extend)
+                    {
+                        bitmap_mark_block_used(current_start_sector + current_sector_count, additional_sectors);
+                        current_sector_count = new_total_sectors;
+                        current_allocated_size = current_sector_count * W25Q_SECTOR_SIZE;
+                        erase_start_sector = current_start_sector + current_sector_count - additional_sectors;
+                        erase_end_sector = erase_start_sector + additional_sectors;
+                        large_last_erased_sector = erase_end_sector - 1;
                         need_erase = true;
-                        global_fat.large_next_sector = extend_end;
-                        current_sector_count = new_sectors_needed;
-                        current_allocated_size = new_sectors_needed * W25Q_SECTOR_SIZE;
+                    }
+                    else
+                    {
+                        lcd_usb_stream_enabled = lcd_stream_was_enabled;
+                        is_downloading = false;
+                        send_error(0x06);
+                        return;
                     }
                 }
             }
-            else
+            // 检查是否需要擦除更多扇区（预分配方式下按需擦除）
+            if (!need_erase && host_cmd == 0x11)
+            {
+                uint32_t write_end = current_write_addr + actual_data_len;
+                if (write_end > 0)
+                {
+                    uint32_t last_needed = (write_end - 1) / W25Q_SECTOR_SIZE;
+                    if (last_needed > large_last_erased_sector)
+                    {
+                        erase_start_sector = large_last_erased_sector + 1;
+                        erase_end_sector = last_needed + 1;
+                        large_last_erased_sector = last_needed;
+                        need_erase = true;
+                    }
+                }
+            }
+            // 小文件不预分配，直接按需擦除
+            if (host_cmd == 0x45)
             {
                 uint32_t needed_total = current_write_addr + actual_data_len - small_file_start_addr;
                 if (needed_total > current_allocated_size)
@@ -565,8 +692,6 @@ static void process_host_command(void)
 
         if (actual_data_len > 0)
         {
-            // DMA写入数据，flash_write_dma 内部拷贝到 dma_write_buf 保护数据
-            // flash_write_and_verify 内部已通过 send_error 发回具体错误码
             if (!flash_write_and_verify(current_write_addr, &host_payload[FRAME_HDR_SIZE], actual_data_len))
             {
                 lcd_usb_stream_enabled = lcd_stream_was_enabled;
@@ -579,24 +704,59 @@ static void process_host_command(void)
         send_continue();
         return;
     }
-    // ==================== 0x20: 查询文件列表 (TLV格式) ====================
-    // 帧格式: [entry_count(1B)] [record_1] [record_2] ...
-    // 每条记录: [record_len(1B)] [tag(1B)] [file_index(1B)] [name_len(1B)] [filename(NB)] [addr/sector(4B LE)] [size(4B LE)]
-    // tag: bit7=zone(0=small,1=large) | bit6~0=file_type
-    // record_len 包含自身, = 12 + name_len
+
+    // ==================== 0x20: ?????? (TLV??) ====================
+    // ???: [entry_count(1B)] [slot_count(1B)] [slot_records...] [file_records...]
+    // slot??: [rLen=10(1B)] [tag=0xFF(1B)] [start_sector(4B LE)] [sector_count(4B LE)]
+    // ????: [rLen(1B)] [tag(1B)] [file_index(1B)] [name_len(1B)] [filename(NB)] [addr/sector(4B LE)] [size(4B LE)]
+    //   ?????: sector_count(4B LE)
+    //   small: rLen = 12 + name_len
+    //   large: rLen = 16 + name_len
     if (host_cmd == 0x20)
     {
-        static uint8_t file_list_buffer[1024];
-        uint16_t idx = 1;
+        static uint8_t file_list_buffer[2560];
+        uint16_t idx = 0;
         uint8_t entry_count = 0;
+        uint8_t slot_count = 0;
+
+        idx = 2;
+
+        {
+            uint32_t s = AREA_LARGE_START_SECTOR;
+            while (s < AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS)
+            {
+                if (bitmap_test_used(s))
+                {
+                    uint32_t block_start = s;
+                    uint32_t block_count = 0;
+                    while (s < AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS && bitmap_test_used(s))
+                    {
+                        block_count++;
+                        s++;
+                    }
+                    // rLen(1) + tag(1) + start_sector(4) + sector_count(4) = 10
+                    if (idx + 10 > sizeof(file_list_buffer)) break;
+                    file_list_buffer[idx++] = 10;
+                    file_list_buffer[idx++] = 0xFF;
+                    memcpy(&file_list_buffer[idx], &block_start, 4);
+                    idx += 4;
+                    memcpy(&file_list_buffer[idx], &block_count, 4);
+                    idx += 4;
+                    slot_count++;
+                }
+                else
+                {
+                    s++;
+                }
+            }
+        }
+
         for (uint16_t i = 0; i < global_fat.small_file_count; i++)
         {
-            if (!global_fat.small_files[i].is_valid)
-                continue;
+            if (!global_fat.small_files[i].is_valid) continue;
             uint8_t namelen = (uint8_t)strlen(global_fat.small_files[i].filename);
             uint8_t record_len = 12 + namelen;
-            if (idx + record_len > sizeof(file_list_buffer))
-                break;
+            if (idx + record_len > sizeof(file_list_buffer)) break;
             file_list_buffer[idx++] = record_len;
             file_list_buffer[idx++] = (0 << 7) | (global_fat.small_files[i].file_type & 0x7F);
             file_list_buffer[idx++] = i;
@@ -609,14 +769,13 @@ static void process_host_command(void)
             idx += 4;
             entry_count++;
         }
+
         for (uint16_t i = 0; i < global_fat.large_file_count; i++)
         {
-            if (!global_fat.large_files[i].is_valid)
-                continue;
+            if (!global_fat.large_files[i].is_valid) continue;
             uint8_t namelen = (uint8_t)strlen(global_fat.large_files[i].filename);
-            uint8_t record_len = 12 + namelen;
-            if (idx + record_len > sizeof(file_list_buffer))
-                break;
+            uint8_t record_len = 16 + namelen;  // 12?? + 4(sector_count) + namelen
+            if (idx + record_len > sizeof(file_list_buffer)) break;
             file_list_buffer[idx++] = record_len;
             file_list_buffer[idx++] = (1 << 7) | (global_fat.large_files[i].file_type & 0x7F);
             file_list_buffer[idx++] = i;
@@ -627,43 +786,47 @@ static void process_host_command(void)
             idx += 4;
             memcpy(&file_list_buffer[idx], &global_fat.large_files[i].size, 4);
             idx += 4;
+            // sector_count
+            memcpy(&file_list_buffer[idx], &global_fat.large_files[i].sector_count, 4);
+            idx += 4;
             entry_count++;
         }
+
         file_list_buffer[0] = entry_count;
+        file_list_buffer[1] = slot_count;
         usb_controller_send(&g_usb_controller, 0x20, file_list_buffer, idx);
         return;
     }
-    // ==================== 0x10: LCD流控制 (查询/开启/关闭) ====================
-    // 主机 -> MCU: payload为空(仅CRC16) = 查询状态
-    //               payload[0]=0x01 = 开启LCD USB流
-    //               payload[0]=0x00 = 关闭LCD USB流
-    // MCU -> 主机: [enabled(1B)]
+
+    // ==================== 0x21: 发送bitmap ====================
+    if (host_cmd == 0x21)
+    {
+        usb_controller_send(&g_usb_controller, 0x21, global_fat.large_sector_bitmap, LARGE_BITMAP_SIZE);
+        return;
+    }
+
+    // ==================== 0x10: LCD检测 ====================
     if (host_cmd == 0x10)
     {
-        if (host_payload_len >= 3) // 有控制数据: sub_cmd(1B) + CRC16(2B) = 3
+        if (host_payload_len >= 3)
         {
             uint8_t sub_cmd = host_payload[FRAME_HDR_SIZE];
-            if (sub_cmd == 0x01)
-            {
-                lcd_usb_stream_enabled = true;
-            }
-            else if (sub_cmd == 0x00)
-            {
-                lcd_usb_stream_enabled = false;
-            }
+            if (sub_cmd == 0x01) lcd_usb_stream_enabled = true;
+            else if (sub_cmd == 0x00) lcd_usb_stream_enabled = false;
         }
         uint8_t resp[1];
         resp[0] = lcd_usb_stream_enabled ? 0x01 : 0x00;
         usb_controller_send(&g_usb_controller, 0x10, resp, sizeof(resp));
         return;
     }
-    // ==================== 未知命令 ====================
+
+    // ==================== 未知指令 ====================
     send_error(0x09);
 }
 
 #pragma endregion
 
-#pragma region 协议状态机(逐字节解析)
+#pragma region 解码状态机
 
 static void storage_manager_process_host_byte(uint8_t byte)
 {
@@ -699,18 +862,42 @@ static void storage_manager_process_host_byte(uint8_t byte)
     case STATE_WAIT_CMD:
         host_cmd = byte;
         host_payload[2] = byte;
+        host_state = STATE_WAIT_TOTAL_SIZE_0;
+        host_state_tick = HAL_GetTick();
+        break;
+    case STATE_WAIT_TOTAL_SIZE_0:
+        host_payload[3] = byte;
+        host_total_file_size = byte;
+        host_state = STATE_WAIT_TOTAL_SIZE_1;
+        host_state_tick = HAL_GetTick();
+        break;
+    case STATE_WAIT_TOTAL_SIZE_1:
+        host_payload[4] = byte;
+        host_total_file_size |= ((uint32_t)byte << 8);
+        host_state = STATE_WAIT_TOTAL_SIZE_2;
+        host_state_tick = HAL_GetTick();
+        break;
+    case STATE_WAIT_TOTAL_SIZE_2:
+        host_payload[5] = byte;
+        host_total_file_size |= ((uint32_t)byte << 16);
+        host_state = STATE_WAIT_TOTAL_SIZE_3;
+        host_state_tick = HAL_GetTick();
+        break;
+    case STATE_WAIT_TOTAL_SIZE_3:
+        host_payload[6] = byte;
+        host_total_file_size |= ((uint32_t)byte << 24);
         host_state = STATE_WAIT_LEN_L;
         host_state_tick = HAL_GetTick();
         break;
     case STATE_WAIT_LEN_L:
         host_payload_len = byte;
-        host_payload[3] = byte;
+        host_payload[7] = byte;
         host_state = STATE_WAIT_LEN_H;
         host_state_tick = HAL_GetTick();
         break;
     case STATE_WAIT_LEN_H:
         host_payload_len |= ((uint16_t)byte << 8);
-        host_payload[4] = byte;
+        host_payload[8] = byte;
         if (host_payload_len > sizeof(host_payload) - FRAME_HDR_SIZE || host_payload_len < 2)
         {
             host_state = STATE_WAIT_HEAD0;
@@ -737,9 +924,10 @@ static void storage_manager_process_host_byte(uint8_t byte)
         break;
     }
 }
+
 #pragma endregion
 
-#pragma region 主任务接口
+#pragma region 外部接口
 
 bool storage_manager_init(void)
 {
@@ -747,28 +935,15 @@ bool storage_manager_init(void)
     host_state = STATE_WAIT_HEAD0;
     host_state_tick = HAL_GetTick();
     bool fat_ok = storage_fat_load();
-    small_last_erased_sector = (global_fat.small_next_addr > 0) ? ((global_fat.small_next_addr - 1) / W25Q_SECTOR_SIZE) : (AREA_SMALL_START_ADDR / W25Q_SECTOR_SIZE - 1);
-    if (!fat_ok)
-    {
-        uint32_t first_sector = global_fat.small_next_addr / W25Q_SECTOR_SIZE;
-        erase_sector(first_sector);
-        small_last_erased_sector = first_sector;
-    }
+    small_last_erased_sector = (global_fat.small_next_addr > 0)
+        ? ((global_fat.small_next_addr - 1) / W25Q_SECTOR_SIZE)
+        : (AREA_SMALL_START_SECTOR - 1);
+    large_last_erased_sector = 0xFFFFFFFF;
     return fat_ok;
 }
 
 void storage_manager_task(void)
 {
-    usb_controller_task(&g_usb_controller);
-
-    if (host_state != STATE_WAIT_HEAD0 && HAL_GetTick() - host_state_tick >= HOST_STATE_TIMEOUT_MS)
-    {
-        host_state = STATE_WAIT_HEAD0;
-        clear_host_payload();
-        host_state_tick = HAL_GetTick();
-        usb_controller_receive(&g_usb_controller, rx_buffer, sizeof(rx_buffer));
-    }
-
     uint16_t rx_len = usb_controller_receive(&g_usb_controller, rx_buffer, sizeof(rx_buffer));
     for (uint16_t i = 0; i < rx_len;)
     {
@@ -794,11 +969,17 @@ void storage_manager_task(void)
             i++;
         }
     }
+    if (host_state != STATE_WAIT_HEAD0 && HAL_GetTick() - host_state_tick >= HOST_STATE_TIMEOUT_MS)
+    {
+        host_state = STATE_WAIT_HEAD0;
+        host_state_tick = HAL_GetTick();
+        clear_host_payload();
+    }
 }
-
-#pragma endregion
 
 bool storage_is_downloading(void)
 {
     return is_downloading;
 }
+
+#pragma endregion

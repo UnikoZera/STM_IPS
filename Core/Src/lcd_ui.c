@@ -40,7 +40,7 @@ void lcd_ui_init(void)
 
     // 从文件系统获取图片文件的W25Q地址
     {
-        int16_t idx = find_large_file_by_name("idk");
+        int16_t idx = find_large_file_by_name("vp_img");
         if (idx >= 0)
         {
             large_file_info_t info;
@@ -48,7 +48,7 @@ void lcd_ui_init(void)
             {
                 g_picture.x = 0;
                 g_picture.y = 0;
-                g_picture.width = 120;
+                g_picture.width = 160;
                 g_picture.height = 80;
                 g_picture.addr = info.start_sector * 4096;
             }
@@ -57,7 +57,7 @@ void lcd_ui_init(void)
 
     // 从文件系统获取视频文件的W25Q地址
     {
-        int16_t idx = find_large_file_by_name("okay_jksdf");
+        int16_t idx = find_large_file_by_name("kkg");
         if (idx >= 0)
         {
             large_file_info_t info;
@@ -84,7 +84,7 @@ void lcd_ui_init(void)
     // lcd_anim_manager_add_layer(&g_circle2, lcd_draw_circle_layer);
     // lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
     // lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
-    // lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
+    //lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
     lcd_anim_manager_add_layer(&g_video, lcd_draw_video_frame_layer);
     #pragma endregion
 

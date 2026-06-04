@@ -1,4 +1,4 @@
-/*
+﻿/*
  * storage_manager.h
  *
  *  Created on: 2026年4月27日
@@ -16,6 +16,7 @@
 #define MAX_FILENAME_LEN 16
 #define MAX_SMALL_FILES 32
 #define MAX_LARGE_FILES 32
+
 typedef struct
 {
     uint8_t is_valid;
@@ -28,7 +29,7 @@ typedef struct
 {
     uint8_t is_valid;
     uint8_t file_type;
-    uint16_t sector_count;
+    uint32_t sector_count;
     uint32_t start_sector;
     uint32_t size;
     char filename[MAX_FILENAME_LEN];
@@ -42,8 +43,7 @@ int16_t find_small_file_by_name(const char *name);
 int16_t find_large_file_by_name(const char *name);
 bool get_small_file_info(uint8_t file_id, small_file_info_t *info);
 bool get_large_file_info(uint8_t file_id, large_file_info_t *info);
-void clear_large_file(void);
-void clear_small_file(void);
+void clear_all_files(void);
 bool storage_is_downloading(void);
 
 #endif /* INC_STORAGE_MANAGER_H_ */

@@ -683,6 +683,7 @@ input[type=range]::-moz-range-thumb{
       <div class="card">
         <span class="card-title">设备管理</span>
         <button class="btn btn-query" onclick="queryFileList()">&#128260; 刷新文件列表</button>
+        <button class="btn btn-query" onclick="queryBitmap()" style="margin-top:5px;">Flash Map</button>
         <div style="margin-top:6px;">
           <button class="btn btn-danger" id="btnDeleteMenu" onclick="openDeleteModal()">&#128465; 删除文件</button>
         </div>
@@ -808,6 +809,21 @@ input[type=range]::-moz-range-thumb{
   </div>
 </div>
 
+<!-- Flash 位图弹窗 -->
+<div id="bitmapModal" class="modal-overlay" onclick="closeBitmapModal()">
+  <div class="modal-content" onclick="event.stopPropagation()" style="width:90vw;max-width:700px;">
+    <div class="modal-hd">
+      <span class="modal-title">Flash 扇区位图</span>
+      <button class="modal-close" onclick="closeBitmapModal()">&times;</button>
+    </div>
+    <div id="bitmapInfo" style="font-size:11px;color:#6a7a94;padding:6px 12px;text-align:center;border-bottom:1px solid #162035;"></div>
+    <div class="modal-body" style="text-align:center;overflow:auto;">
+      <canvas id="bitmapCanvas" style="display:inline-block;border:1px solid #162035;border-radius:3px;cursor:crosshair;image-rendering:pixelated;"></canvas>
+      <div id="bitmapHoverInfo" style="font-size:10px;color:#3a4a62;margin-top:4px;min-height:16px;"></div>
+    </div>
+  </div>
+</div>
+
 <!-- VP 详情弹窗 -->
 <div id="vpDetailModal" class="modal-overlay" onclick="if(!vpDragging)closeVPDetail()">
   <div class="modal-content" onclick="event.stopPropagation()" style="width:90vw;max-width:900px;">
@@ -843,8 +859,8 @@ for (let i=0;i<256;i++) { let c=i; for (let j=0;j<8;j++) c=(c&1)?((c>>>1)^0xA001
 function crc16(data,off,len) { let c=0xFFFF; for (let i=0;i<len;i++) c=(c>>>8)^CRC16_TABLE[(c&0xFF)^data[off+i]]; return c^0xFFFF; }
 
 // ============= Constants =============
-const H0=0xBB,H1=0x44,HS=5;
-const C_L=0x11,C_S=0x45,C_END=0x14,C_DEL=0x19,C_QRY=0x20,C_LCD=0x10;
+const H0=0xBB,H1=0x44,HS=9;
+const C_L=0x11,C_S=0x45,C_END=0x14,C_DEL=0x19,C_QRY=0x20,C_LCD=0x10,C_BMP=0x21;
 const LCD_W=160,LCD_H=80,LCD_TAIL=4,LCD_FRAME_SZ=LCD_W*LCD_H*2;
 const R_LCD=0xA0;
 const UH0=0xAA,UH1=0x55,UHS=5;
@@ -894,10 +910,12 @@ function clearLcdCanvas(){
 }
 
 /* ===== frame ===== */
-function frame(cmd,data) {
-  const dL=data?data.length:0, pL=dL+2, total=HS+dL+2;
+function frame(cmd,data,totalFileSize) {
+  const dL=data?data.length:0, pL=dL+2, tfs=totalFileSize||0, total=HS+dL+2;
   const f=new Uint8Array(total);
-  f[0]=H0;f[1]=H1;f[2]=cmd;f[3]=pL&0xFF;f[4]=(pL>>>8)&0xFF;
+  f[0]=H0;f[1]=H1;f[2]=cmd;
+  f[3]=tfs&0xFF;f[4]=(tfs>>>8)&0xFF;f[5]=(tfs>>>16)&0xFF;f[6]=(tfs>>>24)&0xFF;
+  f[7]=pL&0xFF;f[8]=(pL>>>8)&0xFF;
   if(data&&dL)f.set(data,HS);
   const crc=crc16(f,0,HS+dL);
   f[HS+dL]=crc&0xFF;f[HS+dL+1]=(crc>>>8)&0xFF;
@@ -944,6 +962,7 @@ function handleResp(cmd,payload){
       lcdHostIntent = null; // 消费后清除
     }
   }
+  else if(cmd===C_BMP){handleBitmapResp(payload);}
   else if(cmd===R_LCD){
     if(payload.length>=LCD_FRAME_SZ){renderLcdFrame(payload);lcdLastFrameTime=Date.now();}
     lcdFrameCount++;
@@ -973,38 +992,59 @@ function resetCont(){
 
 /* ===== File List ===== */
 function parseList(payload){
-  if(payload.length<1)return;
+  if(payload.length<2)return;
   const cnt=payload[0];
+  const slotCount=payload[1];
   elFileCnt.textContent='共 '+cnt+' 个';
 
-  let files=[]; let idx=1;
-  for(let i=0;i<cnt;i++){
+  let slots=[]; let idx=2;
+  for(let i=0;i<slotCount;i++){
+    if(idx>=payload.length)break;
+    const rLen=payload[idx];if(idx+rLen>payload.length)break;
+    const tag=payload[idx+1];
+    if(tag===0xFF&&rLen===10){
+      const startSector=new DataView(payload.buffer,payload.byteOffset+idx+2,4).getUint32(0,true);
+      const sectorCount=new DataView(payload.buffer,payload.byteOffset+idx+6,4).getUint32(0,true);
+      slots.push({startSector,sectorCount});
+    }
+    idx+=rLen;
+  }
+
+  let files=[];
+  for(let i=0;idx<payload.length;i++){
     if(idx>=payload.length)break;
     const rLen=payload[idx];if(rLen<12||idx+rLen>payload.length)break;
     const tag=payload[idx+1],fi=payload[idx+2],nLen=payload[idx+3];
     if(nLen>16||idx+12+nLen>payload.length)break;
+    if(tag===0xFF)break;
     const zn=(tag&0x80)?'large':'small',fType=tag&0x7F;
     const name=new TextDecoder('ascii').decode(payload.slice(idx+4,idx+4+nLen)).replace(/\0/g,'');
     const addr=new DataView(payload.buffer,payload.byteOffset+idx+4+nLen,4).getUint32(0,true);
     const size=new DataView(payload.buffer,payload.byteOffset+idx+8+nLen,4).getUint32(0,true);
-    files.push({zn,zName:zn==='large'?'大文件':'小文件',fType,fi,name,addr,size});
+    let sectorCount=0;
+    if(zn==='large'&&idx+16+nLen<=payload.length){
+      sectorCount=new DataView(payload.buffer,payload.byteOffset+idx+12+nLen,4).getUint32(0,true);
+    }
+    files.push({zn,zName:zn==='large'?'大文件':'小文件',fType,fi,name,addr,size,sectorCount});
     idx+=rLen;
   }
 
   lastFileListData=files;
 
+
   let h='';
   files.forEach(function(f,order){
-    const sz=f.size<1024?f.size+' B':f.size<1048576?(f.size/1024).toFixed(1)+' KB':(f.size/1048576).toFixed(2)+' MB';
+    const szBytes=f.size;
+    const szStr=szBytes<1024?szBytes+' B':szBytes<1048576?(szBytes/1024).toFixed(1)+' KB':(szBytes/1048576).toFixed(2)+' MB';
     const tagCls=f.zn==='large'?'tag-L':'tag-S',zoneLabel=f.zName;
-    const sectorInfo=f.zn==='large'?' 扇区:'+f.addr:' 地址:0x'+f.addr.toString(16).toUpperCase();
+    const largeDetail=f.zn==='large'?'扇区 #'+f.addr+' ('+f.sectorCount+' sectors)':'地址:0x'+f.addr.toString(16).toUpperCase();
     const sizeIcon=f.zn==='large'?'\u{1F4E6}':'\u{1F4C4}';
     h+='<div class="file-item" style="animation-delay:'+(order*.04)+'s" onclick="openFileDetailByIndex('+order+')">'
       +'<div class="file-item-name"><span class="file-icon">'+sizeIcon+'</span> ['+f.fi+'] '+escHtml(f.name||'(无名)')+'</div>'
       +'<div class="file-item-meta">'
-      +'<span class="tag '+tagCls+'">'+zoneLabel+'</span>'
-      +'<span class="sep">|</span><span>'+sz+'</span>'
-      +'<span class="sep">|</span><span>'+sectorInfo+'</span>'
+      +'<span class="tag '+tagCls+'">#'+f.fi+' '+zoneLabel+'</span>'
+      +'<span class="sep">|</span><span>'+szStr+'</span>'
+      +'<span class="sep">|</span><span>'+largeDetail+'</span>'
       +'</div>'
       +'<div class="file-item-actions">'
       +'<button class="btn btn-danger" onclick="event.stopPropagation();delFIClick('+f.fType+','+f.fi+',\''+escAttr(f.name||'')+'\')">&#128465; 删除</button>'
@@ -1037,7 +1077,8 @@ function openFileDetail(f){
     +'<div class="fd-row"><span class="fd-label">存储区域</span><span class="fd-value">'+zone+'</span></div>'
     +'<div class="fd-row"><span class="fd-label">类型代码</span><span class="fd-value">0x'+f.fType.toString(16).toUpperCase().padStart(2,'0')+'</span></div>'
     +'<div class="fd-row"><span class="fd-label">文件大小</span><span class="fd-value">'+szFormatted+'</span></div>'
-    +'<div class="fd-row"><span class="fd-label">地址/扇区</span><span class="fd-value">'+addrStr+'</span></div>';
+    +'<div class="fd-row"><span class="fd-label">地址/扇区</span><span class="fd-value">'+addrStr+'</span></div>'
+    + (f.zn==='large'?'<div class="fd-row"><span class="fd-label">占用扇区</span><span class="fd-value">#'+f.addr+' ~ #'+(f.addr+f.sectorCount-1)+' ('+f.sectorCount+' sectors)</span></div>':'');
   $('fileDetailModal').style.display='flex';
 }
 function openDeleteModal(){
@@ -1072,7 +1113,7 @@ async function delFIClick(ft,fi,name){
   if(!port){toast('未连接串口','error');return;}
   if(delPending){toast('删除操作进行中','warn');return;}
   const typeName=ft===C_L?'大文件':'小文件';
-  if(!confirm('确认删除 '+typeName+' #'+fi+' ('+name+')？\n\n注意：删除后空间不会回收。'))return;
+  if(!confirm('确认删除 '+typeName+' #'+fi+' ('+name+')？\n\n注意：删除后W25Q扇区将被擦除并回收空间。'))return;
   delPending=true;
   const d=new Uint8Array([ft&0xFF,fi&0xFF]);
   const ok=await writeSer(frame(C_DEL,d));
@@ -1162,7 +1203,8 @@ async function sendLoop(){
     if(fileOff>=fileData.length){await sendEndFrame();return;}
     const cs=chunkSz(),len=Math.min(fileData.length-fileOff,cs);
     const chunk=fileData.slice(fileOff,fileOff+len);
-    const frm=frame(fileCmd,chunk);
+    const totalSize=(fileCmd===C_L&&fileOff===0)?fileData.length:0;
+    const frm=frame(fileCmd,chunk,totalSize);
     const ok=await writeSer(frm);
     if(!ok){doAbort('写入失败');return;}
     fileOff+=len;updateProg(fileOff/fileData.length*100,fileOff,fileData.length);
@@ -2259,6 +2301,74 @@ function toggleTheme(){
     document.getElementById('themeBtn').title = '切换深色模式';
   }
 })();
+
+/* ===== Flash Bitmap ===== */
+let bitmapRawData=null;
+
+async function queryBitmap(){
+  if(!port){toast('请先连接串口','error');return;}
+  const frm=frame(C_BMP,null,0);
+  const ok=await writeSer(frm);
+  if(ok){log('HOST -> 查询Flash位图','send');toast('正在获取位图...','info');}
+}
+
+function handleBitmapResp(payload){
+  if(!payload||payload.length<496){toast('位图数据无效','error');return;}
+  bitmapRawData=new Uint8Array(payload);
+  const total=3968;
+  let used=0;
+  for(let i=0;i<total;i++){
+    const byteIdx=Math.floor(i/8),bitIdx=i%8;
+    if(bitmapRawData[byteIdx]&(1<<bitIdx))used++;
+  }
+  const free=total-used;
+  const pct=(used/total*100).toFixed(1);
+  log('MCU -> Flash位图: '+used+'/'+total+' 扇区已用 ('+pct+'%)','recv');
+  showBitmapModal(bitmapRawData,used,free,total);
+}
+
+function showBitmapModal(data,used,free,total){
+  const canvas=document.getElementById('bitmapCanvas');
+  const info=document.getElementById('bitmapInfo');
+  if(!canvas)return;
+  const pct2=(used/total*100).toFixed(1);
+  info.innerHTML='大文件区: '+total+' 扇区 | <span style="color:#7c4dff;">已用 '+used+'</span> <span style="color:#00e676;opacity:0.7;">空闲 '+free+'</span> | 占用 '+pct2+'%';
+  const COLS=64, ROWS=62, CELL=6, GAP=1, STEP=CELL+GAP;
+  const W=COLS*STEP-GAP, H=ROWS*STEP-GAP;
+  canvas.width=W; canvas.height=H;
+  const ctx=canvas.getContext('2d');
+  for(let row=0;row<ROWS;row++){
+    for(let col=0;col<COLS;col++){
+      const idx=row*COLS+col;
+      const byteIdx=Math.floor(idx/8),bitIdx=idx%8;
+      const used2=(data[byteIdx]&(1<<bitIdx))!==0;
+      ctx.fillStyle=used2?'#7c4dff':'#00e676';
+      ctx.globalAlpha=used2?0.7:0.4;
+      ctx.fillRect(col*STEP,row*STEP,CELL,CELL);
+    }
+  }
+  ctx.globalAlpha=1;
+  canvas.onmousemove=function(e){
+    const rect=canvas.getBoundingClientRect();
+    const scaleX=canvas.width/rect.width, scaleY=canvas.height/rect.height;
+    const mx=(e.clientX-rect.left)*scaleX, my=(e.clientY-rect.top)*scaleY;
+    const col2=Math.floor(mx/STEP), row2=Math.floor(my/STEP);
+    if(col2>=0&&col2<COLS&&row2>=0&&row2<ROWS){
+      const idx2=row2*COLS+col2;
+      const sectorNum=idx2+64;  // AREA_LARGE_START_SECTOR = 64
+      const byteIdx2=Math.floor(idx2/8),bitIdx2=idx2%8;
+      const used3=(data[byteIdx2]&(1<<bitIdx2))!==0;
+      document.getElementById('bitmapHoverInfo').textContent='扇区 #'+sectorNum+' ('+(used3?'已用':'空闲')+')';
+    }
+  };
+  document.getElementById('bitmapModal').style.display='flex';
+}
+
+function closeBitmapModal(){
+  const el=document.getElementById('bitmapModal');
+  el.classList.add('closing');
+  setTimeout(function(){el.style.display='none';el.classList.remove('closing');},200);
+}
 
 document.getElementById('vpDetailModal').addEventListener('keydown',function(e){
   if(e.key==='Escape')closeVPDetail();

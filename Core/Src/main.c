@@ -114,8 +114,7 @@ int main(void)
   bool w25q_ok = w25q_init();
   bool storage_ok = storage_manager_init();
 
-  // clear_large_file();
-  // clear_small_file();
+  // clear_all_files(); // 注意！ 这个函数会清空所有文件，谨慎使用！ 你可以在调试阶段使用它来重置存储状态，但在正常使用时请注释掉以避免误删数据。
 
   lcd_ui_init();
   
