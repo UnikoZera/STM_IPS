@@ -589,39 +589,6 @@ static void process_host_command(void)
                 send_error(0x05);
                 return;
             }
-
-            if (host_cmd == 0x11)
-            {
-                // 大文件扩展：如果当前分配空间不足则扩展
-                if (current_file_size + actual_data_len > current_allocated_size)
-                {
-                    uint32_t additional_bytes = (current_file_size + actual_data_len) - current_allocated_size;
-                    uint32_t additional_sectors = (additional_bytes + W25Q_SECTOR_SIZE - 1) / W25Q_SECTOR_SIZE;
-                    uint32_t new_total_sectors = current_sector_count + additional_sectors;
-                    // 检查后续扇区是否可用
-                    bool can_extend = true;
-                    for (uint32_t i = 0; i < additional_sectors; i++)
-                    {
-                        uint32_t s = current_start_sector + current_sector_count + i;
-                        if (s >= AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS || bitmap_test_used(s))
-                        {
-                            can_extend = false;
-                            break;
-                        }
-                    }
-                    if (can_extend)
-                    {
-                        bitmap_mark_block_used(current_start_sector + current_sector_count, additional_sectors);
-                        current_sector_count = new_total_sectors;
-                        current_allocated_size = current_sector_count * W25Q_SECTOR_SIZE;
-                    }
-                    else
-                    {
-                        abort_download_with_error(0x06);
-                        return;
-                    }
-                }
-            }
             // 小文件不预分配，直接按需擦除
             if (host_cmd == 0x45)
             {
