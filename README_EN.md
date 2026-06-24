@@ -1,15 +1,14 @@
-# ⚡ STM IPS — STM32 Image Processing System
+# ⚡ STM IPS
 
-> **SPDX-License-Identifier: AGPL-3.0-or-later**
->
-> **An STM32F401RC-driven 160×80 IPS embedded multimedia platform featuring image display, video playback, animation engine, USB CDC communication, and Web-based file management.**
+> **STM32F401RC-driven 160×80 IPS Embedded Multimedia Platform**  
+> **Display · Animation · MJPEG Video · USB CDC · Embedded File System**
 
-![STM32](https://img.shields.io/badge/MCU-STM32F401RCT6-03234B)
-![Display](https://img.shields.io/badge/Display-160×80_IPS-00BCD4)
+![STM32](https://img.shields.io/badge/MCU-STM32F401RCT6-03234B?logo=arm)
+![Display](https://img.shields.io/badge/Display-160%C3%9780_IPS-00BCD4)
 ![Protocol](https://img.shields.io/badge/Protocol-USB_CDC_Custom-7C4DFF)
 ![License](https://img.shields.io/badge/License-AGPLv3-blue)
 ![Status](https://img.shields.io/badge/Status-Active-success)
-
+- [Chinese Version](./README.md)
 ---
 
 ## 📋 Table of Contents
@@ -17,13 +16,15 @@
 - [System Overview](#-system-overview)
 - [Hardware Architecture](#-hardware-architecture)
 - [Software Architecture](#-software-architecture)
-- [Core Features & Code Examples](#-core-features--code-examples)
+- [Core Features](#-core-features)
   - [Display System](#-display-system)
   - [Animation Engine](#-animation-engine)
   - [MJPEG Video Playback](#-mjpeg-video-playback)
-  - [Storage Manager](#-storage-manager)
+  - [BL Compressed Video](#-bl-compressed-video)
+  - [Embedded File System](#-embedded-file-system)
   - [USB Controller](#-usb-controller)
-  - [SPI DMA Transfer](#-spi-dma-transfer)
+  - [SPI DMA Transport Layer](#-spi-dma-transport-layer)
+  - [Performance Monitoring](#-performance-monitoring)
 - [USB Communication Protocol](#-usb-communication-protocol)
 - [File System Design](#-file-system-design)
 - [Host Tools](#-host-tools)
@@ -36,18 +37,23 @@
 
 ## 🔭 System Overview
 
-**STM IPS** is an embedded image processing & multimedia system running on the STM32F401RC. It drives a 160×80 IPS color TFT display through **SPI DMA** for high-speed framebuffer refresh, decodes MJPEG video via the open-source picojpeg library in software, and communicates with the host through a custom USB CDC protocol for file transfer and real-time data streaming.
+**STM IPS** is an embedded image processing & multimedia system running on an STM32F401RC (Cortex-M4, 84MHz). It drives a **160×80 IPS color TFT** display through **SPI DMA** for tear-free full-screen refresh, and packs:
 
-The project consists of four sub-projects spanning firmware to host tools:
+- A custom **Animation Engine** — 15 easing functions, 16 concurrent animations, 16-layer render pipeline
+- **picojpeg-based** MJPEG software decoder
+- A **lightweight file system** — dual-zone allocation (byte-level small files / bitmap-managed large files), FAT persisted in EEPROM
+- A **USB CDC custom protocol** — file transfer, LCD live streaming, and device diagnostics
+
+The project spans firmware to host tools across four sub-projects:
 
 | Component | Tech Stack | Purpose |
 |:---|:---|:---|
-| `Core/` | C (STM32 HAL) | Firmware: LCD driver, animation engine, video decode, storage mgmt |
+| `Core/` | C (STM32 HAL) | Firmware: LCD driver, animation engine, video decode, storage mgmt, USB protocol |
 | `USB_DEVICE/` | C (STM32 USB Device Lib) | USB CDC virtual COM port layer |
-| `lcd_host_web/` | Python Flask + HTML5 | Web-based transcoding & file management |
-| `feature_tester/` | C + Python | Serial loopback test & RGB565 decode verification |
+| `lcd_host_web/` | Python Flask + HTML5 | Web-based image/video transcoding & file management |
+| `feature_tester/` | C + Python | Serial loopback test / RGB565 decode verification |
 
-For a Chinese version of this README, see **[README.md](README.md)**.
+For the Chinese version, see **[README.md](README.md)**.
 
 ---
 
@@ -57,7 +63,7 @@ For a Chinese version of this README, see **[README.md](README.md)**.
 
 | Parameter | Spec |
 |:---|:---|
-| **MCU** | STM32F401RCT6 (ARM Cortex-M4, 84MHz) |
+| **MCU** | STM32F401RCT6, ARM Cortex-M4 FPU, 84MHz |
 | **Flash** | 256KB (internal) |
 | **SRAM** | 64KB |
 | **Package** | LQFP64 |
@@ -65,41 +71,40 @@ For a Chinese version of this README, see **[README.md](README.md)**.
 ### Peripheral Connections
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                     STM32F401RC                            │
-│                                                            │
-│   SPI1 (DMA) ────→ 160×80 IPS LCD                          │
-│   ├─ PA5 (SCK) · PA6 (MISO) · PA7 (MOSI)                   │
-│   ├─ PB0 (RES) · PB1 (DC) · PB2 (CS)                       │
-│   └─ PA3 (Backlight PWM)                                   │
-│                                                            │
-│   SPI2 (DMA) ────→ W25Q128 (16MB SPI Flash)                │
-│   ├─ PB13 (SCK) · PB14 (MISO) · PB15 (MOSI)                │
-│   └─ PA8 (CS)                                              │
-│                                                            │
-│   I2C1 ────────→ AT24C64 (64Kb EEPROM)                     │
-│   └─ PB8 (SCL) · PB9 (SDA)                                 │
-│                                                            │
-│   USB_OTG_FS ──→ USB CDC (VCP)                             │
-│   └─ PB12 (USB EN)                                         │
-│                                                            │
-│   TIM2 / TIM3 / TIM4 / TIM9 (PWM · Timing)                 │
-│                                                            │
-│  (Unused) Encoder: PA0 (CH1) · PA1 (CH2) · PA2             │
-│  (Unused) Button: PC15 · LED: PC13 / PC14 / PA15           │
-└────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                         STM32F401RC                              │
+│                                                                  │
+│   SPI1 ── DMA2 Stream3 ───→ ST7735S 160×80 IPS LCD               │
+│   ├─ SCK(PA5) · MISO(PA6) · MOSI(PA7)                           │
+│   ├─ RES(PB0) · DC(PB1) · CS(PB2)                               │
+│   └─ BL_PWM(PA3, TIM9_CH2)                                      │
+│                                                                  │
+│   SPI2 ── DMA1 Stream3(RX) / Stream4(TX) ──→ W25Q128 16MB Flash │
+│   ├─ SCK(PB13) · MISO(PB14) · MOSI(PB15) · CS(PA8)              │
+│   └─ 4096 sectors × 4KB, 256B page program                      │
+│                                                                  │
+│   I2C1 ───────────────────────→ AT24C64 8KB EEPROM               │
+│   ├─ SCL(PB8) · SDA(PB9)                                        │
+│   └─ 32B page, I2C addr 0xA0, stores FAT                        │
+│                                                                  │
+│   USB_OTG_FS ─────────────────→ USB CDC Virtual COM Port         │
+│   └─ EN(PB12)                                                   │
+│                                                                  │
+│   TIM2 · TIM3 · TIM4 · TIM9 ── PWM / Timing                     │
+│   (Unused) Encoder PA0/PA1 · LED PC13/PC14/PA15 · Button PC15    │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### Memory Layout
+### Storage Layout
 
-| Region | Sectors | Size | Purpose |
+| Region | Sectors | Size | Allocation Strategy |
 |:---|:---:|:---:|:---|
-| **Reserved** | 0 ~ 1 | 8 KB | Reserved |
-| **Small File** | 2 ~ 63 | 248 KB | Text & small data (byte-level packing) |
-| **Large File** | 64 ~ 4031 | 15.5 MB | Images & video (sector-aligned bitmap alloc) |
+| **Reserved** | 0 ~ 1 | 8 KB | Compaction scratch |
+| **Small File** | 2 ~ 63 | 248 KB | Byte-level linear squeeze + compaction |
+| **Large File** | 64 ~ 4031 | 15.5 MB | 4KB sector-aligned bitmap |
 | **User** | 4032 ~ 4095 | 256 KB | User-defined |
 
-> W25Q128 total capacity 16MB, sector size 4KB. FAT is persisted in AT24C64 EEPROM.
+> W25Q128: 16MB total. FAT (File Allocation Table) persisted in AT24C64 EEPROM at address `0x0000`.
 
 ---
 
@@ -120,53 +125,54 @@ For a Chinese version of this README, see **[README.md](README.md)**.
     └────┬────┘ └───┬────┘ └───┬───────┘
          │          │          │
     ┌────▼────┐ ┌───▼────┐ ┌──▼───────┐
-    │ LCD PCD │ │ CRC16  │ │ AT24C    │
-    │picojpeg │ │        │ │ (EEPROM) │
-    │ MJPEG   │ │        │ │          │
+    │picojpeg │ │ CRC16  │ │ AT24C    │
+    │ MJPEG   │ │        │ │ (EEPROM) │
+    │ BL Dec  │ │        │ │          │
     └─────────┘ └────────┘ └──────────┘
 
-         STM32 HAL / SPI / I2C / DMA / TIM
+         STM32 HAL / SPI / I2C / DMA / TIM / DWT
 ```
 
 ### Main Loop Flow
 
 ```
 main()
- ├── HAL_Init() + SystemClock_Config()     // 84MHz HSE + PLL
+ ├── HAL_Init() + SystemClock_Config()       // 84MHz HSE + PLL
  ├── Peripheral init:
  │     MX_GPIO_Init() · MX_DMA_Init()
  │     MX_I2C1_Init() · MX_SPI1_Init() · MX_SPI2_Init()
  │     MX_USB_DEVICE_Init() · MX_TIMx_Init()
  │
- ├── usb_controller_init(&g_usb_controller)
- ├── lcd_init()
- ├── w25q_init()
- ├── storage_manager_init()
- ├── lcd_ui_init()
+ ├── Application init:
+ │     usb_controller_init()   // USB transceiver
+ │     lcd_init()              // ST7735 init sequence
+ │     w25q_init()             // W25Q128 JEDEC ID check
+ │     storage_manager_init()  // Load FAT from AT24C
+ │     lcd_ui_init()           // UI layers + animation start
  │
- └── while(1)
-      ├── lcd_ui_updater()          // UI render update
+ └── while(1)  // ~60 FPS @ 84MHz
+      ├── lcd_ui_updater()          // Update UI + animation + render
       ├── w25q_dma_task()           // SPI Flash DMA state machine
-      ├── storage_manager_task()    // USB file transfer handling
-      └── usb_controller_task()     // USB TX/RX management
+      ├── storage_manager_task()    // Parse USB host command frames
+      └── usb_controller_task()     // USB TX queue + timeout recovery
 ```
 
 ---
 
-## ✨ Core Features & Code Examples
+## ✨ Core Features
 
 ### 🖥️ Display System
 
-The 160×80 IPS display is driven over **SPI1 + DMA**. The framebuffer `lcd_frame_buffer[sizeof(uint16_t) * 160 * 80 + 4]` is flushed via a single DMA transfer.
+The 160×80 IPS display is driven over **SPI1 + DMA2 Stream3** with a single-buffer architecture (tail bytes reserved for dual-buffer migration).
 
-**Core API** (from `lcd.h` & `lcd_driver.h`):
+**Orientation**: Configured via `USE_HORIZONTAL` (0=portrait, 1=portrait+BGR, 2=landscape, 3=landscape+BGR). Default landscape: `LCD_W=160` × `LCD_H=80`.
 
 ```c
 // ── Basic Drawing ──
-void lcd_fill_screen(uint16_t color);              // Fill entire screen
+void lcd_fill_screen(uint16_t color);
 void lcd_draw_point(uint16_t x, uint16_t y, uint16_t color);
 void lcd_draw_line(uint16_t x1, uint16_t y1, uint16_t x2,
-                   uint16_t y2, uint16_t color);
+                   uint16_t y2, uint16_t color);   // Bresenham
 void lcd_draw_rectangle(uint16_t x1, uint16_t y1,
                         uint16_t x2, uint16_t y2, uint16_t color);
 void lcd_draw_circle(uint16_t x0, uint16_t y0,
@@ -174,48 +180,54 @@ void lcd_draw_circle(uint16_t x0, uint16_t y0,
 void lcd_draw_string(int16_t x, int16_t y, uint16_t fc,
                      uint16_t bc, uint8_t sizey, const char *p);
 
-// ── DMA-Accelerated Drawing ──
-void lcd_screen_update_dma(void);                  // Full-screen DMA flush
-void lcd_dma_draw_filled_rect(int16_t x, int16_t y,
-                              int16_t w, int16_t h, uint16_t color);
-void lcd_dma_draw_label(const lcd_label_t *label);
+// ── DMA-Accelerated (buffer → SPI DMA → LCD) ──
+void lcd_screen_update_dma(void);                  // Single DMA full-screen flush
+void lcd_draw_point_dma(int16_t x, int16_t y, uint16_t color);
+void lcd_draw_point_dma_swapped(int16_t x, int16_t y, uint16_t color);
+void lcd_fill_screen_dma(uint16_t color);
+void lcd_set_area_color(int16_t x, int16_t y, int16_t w,
+                        int16_t h, uint16_t color);
+void lcd_draw_char(int16_t x, int16_t y, const char ch,
+                   uint16_t fc, uint16_t bc, uint8_t sizey);
+void lcd_draw_picture_dma(int16_t x, int16_t y,
+                          int16_t width, int16_t height,
+                          const uint16_t *data);
 
-// ── Picture & Video ──
+// ── W25Q-backed rendering ──
 void lcd_draw_picture_from_w25q(int16_t x, int16_t y,
     int16_t width, int16_t height, uint32_t w25q_addr);
 void lcd_play_video_from_w25q(int16_t x, int16_t y,
     int16_t width, int16_t height,
-    uint32_t w25q_start_addr, uint32_t w25q_end_addr);
+    uint32_t w25q_addr, uint32_t file_size);
+// ↑ Auto-detects format: MJPEG(magic "MJPG") / BL compressed(magic "BL") / raw RGB565
 
-// ── Performance Monitoring ──
-void lcd_calculate_fps(void);       // DWT clock-cycle-based FPS
-void lcd_calculate_usage(void);     // CPU usage percentage
+// ── USB Live Streaming ──
+// When lcd_usb_stream_enabled=true, every DMA update also sends the
+// framebuffer via USB (command 0xA0), throttled at 30ms.
+// Tail sync bytes: {0x0D, 0x00, 0x07, 0x21}
 
-extern uint16_t lcd_fps;            // Current FPS
-extern uint8_t  cpu_usage_percent;  // CPU usage %
+// ── Hardware Performance Counters ──
+void lcd_calculate_fps(void);       // DWT_CYCCNT-based frame rate
+void lcd_calculate_usage(void);     // DWT cycle counter CPU load estimation
+
+extern uint16_t lcd_fps;
+extern uint8_t  cpu_usage_percent;
 ```
 
-**Usage Example**:
+**Example**:
 
 ```c
-// Draw a scene with circle, rectangle, and text
 lcd_fill_screen(BLACK);
 lcd_draw_string(10, 10, WHITE, BLACK, 8, "STM IPS");
 lcd_draw_circle(80, 40, 30, RED);
 lcd_draw_rectangle(20, 20, 60, 60, GREEN);
 lcd_draw_line(0, 0, LCD_W - 1, LCD_H - 1, BLUE);
-lcd_screen_update_dma();            // DMA flush
+lcd_screen_update_dma();
 
-// Performance data (call periodically in the main loop)
-lcd_calculate_fps();
-lcd_calculate_usage();
-// Read: lcd_fps, cpu_usage_percent
-
-// Adjust backlight brightness
-set_lcd_brightness(128);  // 0~255
+set_lcd_brightness(128);  // PWM 0~255
 ```
 
-**Color Constants**:
+**Predefined Colors** (20 RGB565 constants):
 
 | Name | Value | Name | Value |
 |:---|:---:|:---|:---:|
@@ -225,19 +237,13 @@ set_lcd_brightness(128);  // 0~255
 | `YELLOW` | `0xFFE0` | `MAGENTA` | `0xF81F` |
 | `GRAY` | `0x8430` | `DARKBLUE` | `0x01CF` |
 
-> **Design Notes**:
-> - Single-buffer architecture, `lcd_frame_buffer[160*80 + 4]`, designed for future double-buffer upgrade
-> - USB stream mode (`LCD_USB_STREAM_ENABLE`): waits for USB TX completion before rendering to prevent single-buffer tearing
-> - FPS counter uses DWT clock cycle for precise measurement without an extra timer
-> - Backlight brightness controlled via PWM on PA3 (TIM)
+> **Design Notes**: Single framebuffer `lcd_frame_buffer[160*80 + 4]`. `lcd_write_ptr` points into it; tail bytes are for USB stream sync. DMA busy flag prevents concurrent flush collisions.
 
 ---
 
 ### 🎞️ Animation Engine
 
-A complete animation framework supporting up to **16 concurrent animations** and **16 render layers**. Easing paths, execution callbacks, and completion callbacks are fully pluggable.
-
-**Core Structs** (from `lcd_driver.h`):
+A complete animation framework with **16 concurrent slots** × **16 render layers**. All easing functions, execution callbacks, and completion callbacks are pluggable. Q10 fixed-point arithmetic avoids FPU overhead.
 
 ```c
 // ── Animation Configuration ──
@@ -249,118 +255,75 @@ typedef struct {
     uint32_t delay_ms;               // Start delay (ms)
     bool repeat;                     // Repeat flag
     bool yoyo;                       // Yo-yo (reverse at end)
-    lcd_anim_exec_cb_t exec_cb;      // Execution callback (update target per frame)
+    lcd_anim_exec_cb_t exec_cb;      // Per-frame update callback
     lcd_anim_done_cb_t done_cb;      // Completion callback
     lcd_anim_path_cb_t path_cb;      // Easing function (NULL = linear)
 } lcd_anim_config_t;
 
 // ── Layer Types ──
 typedef struct { int16_t x, y, w, h; uint16_t color; } lcd_rect_t;
-typedef struct { int16_t x, y; uint8_t radius; uint16_t color; } lcd_circle_t;
-typedef struct { int16_t x, y; uint16_t fg_color, bg_color;
+typedef struct { int16_t x, y; uint8_t r; uint16_t color; } lcd_circle_t;
+typedef struct { int16_t x, y; uint16_t fg, bg;
                  uint8_t size; const char *text; } lcd_label_t;
-typedef struct { int16_t x, y, width, height; uint32_t addr; } lcd_picture_t;
-typedef struct { int16_t x, y, width, height;
-                 uint32_t start_addr, end_addr; } lcd_video_t;
+typedef struct { int16_t x, y, w, h; uint32_t addr; } lcd_picture_t;
+typedef struct { int16_t x, y, w, h;
+                 uint32_t start, end; } lcd_video_t;
 ```
 
 **API Quick Reference**:
 
 ```c
-// Animation Manager
-void lcd_anim_manager_init(void);
-void lcd_anim_manager_set_bg(uint16_t color);
-void lcd_anim_manager_task(void);       // Call in main loop - update all animations
-void lcd_anim_manager_render(void);     // Call in main loop - render all layers
+void  lcd_anim_manager_init(void);
+void  lcd_anim_manager_set_bg(uint16_t color);
+void  lcd_anim_manager_task(void);         // Advance all animations
+void  lcd_anim_manager_render(void);       // Render layers → framebuffer → DMA
 
-// Layer Management
 int8_t lcd_anim_manager_add_layer(void *ctx, lcd_layer_draw_cb_t draw_cb);
-bool   lcd_anim_manager_remove_layer(int8_t layer_id);
+bool   lcd_anim_manager_remove_layer(int8_t id);
 void   lcd_anim_manager_clear_layers(void);
 
-// Animation Control
 int8_t lcd_anim_start(const lcd_anim_config_t *config);
 bool   lcd_anim_stop(int8_t anim_id);
 void   lcd_anim_stop_all(void);
-
-// Easing Paths
-lcd_anim_path_cb_t lcd_anim_get_path(lcd_anim_ease_t ease);
 ```
 
-**Easing Functions** (14 total):
+**15 Easing Functions**:
 
 | Enum | Effect |
 |:---|:---|
 | `LCD_ANIM_EASE_LINEAR` | Linear |
-| `LCD_ANIM_EASE_IN_QUAD` | Quad ease-in |
-| `LCD_ANIM_EASE_OUT_QUAD` | Quad ease-out |
-| `LCD_ANIM_EASE_IN_OUT_QUAD` | Quad ease-in-out |
-| `LCD_ANIM_EASE_IN_SINE` | Sine ease-in |
-| `LCD_ANIM_EASE_OUT_SINE` | Sine ease-out |
-| `LCD_ANIM_EASE_IN_OUT_SINE` | Sine ease-in-out |
-| `LCD_ANIM_EASE_IN_EXPO` | Exponential ease-in |
-| `LCD_ANIM_EASE_OUT_EXPO` | Exponential ease-out |
-| `LCD_ANIM_EASE_IN_OUT_EXPO` | Exponential ease-in-out |
-| `LCD_ANIM_EASE_IN_CIRC` | Circular ease-in |
-| `LCD_ANIM_EASE_OUT_CIRC` | Circular ease-out |
-| `LCD_ANIM_EASE_IN_OUT_CIRC` | Circular ease-in-out |
+| `LCD_ANIM_EASE_IN_QUAD` / `OUT_QUAD` / `IN_OUT_QUAD` | Quadratic ease-in/out/in-out |
+| `LCD_ANIM_EASE_IN_SINE` / `OUT_SINE` / `IN_OUT_SINE` | Sine ease-in/out/in-out |
+| `LCD_ANIM_EASE_IN_EXPO` / `OUT_EXPO` / `IN_OUT_EXPO` | Exponential ease-in/out/in-out |
+| `LCD_ANIM_EASE_IN_CIRC` / `OUT_CIRC` / `IN_OUT_CIRC` | Circular ease-in/out/in-out |
 | `LCD_ANIM_EASE_IN_OUT_BACK` | Back ease-in-out (overshoots then rebounds) |
 | `LCD_ANIM_EASE_OUT_ELASTIC` | Elastic ease-out (bounces at end) |
 
-**Usage Example**:
+**Example**:
 
 ```c
-// ── Example 1: Rect sliding back and forth on X axis ──
 static lcd_rect_t g_rect = {10, 30, 28, 15, CYAN};
-
-int8_t layer_id = lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
+lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
 
 lcd_anim_config_t anim = {
-    .target       = &g_rect.x,
-    .start_value  = 0,
-    .end_value    = LCD_W - 28,
-    .duration_ms  = 1300,
-    .repeat       = true,
-    .yoyo         = true,
-    .exec_cb      = lcd_anim_exec_set_i16,
-    .path_cb      = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
+    .target      = &g_rect.x,
+    .start_value = 0,
+    .end_value   = LCD_W - 28,
+    .duration_ms = 1300,
+    .repeat      = true,
+    .yoyo        = true,
+    .exec_cb     = lcd_anim_exec_set_i16,
+    .path_cb     = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
 };
 lcd_anim_start(&anim);
-
-// ── Example 2: Text label with elastic bounce ──
-static lcd_label_t g_label = {40, 35, WHITE, BLACK, 8, "STM IPS"};
-
-lcd_anim_manager_add_layer(&g_label, lcd_dma_draw_label);
-
-lcd_anim_config_t bounce = {
-    .target       = &g_label.x,
-    .start_value  = 40,
-    .end_value    = 100,
-    .duration_ms  = 800,
-    .repeat       = true,
-    .yoyo         = true,
-    .exec_cb      = lcd_anim_exec_set_i16,
-    .path_cb      = lcd_anim_get_path(LCD_ANIM_EASE_OUT_ELASTIC),
-};
-lcd_anim_start(&bounce);
-
-// ── Update (call in main loop) ──
-// lcd_anim_manager_task();    // update animation state
-// lcd_anim_manager_render();  // render all layers to framebuffer
+// In main loop: lcd_anim_manager_task() + lcd_anim_manager_render()
 ```
-
-> **Design Notes**:
-> - Core implementation in `lcd_driver.c` using static `s_anim_slots[]` and `s_layer_slots[]` arrays
-> - Each frame: `lcd_anim_manager_task()` updates progress, `lcd_anim_manager_render()` draws layers in order
-> - Internal easing uses Q10 fixed-point (`lcd_anim_mix_q10()`) to avoid floating-point overhead
-> - Supports `delay_ms`, `repeat`, and `yoyo` for complex animation patterns
-> - Max animations and layers configurable via `LCD_ANIM_MAX_COUNT` and `LCD_LAYER_MAX_COUNT`
 
 ---
 
 ### 🎬 MJPEG Video Playback
 
-Uses the **picojpeg** library to software-decode JPEG frames on the STM32F401, reading from W25Q Flash and decoding each frame to RGB565 into the framebuffer.
+Software JPEG decoding using the **picojpeg** library. A **1024B smart read cache** minimizes W25Q SPI reads. Reads from Flash → decodes MCU-by-MCU to RGB565 → writes to framebuffer.
 
 **File Format**:
 
@@ -376,333 +339,283 @@ Body (repeats frame_count times):
   [frame_size (uint32 LE)] [JPEG data (frame_size bytes)]
 ```
 
-**Core API** (from `lcd_mjpeg.h`):
+**Decode Flow**:
+
+1. Read 14B header, verify Magic
+2. Read 4B frame size + JPEG data
+3. Smart cache → `pjpeg_decode_mcu()` per 8×8 block
+4. Inline `rgb565()` conversion → framebuffer
+5. Auto-loop from start after last frame
 
 ```c
-// Decode state (can be inspected via UI diagnostics)
-typedef struct {
-    uint8_t  active;                    // Active flag
-    int16_t  width;                     // Image width
-    int16_t  height;                    // Image height
-    uint32_t start_addr;                // W25Q file start address
-    uint32_t end_addr;                  // W25Q file end address
-    uint16_t frame_count;               // Total frame count
-    uint32_t cur_frame_idx;             // Current frame index
-    uint32_t frame_size;                // Current frame JPEG data size
-    int16_t  lcd_x;                     // LCD X offset
-    int16_t  lcd_y;                     // LCD Y offset
-    int8_t   last_error;                // Last error code
-    uint8_t  pjpeg_ret;                 // picojpeg return value
-    uint8_t  frame_dump[44];            // First 44 bytes of frame data (debug)
-} mjpeg_state_t;
-
-// ── Play MJPEG video ──
-// Decodes one frame per call. Auto-loops after the last frame.
 void lcd_play_mjpeg_video(int16_t x, int16_t y,
     int16_t width, int16_t height,
     uint32_t w25q_start_addr, uint32_t w25q_end_addr);
+    // Decodes one frame per call, loops on completion
 
-// ── Diagnostics ──
 int8_t lcd_mjpeg_last_error(void);
 const mjpeg_state_t *lcd_mjpeg_get_state(void);
 ```
 
-**Decode Flow**:
+**Error Codes**:
 
-1. Read 14-byte header, verify Magic `0x47504A4D`
-2. Read 4-byte frame size prefix + JPEG data
-3. Use a **512-byte smart read cache** from W25Q (cache hits skip Flash reads)
-4. Call `pjpeg_decode_mcu()` per MCU to decode
-5. Write RGB565 pixels into `lcd_write_ptr` framebuffer
-6. Auto-loop from start after the last frame
-
-**Usage Example**:
-
-```c
-// Play MJPEG video from W25Q (fullscreen loop)
-lcd_play_mjpeg_video(0, 0, 160, 80,
-    video_info.start_sector * 4096,                   // start address
-    video_info.start_sector * 4096 + video_info.size  // end address
-);
-
-// Check decode state
-const mjpeg_state_t *state = lcd_mjpeg_get_state();
-if (state->last_error != 0) {
-    switch (state->last_error) {
-        case MJPEG_ERR_BAD_MAGIC:  // 254 — invalid MJPEG file
-        case MJPEG_ERR_DECODE_INIT: // 251 — decode init failed
-        case MJPEG_ERR_ZERO_FRAMES: // 253 — zero frames
-            break;
-    }
-}
-```
-
-> **Design Notes**:
-> - Error codes defined in `lcd_mjpeg.h`: `MJPEG_ERR_DMA_BUSY(255)`, `MJPEG_ERR_BAD_MAGIC(254)`, etc.
-> - `mjpeg_state_t` fully exposed to the UI layer for diagnostic display
-> - First 44 bytes of each frame dumped into the state struct for serial debugging
-> - 512-byte read cache reduces W25Q SPI reads, improving decode performance
+| Value | Constant | Meaning |
+|:---:|:---|:---|
+| 255 | `MJPEG_ERR_DMA_BUSY` | DMA busy, can't read |
+| 254 | `MJPEG_ERR_BAD_MAGIC` | Not an MJPEG file |
+| 253 | `MJPEG_ERR_ZERO_FRAMES` | Zero frames |
+| 251 | `MJPEG_ERR_DECODE_INIT` | picojpeg init failed |
+| 250 | `MJPEG_ERR_NOT_3_COMP` | Not 3-component JPEG |
 
 ---
 
-### 💾 Storage Manager
+### 📦 BL Compressed Video
 
-A lightweight embedded filesystem running on **W25Q128 (16MB SPI Flash) + AT24C64 (8KB EEPROM)**. Small files use byte-level packing; large files use 4KB sector-aligned allocation.
+A custom **Block-Local 4×4 lossy compression** format designed for embedded use. Each 4×4 block encodes: 2 base colors + 2 interpolated colors + 2-bit index. Significantly reduces storage vs. raw RGB565.
 
-**FAT Structure** (stored in AT24C64, from `storage_manager.c`):
+**Auto-detection**: `lcd_play_video_from_w25q()` reads the first 2 magic bytes and dispatches to BL decoder, MJPEG decoder, or raw RGB565 render path.
 
 ```c
-#define FAT_MAGIC_NUMBER 0x0D000721
+void lcd_play_compressed_video_from_w25q(int16_t x, int16_t y,
+    int16_t width, int16_t height,
+    uint32_t w25q_start_addr, uint32_t w25q_end_addr);
+```
+
+---
+
+### 💾 Embedded File System
+
+A lightweight file system on **W25Q128 (16MB SPI Flash) + AT24C64 (8KB EEPROM)**. The FAT is persisted in EEPROM — survives unexpected power loss.
+
+**Dual-Zone Design**:
+
+| Feature | Small File Zone | Large File Zone |
+|:---|:---|:---|
+| Allocation | Byte-level linear squeeze | 4KB sector bitmap |
+| Max files | 32 | 32 |
+| Filename | ≤ 16 bytes | ≤ 16 bytes |
+| Fragmentation | Auto-compaction (batched) | Freed on delete (bitmap clear) |
+| Use case | Text, config, metadata | Image, MJPEG video |
+
+**FAT Structure** (stored in AT24C64 at `0x0000`):
+
+```c
+#define FAT_MAGIC_NUMBER 0x0D000722
 #define W25Q_SECTOR_SIZE 4096
-#define MAX_FILENAME_LEN 16
-#define MAX_SMALL_FILES 32
-#define MAX_LARGE_FILES 32
+#define MAX_SMALL_FILES  32
+#define MAX_LARGE_FILES  32
 
 typedef struct {
-    uint32_t magic;                    // Magic number 0x0D000721
-    uint32_t small_next_addr;          // Small file area next alloc addr
+    uint32_t magic;                              // Magic 0x0D000722
+    uint32_t small_next_addr;                    // Small zone next alloc addr
     uint16_t small_file_count;
-    small_file_info_t small_files[32];
-    uint32_t large_next_sector;        // Large file area next alloc sector
+    small_file_info_t small_files[MAX_SMALL_FILES];
+    uint8_t  large_sector_bitmap[496];           // 3968 bits → one bit per sector
     uint16_t large_file_count;
-    large_file_info_t large_files[32];
+    large_file_info_t large_files[MAX_LARGE_FILES];
 } storage_fat_t;
 ```
 
-**Core API** (from `storage_manager.h`):
+**Small File Compaction** (`compact_small_files`):
+
+Auto-triggered when free space drops below `SMALL_FILE_COMPACT_THRESHOLD` (4KB):
+
+1. Sort all valid files by address
+2. Form batches of files sharing sectors (to avoid data loss on erase)
+3. Copy batch to reserved area (Sector 0~1, 8KB)
+4. Erase source sectors → read back from reserved → write compactly to zone start
+5. Repeat → FAT persisted after every batch
 
 ```c
 bool storage_manager_init(void);
-void storage_manager_task(void);
+void storage_manager_task(void);       // Poll in main loop, parse USB commands
+
+bool storage_fat_load(void);
+void storage_fat_save(void);           // Persist to AT24C
 
 int16_t find_small_file_by_name(const char *name);
 int16_t find_large_file_by_name(const char *name);
-bool get_small_file_info(uint8_t file_id, small_file_info_t *info);
-bool get_large_file_info(uint8_t file_id, large_file_info_t *info);
-void clear_large_file(void);
-void clear_small_file(void);
+bool get_small_file_info(uint8_t id, small_file_info_t *info);
+bool get_large_file_info(uint8_t id, large_file_info_t *info);
+
+bool compact_small_files(void);        // Garbage collection
+void clear_all_files(void);            // Format: erase all + reset FAT
+
+bool storage_is_downloading(void);
 ```
 
 **Usage Example**:
 
 ```c
-// ── Find and read a large file ──
+// Find picture "pic_mp" → display
 int16_t idx = find_large_file_by_name("pic_mp");
 if (idx >= 0) {
     large_file_info_t info;
     get_large_file_info((uint8_t)idx, &info);
-    // Start address = info.start_sector * 4096
-    // File size = info.size (bytes)
-    // Display image: lcd_draw_picture_from_w25q(0, 0, 160, 80,
-    //     info.start_sector * 4096);
+    lcd_draw_picture_from_w25q(0, 0, 160, 80,
+        info.start_sector * W25Q_SECTOR_SIZE);
 }
 
-// ── Find a video file ──
+// Find video "qwq" → play
 int16_t vid = find_large_file_by_name("qwq");
 if (vid >= 0) {
     large_file_info_t vinfo;
     get_large_file_info((uint8_t)vid, &vinfo);
-    // Play MJPEG: lcd_play_mjpeg_video(0, 0, 160, 80,
-    //     vinfo.start_sector * 4096,
-    //     vinfo.start_sector * 4096 + vinfo.size);
+    lcd_play_video_from_w25q(0, 0, 160, 80,
+        vinfo.start_sector * W25Q_SECTOR_SIZE, vinfo.size);
 }
 ```
-
-**File Type Comparison**:
-
-| Feature | Small File | Large File |
-|:---|:---|:---|
-| Allocation granularity | Byte-level | 4KB sector |
-| Max count | 32 | 32 |
-| Use case | Text, config | Image, video |
-| Fragmentation on delete | Allowed | None (bitmap clear) |
-| Filename length | ≤ 16 bytes | ≤ 16 bytes |
-
-> **Design Notes**:
-> - Partition map in `storage_manager.c`: Reserved(0~1) → Small File(2~63, 248KB) → Large File(64~4031, 15.5MB) → User(4032~4095, 256KB)
-> - FAT persisted in AT24C64, saved via `storage_fat_save()` after each file operation
-> - USB protocol commands are parsed by `storage_manager_task()` in the main loop
 
 ---
 
 ### 🔌 USB Controller
 
-A custom protocol over **USB CDC (Virtual COM Port)**, using a single-slot pending-send mechanism to conserve SRAM.
+A custom protocol over **USB CDC (Virtual COM Port)** using a **single-slot pending-send** mechanism to conserve SRAM. RX uses a 2560B ring buffer; TX fragments at 6144B per call.
 
-**Core API** (from `usb_controller.h`):
+**Protocol Frame** (bidirectional):
 
-```c
-// ── Init & Main Loop ──
-void usb_controller_init(usb_controller_t *controller);
-void usb_controller_task(usb_controller_t *controller);
-
-// ── Transmit ──
-// cmd: command byte, data: payload ptr, len: payload length
-// Returns: USB_SEND_OK / USB_SEND_QUEUED / USB_SEND_DROPPED_PREVIOUS
-usb_send_status_t usb_controller_send(
-    usb_controller_t *controller,
-    uint8_t cmd, const uint8_t *data, uint16_t len);
-
-// ── Receive ──
-uint16_t usb_controller_receive(
-    usb_controller_t *controller,
-    uint8_t *buf, uint16_t len);
-uint16_t usb_controller_get_rx_free_space(void);
-
-// ── HAL Callback Bridge ──
-void usb_controller_on_tx_complete(void);
-void usb_controller_on_rx_received(uint8_t *buf, uint32_t len);
+```
+┌─────────┬─────────┬──────────┬─────────────┬──────────────────┐
+│  0xAA   │  0x55   │ Command  │  Length LE   │  Payload + CRC16 │
+│ (1 Byte)│ (1 Byte)│ (1 Byte) │ (2 Byte)     │   (Variable)     │
+└─────────┴─────────┴──────────┴─────────────┴──────────────────┘
 ```
 
-**Usage Example**:
-
 ```c
-// ── Send data to host ──
-uint8_t response[] = {0xA0, 0x00, 0x00};  // Success response
-usb_controller_send(&g_usb_controller,
-    0xA0, response, sizeof(response));
-// Returns USB_SEND_OK or USB_SEND_QUEUED
+void usb_controller_init(usb_controller_t *ctl);
+void usb_controller_task(usb_controller_t *ctl);
 
-// ── Main loop USB task ──
-// while(1) {
-//     usb_controller_task(&g_usb_controller);
-// }
+usb_send_status_t usb_controller_send(
+    usb_controller_t *ctl, uint8_t cmd,
+    const uint8_t *data, uint16_t len);
+
+uint16_t usb_controller_receive(usb_controller_t *ctl,
+    uint8_t *buf, uint16_t len);
+uint16_t usb_controller_get_rx_free_space(void);
 ```
 
 **Key Design Decisions**:
 
 | Feature | Description |
 |:---|:---|
-| **Single-slot pending** | Pins pointer, not copies payload — saves 64KB SRAM |
-| **Ring buffer RX** | 2560 bytes, covers max protocol frame (2055B) + margin |
-| **Send fragmentation** | 6144 bytes per call (`USB_SEND_BYTES_PER_CALL`) |
-| **Timeout protection** | 2s (`USB_TX_STUCK_TIMEOUT_MS`) soft recovery |
+| **Single-slot pending** | Pins pointer, doesn't copy — saves SRAM |
+| **RX ring buffer** | 2560 bytes, covers max frame + margin |
+| **TX fragmentation** | 6144 bytes/chunk, maintains LCD stream stability |
+| **Timeout protection** | 2s no-progress triggers endpoint soft recovery |
 | **LCD stream sync** | Render waits for USB TX completion to prevent tearing |
-
-**Protocol Frame Format**:
-
-```
-┌─────────┬─────────┬──────────┬─────────────┬──────────────────┐
-│  0xAA   │  0x55   │ Command  │  Length      │  Payload + CRC16 │
-│ (1 Byte)│ (1 Byte)│ (1 Byte) │ (2 Byte LE)  │   (Variable)     │
-└─────────┴─────────┴──────────┴─────────────┴──────────────────┘
-```
+| **IRQ safety** | `__disable_irq()` guards ring buffer pointers |
 
 ---
 
-### 🔗 SPI DMA Transfer
+### 🔗 SPI DMA Transport Layer
 
-SPI1 drives the LCD display, SPI2 communicates with the W25Q Flash — both support DMA transfer.
-
-**Core API** (from `w25q_controller.h`):
+Both SPI1 (LCD) and SPI2 (W25Q Flash) support DMA. The W25Q driver includes a **10-state DMA state machine**: IDLE → WRITE_PENDING → STARTING → WAIT_TX_DONE → WAIT_FLASH_READY → DONE/ERROR.
 
 ```c
-// SPI Flash Commands
-#define W25Q_WriteEnable     0x06
-#define W25Q_PageProgram     0x02
-#define W25Q_SectorErase     0x20   // 4KB
-#define W25Q_BlockErase64K   0xD8   // 64KB
-#define W25Q_ChipErase       0xC7
-#define W25Q_ReadData        0x03
-#define W25Q_FastReadData    0x0B
-#define W25Q_JedecDeviceID   0x9F
-
-// ── Basic R/W ──
 bool w25q_init(void);
-void w25q_read_data(uint32_t address, uint8_t *data, uint32_t size);
-void w25q_write_data(uint32_t address, uint8_t *data, uint32_t size);
-void w25q_erase_sector(uint32_t address);
-uint32_t w25q_read_id(void);
+uint32_t w25q_read_id(void);           // JEDEC ID 0x9F: 0xEF4018
 
-// ── DMA Transfer ──
-bool w25q_read_data_dma(uint32_t address, uint8_t *data, uint32_t size);
-bool w25q_write_data_dma(uint32_t address, uint8_t *data, uint32_t size);
-bool w25q_fast_read_data_dma(uint32_t address, uint8_t *data, uint32_t size);
-void w25q_dma_task(void);              // DMA state machine (call in main loop)
+// ── Synchronous ──
+void w25q_read_data(uint32_t addr, uint8_t *data, uint32_t size);
+void w25q_fast_read_data(uint32_t addr, uint8_t *data, uint32_t size);
+void w25q_write_data(uint32_t addr, uint8_t *data, uint32_t size);
+void w25q_page_program(uint32_t addr, uint8_t *data, uint16_t size);
+void w25q_erase_sector(uint32_t addr);  // 4KB
+void w25q_erase_chip(void);
+
+// ── DMA Async ──
+bool w25q_write_data_dma(uint32_t addr, uint8_t *data, uint32_t size);
+bool w25q_read_data_dma(uint32_t addr, uint8_t *data, uint32_t size);
+bool w25q_fast_read_data_dma(uint32_t addr, uint8_t *data, uint32_t size);
+
+void w25q_dma_task(void);              // Poll in main loop
 bool w25q_dma_is_busy(void);
 bool w25q_dma_is_done(void);
 bool w25q_dma_is_error(void);
 ```
 
-**Usage Example**:
+**AT24C64 EEPROM** (I2C, no DMA):
 
 ```c
-// ── Initialize W25Q ──
-if (!w25q_init()) {
-    lcd_draw_string(10, 10, RED, BLACK, 8, "W25Q FAIL");
-}
-
-// ── Sector erase & write ──
-uint8_t data[256] = { /* ... */ };
-w25q_erase_sector(64 * 4096);          // Erase sector 64
-w25q_write_data(64 * 4096, data, 256);
-
-// ── DMA read ──
-uint8_t buf[256];
-w25q_fast_read_data_dma(64 * 4096, buf, sizeof(buf));
-
-// ── DMA state machine in main loop ──
-// while (1) {
-//     w25q_dma_task();  // handle DMA completion/error callbacks
-// }
+bool at24c_write_byte(uint16_t memAddr, uint8_t *data);
+bool at24c_read_byte(uint16_t memAddr, uint8_t *data);
+bool at24c_write_buffer(uint16_t memAddr, uint8_t *pData, uint16_t size);
+bool at24c_read_buffer(uint16_t memAddr, uint8_t *pData, uint16_t size);
+// Auto-handles 32B page writes + ready polling (ACK poll, max 30ms)
 ```
 
-> **Design Notes**:
-> - `w25q_check_busy()` waits for W25Q internal operation with timeout
-> - DMA transfers managed by `w25q_dma_task()` state machine polled in main loop
-> - `W25Q_CS_LOW()` / `W25Q_CS_HIGH()` macros directly control chip-select GPIO
-> - SPI handles: `hspi1` (LCD) and `hspi2` (W25Q), defined in `spi.h`
+**CRC16-USB**:
+
+```c
+// CRC-16/USB: poly=0x8005, init=0xFFFF, final XOR=0xFFFF
+uint16_t crc16_usb_packing(const uint8_t *data, uint16_t len, bool has_crc);
+// has_crc=false → returns CRC16
+// has_crc=true  → validates last 2 bytes as CRC, returns 1(pass)/0(fail)
+```
+
+---
+
+### 📊 Performance Monitoring
+
+Based on the **DWT_CYCCNT** hardware cycle counter built into Cortex-M4:
+
+```c
+void lcd_calculate_fps(void);       // Frames per second, no extra timer needed
+void lcd_calculate_usage(void);     // CPU usage (idle vs. non-idle cycle ratio)
+
+extern uint16_t lcd_fps;
+extern uint8_t  cpu_usage_percent;
+```
+
+Typical performance at 84MHz:
+- Full-screen DMA flush: ~0.3ms
+- MJPEG decode & play: ~10-20 FPS (depends on compression ratio)
+- UI animation rendering: ~60 FPS
+- CPU idle: ~40-60% (includes USB polling + Flash state machine)
 
 ---
 
 ## 📡 USB Communication Protocol
 
+### Host Command Frame Format
+
+```
+  [0][1]: Frame header 0xBB 0x44 (2B)
+  [2]:   Command (1B)
+  [3-6]: Total file size uint32 LE (4B) — first packet only; 0 for non-data cmds
+  [7-8]: Packet length uint16 LE (2B) = payload_len + 2 (CRC16)
+  [9+]:  Payload data
+  [last-2][last-1]: CRC16 (2B) over header + payload (before CRC)
+```
+
 ### Command Set
 
 | Command | Code | Direction | Description |
 |:---|:---:|:---|:---|
-| **Start Large Download** | `0x11` | Host → Device | Transfer image/video data |
-| **Start Small Download** | `0x45` | Host → Device | Transfer text/small data |
-| **End Download** | `0x14` | Host → Device | File transfer complete, register to FAT |
-| **Delete File** | `0x19` | Host → Device | Delete by file type + index |
-| **Query File List** | `0x20` | Host → Device | Query FAT file directory |
-| **Success Response** | `0xA0` | Device → Host | Operation successful |
-| **Error Response** | `0xE0` | Device → Host | Transfer error notification |
+| **Start/Continue Large Download** | `0x11` | Host → Device | Image/video data, sector bitmap alloc |
+| **Start/Continue Small Download** | `0x45` | Host → Device | Text/small data, linear byte alloc |
+| **End Download** | `0x14` | Host → Device | Filename (≤16B), register to FAT |
+| **Delete File** | `0x19` | Host → Device | file_type(1B) + file_index(1B) |
+| **Query File List** | `0x20` | Host → Device | TLV-format directory + sector fragmentation |
+| **Send Bitmap** | `0x21` | Host → Device | Returns large-zone bitmap (496B) |
+| **LCD Stream Control** | `0x10` | Host → Device | sub_cmd=0x01 enable / 0x00 disable |
+| **Continue** | `0xA1` | Device → Host | Download ack, host may send next packet |
+| **Error** | `0xE0` | Device → Host | error_type(1B): CRC fail / no space / invalid idx |
 
 ### Transfer Flow
 
 ```
-Host                                    Device
-  │                                        │
-  ├── [0x11] Start Large Download ──────→  │
-  ├── [0x11] Data Frame + CRC16 ────────→  │
-  ├── [0x11] Data Frame + CRC16 ────────→  │
-  │       ......                           │
-  ├── [0x14] End Download (Name+CRC) ──→   │
-  │                                        ├── Register to FAT
-  │                                        ├── Save to EEPROM
-  │                                        │
-  │  ← ── [0xA0] OK / [0xE0] Error ────── │
-```
-
-### USB Communication Example
-
-```c
-// ── Host sends command frame ──
-// Frame: 0xBB 0x44 [CMD] [LEN_LO] [LEN_HI] [PAYLOAD...] [CRC16_LO] [CRC16_HI]
-//
-// Start Large Download:
-// BB 44 11 04 00 31 32 89 C6
-//   └─ Command: 0x11 (Start Large Download)
-//      └─ Length: 0x0004 (2 bytes data + 2 bytes CRC16)
-//         └─ Data: 0x31 0x32
-//            └─ CRC16: 0xC689 (little-endian)
-//
-// Query File List:
-// BB 44 20 02 00 2B BE
-//
-// Delete File (type=0, index=5):
-// BB 44 19 04 00 00 05 DF CD
+Host                                     Device
+  │                                         │
+  ├── [0x45] Data Frame + CRC16 ──────────→ │
+  │                                         ├── Alloc, erase sector, write data
+  │  ← ── [0xA1] Continue ──────────────── │
+  ├── [0x45] Data Frame + CRC16 ──────────→ │
+  │                                         ├── Expand alloc if needed, write
+  │  ← ── [0xA1] Continue ──────────────── │
+  ├── [0x14] End Download (filename+CRC) ─→ │
+  │                                         ├── Register to FAT → EEPROM persist
+  │  ← ── [0xA1] OK / [0xE0] Error ─────── │
 ```
 
 ---
@@ -712,20 +625,21 @@ Host                                    Device
 ```
 W25Q128 (16MB) Partition Layout
 ═══════════════════════════════════════════
-Sector 0-1     │ Reserved (8KB)
-───────────────┼────────────────────────────
-Sector 2-63    │ Small File Area (248KB)
-               │ Byte-level packing
-───────────────┼────────────────────────────
-Sector 64-4031 │ Large File Area (15.5MB)
-               │ 4KB sector-aligned bitmap
-───────────────┼────────────────────────────
-Sector 4032-4095│ User Area (256KB)
+Sector    0 ~    1 (   8KB) │ Reserved (compaction scratch)
+────────────────────────────┼────────────────────────────
+Sector    2 ~   63 ( 248KB) │ Small File — byte-level linear squeeze
+                            │ Auto-compaction on delete threshold
+────────────────────────────┼────────────────────────────
+Sector   64 ~ 4031 (15.5MB) │ Large File — 4KB sector-aligned bitmap
+                            │ 496-byte bitmap manages 3968 sectors
+────────────────────────────┼────────────────────────────
+Sector 4032 ~ 4095 ( 256KB) │ User-defined
 ═══════════════════════════════════════════
 
-AT24C64 (8KB EEPROM) Usage
+AT24C64 (8KB EEPROM) Allocation
 ═══════════════════════
-Address 0x0000 → storage_fat_t (File Allocation Table)
+Address 0x0000 ──→ storage_fat_t (~2KB)
+═══════════════════════
 ```
 
 ---
@@ -734,45 +648,41 @@ Address 0x0000 → storage_fat_t (File Allocation Table)
 
 ### 🌐 Web Host — `lcd_host_web/`
 
-A modern Flask-based web application for transcoding and managing image/video content.
-
-**Features**:
+A Flask-based web application for transcoding images/videos and managing device files.
 
 | Feature | Description |
 |:---|:---|
 | Image transcoding | PNG/JPG/BMP/GIF → RGB565 / BL compressed |
 | Video transcoding | MP4/WEBM/MKV/AVI/MOV → MJPEG / BL compressed |
-| BL block compression | 4×4 pixel blocks, 2 base + 2 interpolated colors, 2-bit index |
-| Preview generation | Real-time preview of conversion results |
-| Parameter tuning | Resolution, frame rate, brightness, quality, endianness |
-| Auto cleanup | 5-minute TTL automatic deletion |
-| Dark/Light theme | One-click switch |
+| BL compression | 4×4 blocks, base+interpolated colors, 2-bit index |
+| Real-time preview | See conversion results instantly |
+| Parameter tuning | Resolution, FPS, brightness, quality, endianness |
+| Auto cleanup | 5-minute TTL on converted files |
+| Dark/Light theme | One-click toggle |
 
 ```bash
 cd lcd_host_web
 pip install -r requirements.txt
 python server.py
-# Open http://localhost:5000 in browser
+# http://localhost:5000
 ```
 
 **API Endpoints**:
 
 | Route | Method | Purpose |
 |:---|:---:|:---|
-| `/convert` | POST | Upload & convert to STM IPS format |
-| `/preview/<id>` | GET | Get preview of converted file |
-| `/download/<id>` | GET | Download converted binary file |
-| `/info/<id>` | GET | Get conversion metadata |
+| `/convert` | POST | Upload & convert |
+| `/preview/<id>` | GET | Preview converted result |
+| `/download/<id>` | GET | Download binary file |
+| `/info/<id>` | GET | Conversion metadata |
 
 ### 🔧 Feature Tester — `feature_tester/`
 
-Development & debugging tools:
-
 | Tool | Description |
 |:---|:---|
-| `sender.c` | Windows serial sender — sends data and verifies echo byte-by-byte |
-| `receiver.c` | Windows serial receiver — receives LCD frame stream and renders in window |
-| `image_decoder.py` | Python tool — decodes RGB565 binary to PNG, supports endianness selection |
+| `sender.c` | Windows serial sender — bulk data loopback verification |
+| `receiver.c` | Windows serial receiver — LCD frame stream window renderer |
+| `image_decoder.py` | Python tool — RGB565 binary → PNG decode |
 
 ---
 
@@ -781,18 +691,18 @@ Development & debugging tools:
 ### Hardware Requirements
 
 - **STM32F401RCT6** dev board
-- **160×80 IPS TFT** display (ST7735S-compatible)
-- **W25Q64** SPI Flash module
+- **160×80 IPS TFT** (ST7735S-compatible)
+- **W25Q128** SPI Flash module
 - **AT24C64** EEPROM module
-- USB data cable (power + CDC communication)
-- Optional: Encoder, LEDs, Button
+- USB data cable (power + CDC)
+- Optional: Encoder, LED, Button
 
 ### Toolchain
 
 | Tool | Version |
 |:---|:---|
 | STM32CubeIDE | ≥ 1.15 (recommended) / Makefile also supported |
-| ARM GCC | arm-none-eabi-gcc ≥ 10.3 |
+| ARM GCC | `arm-none-eabi-gcc` ≥ 10.3 |
 | Python | ≥ 3.9 |
 | FFmpeg | ≥ 5.0 (required by Web Host) |
 | OpenOCD | Optional (for flashing) |
@@ -800,10 +710,8 @@ Development & debugging tools:
 ### Firmware Build
 
 ```bash
-# Option 1: STM32CubeIDE
-# Open stm_ips.ioc → Generate Code → Build All
-
-# Option 2: Makefile
+# STM32CubeIDE: open stm_ips.ioc → Generate Code → Build All
+# Makefile:
 cd Debug && make -j4
 # Output: stm_ips.elf / stm_ips.bin
 ```
@@ -823,37 +731,31 @@ STM32_Programmer_CLI -c port=SWD -w Debug/stm_ips.elf -rst
 
 ## 🚀 Quick Start
 
-### Step 1: Flash Firmware
+### 1️⃣ Flash Firmware
 
-Flash the compiled `stm_ips.elf` onto the STM32F401RC board.
+Flash the compiled `stm_ips.elf` onto the STM32F401RC via ST-Link.
 
-### Step 2: Power On
+### 2️⃣ Power On
 
-On power-on, the system automatically:
+On startup, the system:
+1. Initializes all peripherals (SPI · I2C · USB · TIM)
+2. Reads W25Q128 JEDEC ID for chip verification
+3. Loads FAT from AT24C64 EEPROM
+4. Starts LCD UI → looks for "okay"(image) and "teest"(video) in filesystem
+5. Enters main loop
 
-1. Initializes all peripherals (SPI · I2C · USB · Timers)
-2. Detects and initializes W25Q Flash
-3. Loads FAT file allocation table from AT24C EEPROM
-4. Starts the LCD UI animation engine
-5. Enters the main loop, continuously updating USB and storage management tasks
+### 3️⃣ Upload Content
 
-### Step 3: Upload Content
-
-**Via Web Host**:
 ```bash
 python lcd_host_web/server.py
-# Open http://localhost:5000
-# Drag image/video → Adjust resolution/quality → Convert → Download
+# http://localhost:5000
+# Drag & drop → adjust → convert → download
+# Send via USB CDC serial to device
 ```
 
-### Step 4: Playback
+### 4️⃣ Playback
 
-Firmware looks for the following filenames in W25Q on startup:
-
-- `pic_mp` → Decode & display image
-- `qwq` → Play MJPEG video (looping)
-
-> Customize startup content by modifying filenames in `lcd_ui.c` and logic in `main.c`.
+Firmware auto-loads files from W25Q at startup. Customize by editing filenames in `lcd_ui.c` and logic in `main.c`.
 
 ---
 
@@ -862,15 +764,15 @@ Firmware looks for the following filenames in W25Q on startup:
 ### Adding a New UI Element
 
 ```c
-// 1️⃣ Declare element instance
-static lcd_rect_t g_my_rect = {10, 30, 20, 15, CYAN};
+// 1. Declare element
+static lcd_rect_t g_rect = {10, 30, 20, 15, CYAN};
 
-// 2️⃣ Register with animation manager
-int8_t layer_id = lcd_anim_manager_add_layer(&g_my_rect, lcd_draw_rect_layer);
+// 2. Register with animation manager
+lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
 
-// 3️⃣ Add animation
+// 3. Start animation
 lcd_anim_config_t anim = {
-    .target      = &g_my_rect.x,
+    .target      = &g_rect.x,
     .start_value = 10,
     .end_value   = LCD_W - 20,
     .duration_ms = 2000,
@@ -885,67 +787,46 @@ lcd_anim_start(&anim);
 ### File System Operations
 
 ```c
-// Find large file by name
 int16_t idx = find_large_file_by_name("my_image");
 if (idx >= 0) {
     large_file_info_t info;
     get_large_file_info((uint8_t)idx, &info);
-    // Start addr = info.start_sector * 4096
-    // Size = info.size
-    // Display image: lcd_draw_picture_from_w25q(0, 0, 160, 80,
-    //     info.start_sector * 4096);
+    // info.start_sector × 4096 = W25Q address
+    // info.size = file size
 }
 
-// Clear all files (use with caution — recommended via USB protocol)
-// clear_large_file();
-// clear_small_file();
+// Format (use with caution — prefer USB protocol):
+// clear_all_files();
 ```
 
 ### CRC16 Checksum
 
 ```c
-// Initialize CRC16 lookup table
-crc16_usb_init_table();
+crc16_usb_init_table();  // Static const table, no-op
 
-// Calculate CRC16 for USB protocol frame
-// has_crc = true means data already has 2-byte CRC placeholder
 uint16_t crc = crc16_usb_packing(data, len, false);
-
-// Append to frame (little-endian)
-// data[len] = crc & 0xFF;
+// data[len]   = crc & 0xFF;
 // data[len+1] = (crc >> 8) & 0xFF;
+
+// Verify:
+// bool ok = crc16_usb_packing(frame, frame_len, true);
 ```
 
-### System Initialization Sequence
+### System Initialization
 
 ```c
-// Complete initialization flow in main()
-void main(void)
-{
-    HAL_Init();
-    SystemClock_Config();            // 84MHz HSE + PLL
+void main(void) {
+    HAL_Init();  SystemClock_Config();
 
-    MX_GPIO_Init();
-    MX_DMA_Init();
-    MX_I2C1_Init();
-    MX_SPI1_Init();                  // LCD SPI
-    MX_SPI2_Init();                  // W25Q SPI
-    MX_USB_DEVICE_Init();            // USB CDC
-    MX_TIM2_Init();
-    MX_TIM3_Init();
-    MX_TIM9_Init();
-    MX_TIM4_Init();
+    MX_GPIO_Init();  MX_DMA_Init();
+    MX_I2C1_Init();  MX_SPI1_Init();  MX_SPI2_Init();
+    MX_USB_DEVICE_Init();  MX_TIM2_Init();  MX_TIM3_Init();
+    MX_TIM9_Init();  MX_TIM4_Init();
 
-    // Application Init
     usb_controller_init(&g_usb_controller);
     lcd_init();
-
-    bool w25q_ok = w25q_init();
-    bool storage_init_ok = storage_manager_init();
-
-    // clear_large_file();           // Optional: clear all files
-    // clear_small_file();
-
+    w25q_init();
+    storage_manager_init();
     lcd_ui_init();
 
     while (1) {
@@ -959,11 +840,13 @@ void main(void)
 
 ### Performance Tips
 
-- **DMA Preferred**: Use `lcd_screen_update_dma()` instead of polling — frees the CPU
-- **Buffer Strategy**: With `LCD_USB_STREAM_ENABLE`, LCD renders only after USB TX completes to avoid tearing
-- **Animation Count**: `LCD_ANIM_MAX_COUNT` defaults to 16; reduce to save RAM and CPU
-- **SPI Clock**: Adjust SPI1/SPI2 clock in MX config for higher frame rates and Flash throughput
-- **Decode Cache**: MJPEG uses 512-byte smart read cache; adjust size to balance RAM vs. performance
+| Strategy | Approach |
+|:---|:---|
+| **DMA Preferred** | Use `lcd_screen_update_dma()` instead of polling |
+| **Reduce animations** | Lower `LCD_ANIM_MAX_COUNT` / `LCD_LAYER_MAX_COUNT` |
+| **SPI clock** | Increase in MX config for higher throughput |
+| **Decode cache** | Adjust 512B MJPEG cache to balance RAM vs. speed |
+| **USB streaming** | `LCD_USB_STREAM_ENABLE` — render waits for USB TX done |
 
 ---
 
@@ -971,26 +854,20 @@ void main(void)
 
 Copyright (C) 2026 **UnikoZera**
 
-This program is free software: you can redistribute it and/or modify it under the terms of the **GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.**
-
-This program is distributed in the hope that it will be useful, but **WITHOUT ANY WARRANTY**; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
-
----
+This program is free software: you can redistribute it and/or modify it under the terms of the **GNU Affero General Public License** as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
 **Third-Party Components**:
 
 | Component | License | Author |
 |:---|:---|:---|
-| **picojpeg** | Public domain | [Rich Geldreich](https://github.com/richgel999/picojpeg) |
-| **STM32 HAL** | STMicroelectronics SLA | STMicroelectronics |
-| **CMSIS** | Apache 2.0 | ARM |
+| picojpeg | Public domain | Rich Geldreich |
+| STM32 HAL | STMicroelectronics SLA | STMicroelectronics |
+| CMSIS | Apache 2.0 | ARM |
 
-> This project is based on the STM32CubeMX generated framework.
+> Based on STM32CubeMX generated framework.
 
 ---
 
 <p align="center">
-  <sub>Built with by UnikoZera · STM32F401RC · 160×80 IPS · 2026</sub>
+  <sub>Built with ❤️ by UnikoZera · STM32F401RC · 160×80 IPS · 2026</sub>
 </p>

@@ -16,6 +16,7 @@
 #define MAX_FILENAME_LEN 16
 #define MAX_SMALL_FILES 32
 #define MAX_LARGE_FILES 32
+#define SMALL_FILE_COMPACT_THRESHOLD 4096  // 小文件区剩余空间小于此值(字节)时触发压缩，可自定义
 
 typedef struct
 {
@@ -44,6 +45,7 @@ int16_t find_large_file_by_name(const char *name);
 bool get_small_file_info(uint8_t file_id, small_file_info_t *info);
 bool get_large_file_info(uint8_t file_id, large_file_info_t *info);
 void clear_all_files(void);
+bool compact_small_files(void);
 bool storage_is_downloading(void);
 
 #endif /* INC_STORAGE_MANAGER_H_ */

@@ -34,6 +34,7 @@
 // [区段 1] 保留区: Sector 0 ~ 1 (8KB) 纯空置
 #define AREA_RESERVED_START_SECTOR 0
 #define AREA_RESERVED_SECTORS 2
+#define AREA_RESERVED_START_ADDR (AREA_RESERVED_START_SECTOR * W25Q_SECTOR_SIZE)
 // [区段 2] 小文件区: Sector 2 ~ 63 (共 62 个扇区 / 248KB)
 #define AREA_SMALL_START_SECTOR 2
 #define AREA_SMALL_SECTORS 62
@@ -278,6 +279,246 @@ static uint32_t allocate_large_sectors(uint32_t required_sectors)
 
 #pragma endregion
 
+#pragma region 小文件区压缩
+
+/**
+ * @brief 小文件区垃圾回收压缩（分块式）
+ *
+ * 原理：按地址顺序逐文件处理。对于每个文件，检查它与哪些有效文件共享扇区，
+ * 将这些文件组成一个"批"一起处理：
+ *   ① 将整批文件拷贝到保留区(Sector 0~1, 8KB)暂存
+ *   ② 擦除这批文件占用的所有扇区
+ *   ③ 从保留区读回，按顺序紧凑写入小文件区起始位置
+ *   ④ 更新所有被处理文件的 start_address
+ *
+ * 若单个文件大小超过保留区容量(8KB)则返回 false。
+ * 压缩条件：小文件区剩余空间 < SMALL_FILE_COMPACT_THRESHOLD。
+ *
+ * @return true 压缩成功，false 失败
+ */
+bool compact_small_files(void)
+{
+    // ---- Step 1: 收集所有有效文件，按地址排序 ----
+    uint16_t valid_list[MAX_SMALL_FILES];
+    uint16_t valid_count = 0;
+    for (uint16_t i = 0; i < global_fat.small_file_count; i++)
+    {
+        if (global_fat.small_files[i].is_valid)
+        {
+            valid_list[valid_count++] = i;
+        }
+    }
+
+    // 没有有效文件 → 直接擦除小文件区并重置分配器
+    if (valid_count == 0)
+    {
+        for (uint32_t s = AREA_SMALL_START_SECTOR; s < AREA_SMALL_START_SECTOR + AREA_SMALL_SECTORS; s++)
+        {
+            w25q_erase_sector(s * W25Q_SECTOR_SIZE);
+        }
+        global_fat.small_next_addr = AREA_SMALL_START_ADDR;
+        small_last_erased_sector = AREA_SMALL_START_SECTOR - 1;
+        storage_fat_save();
+        return true;
+    }
+
+    // 按 start_address 升序排序（简单选择排序，n ≤ 32）
+    for (uint16_t i = 0; i < valid_count; i++)
+    {
+        uint16_t min_idx = i;
+        for (uint16_t j = i + 1; j < valid_count; j++)
+        {
+            if (global_fat.small_files[valid_list[j]].start_address <
+                global_fat.small_files[valid_list[min_idx]].start_address)
+            {
+                min_idx = j;
+            }
+        }
+        if (min_idx != i)
+        {
+            uint16_t tmp = valid_list[i];
+            valid_list[i] = valid_list[min_idx];
+            valid_list[min_idx] = tmp;
+        }
+    }
+
+    // ---- Step 2: 分批处理 ----
+    const uint32_t reserved_capacity = AREA_RESERVED_SECTORS * W25Q_SECTOR_SIZE; // 8192
+    bool moved[MAX_SMALL_FILES];
+    memset(moved, 0, sizeof(moved));
+
+    uint32_t compact_dest = AREA_SMALL_START_ADDR;
+    uint32_t old_small_next = global_fat.small_next_addr;
+    uint16_t vi = 0;
+
+    while (vi < valid_count)
+    {
+        if (moved[valid_list[vi]])
+        {
+            vi++;
+            continue;
+        }
+
+        // 2a. 构建当前批：找到与 valid_list[vi] 共享扇区的所有有效文件
+        uint16_t batch_indices[MAX_SMALL_FILES];
+        uint16_t batch_count = 0;
+        uint32_t batch_size = 0;
+
+        // 初始扇区范围由领头的文件决定
+        small_file_info_t *leader = &global_fat.small_files[valid_list[vi]];
+        uint32_t batch_start_sector = leader->start_address / W25Q_SECTOR_SIZE;
+        uint32_t batch_end_sector   = (leader->start_address + leader->size - 1) / W25Q_SECTOR_SIZE;
+
+        // 迭代扫描：每次加入新文件后可能扩大扇区范围，再检查新范围内有无更多文件
+        bool expanded;
+        do
+        {
+            expanded = false;
+            for (uint16_t j = vi; j < valid_count; j++)
+            {
+                uint16_t idx = valid_list[j];
+                if (moved[idx]) continue;
+
+                // 检查是否已在 batch 中
+                bool already_in = false;
+                for (uint16_t b = 0; b < batch_count; b++)
+                {
+                    if (batch_indices[b] == idx) { already_in = true; break; }
+                }
+                if (already_in) continue;
+
+                small_file_info_t *fj = &global_fat.small_files[idx];
+                uint32_t js = fj->start_address / W25Q_SECTOR_SIZE;
+                uint32_t je = (fj->start_address + fj->size - 1) / W25Q_SECTOR_SIZE;
+
+                // 是否与当前扇区范围重叠
+                if (js <= batch_end_sector && je >= batch_start_sector)
+                {
+                    // 加入批
+                    batch_indices[batch_count++] = idx;
+                    batch_size += fj->size;
+
+                    // 扩展扇区范围
+                    if (js < batch_start_sector) batch_start_sector = js;
+                    if (je > batch_end_sector)   batch_end_sector   = je;
+                    expanded = true;
+                }
+            }
+        } while (expanded);
+
+        // 2b. 检查批大小是否超过保留区容量
+        if (batch_size > reserved_capacity)
+        {
+            return false;  // 一个批放不下（文件太大），跳过本次压缩
+        }
+
+        // 2c. 擦除保留区 → 将整批文件拷贝到保留区
+        {
+            for (uint32_t s = AREA_RESERVED_START_SECTOR; s < AREA_RESERVED_START_SECTOR + AREA_RESERVED_SECTORS; s++)
+            {
+                w25q_erase_sector(s * W25Q_SECTOR_SIZE);
+            }
+
+            uint32_t reserved_off = 0;
+            for (uint16_t b = 0; b < batch_count; b++)
+            {
+                small_file_info_t *fb = &global_fat.small_files[batch_indices[b]];
+                uint32_t remain = fb->size;
+                uint32_t raddr = fb->start_address;
+                uint32_t waddr = AREA_RESERVED_START_ADDR + reserved_off;
+
+                while (remain > 0)
+                {
+                    uint32_t chunk = (remain > sizeof(dma_write_buf)) ? sizeof(dma_write_buf) : remain;
+                    w25q_fast_read_data(raddr, rx_buffer, chunk);
+                    w25q_write_data(waddr, rx_buffer, chunk);
+                    raddr += chunk;
+                    waddr += chunk;
+                    remain -= chunk;
+                }
+                reserved_off += fb->size;
+            }
+        }
+
+        // 2d. 擦除这批文件占用的所有扇区
+        for (uint32_t s = batch_start_sector; s <= batch_end_sector; s++)
+        {
+            w25q_erase_sector(s * W25Q_SECTOR_SIZE);
+        }
+
+        // 2e. 从保留区读回，紧凑写入小文件区
+        {
+            uint32_t reserved_off = 0;
+            for (uint16_t b = 0; b < batch_count; b++)
+            {
+                small_file_info_t *fb = &global_fat.small_files[batch_indices[b]];
+                uint32_t remain = fb->size;
+                uint32_t raddr = AREA_RESERVED_START_ADDR + reserved_off;
+                uint32_t waddr = compact_dest;
+
+                while (remain > 0)
+                {
+                    uint32_t chunk = (remain > sizeof(dma_write_buf)) ? sizeof(dma_write_buf) : remain;
+                    w25q_fast_read_data(raddr, rx_buffer, chunk);
+                    w25q_write_data(waddr, rx_buffer, chunk);
+                    raddr += chunk;
+                    waddr += chunk;
+                    remain -= chunk;
+                }
+
+                // 更新文件起始地址
+                fb->start_address = compact_dest;
+                compact_dest += fb->size;
+                reserved_off += fb->size;
+                moved[batch_indices[b]] = true;
+            }
+
+            // 每批处理完成后立即持久化 FAT，防止中途失败导致已处理批次的数据丢失
+            storage_fat_save();
+        }
+
+        // 跳过已处理文件
+        while (vi < valid_count && moved[valid_list[vi]])
+            vi++;
+    }
+
+    // ---- Step 3: 末尾清理 — 擦除原数据区末尾剩余的扇区 ----
+    {
+        uint32_t old_last_sector = (old_small_next > 0)
+            ? ((old_small_next - 1) / W25Q_SECTOR_SIZE)
+            : (AREA_SMALL_START_SECTOR - 1);
+        uint32_t new_last_sector = (compact_dest > 0)
+            ? ((compact_dest - 1) / W25Q_SECTOR_SIZE)
+            : (AREA_SMALL_START_SECTOR - 1);
+
+        // 从新数据末尾的下一个扇区擦除到旧数据末尾
+        uint32_t erase_start = (new_last_sector + 1 < old_last_sector + 1)
+            ? (new_last_sector + 1) : (old_last_sector + 1);
+        for (uint32_t s = erase_start; s <= old_last_sector; s++)
+        {
+            w25q_erase_sector(s * W25Q_SECTOR_SIZE);
+        }
+    }
+
+    // ---- Step 4: 更新分配器状态 ----
+    global_fat.small_next_addr = compact_dest;
+    small_last_erased_sector = (compact_dest > 0)
+        ? ((compact_dest - 1) / W25Q_SECTOR_SIZE)
+        : (AREA_SMALL_START_SECTOR - 1);
+
+    // 擦除保留区（清理临时数据）
+    for (uint32_t s = AREA_RESERVED_START_SECTOR; s < AREA_RESERVED_START_SECTOR + AREA_RESERVED_SECTORS; s++)
+    {
+        w25q_erase_sector(s * W25Q_SECTOR_SIZE);
+    }
+
+    // 保存 FAT
+    storage_fat_save();
+    return true;
+}
+
+#pragma endregion
+
 #pragma region 协议常量与状态机
 
 #define HOST_FRAME_HEAD_0 0xBBU
@@ -471,8 +712,15 @@ static void process_host_command(void)
                 send_error(0x08);
                 return;
             }
-            global_fat.small_files[file_index].is_valid = 0; // sorry, no recycle for small file space.
+            global_fat.small_files[file_index].is_valid = 0;
             storage_fat_save();
+
+            // 检查小文件区剩余空间，低于阈值则触发压缩回收
+            uint32_t remaining_space = AREA_SMALL_END_ADDR - global_fat.small_next_addr;
+            if (remaining_space < SMALL_FILE_COMPACT_THRESHOLD)
+            {
+                compact_small_files();
+            }
         }
         else
         {
@@ -490,7 +738,28 @@ static void process_host_command(void)
                (actual_data_len < MAX_FILENAME_LEN) ? actual_data_len : MAX_FILENAME_LEN);
         if (current_file_type == 0x11)
         {
-            if (global_fat.large_file_count < MAX_LARGE_FILES)
+            // recycle deleted slot, fallback to append
+            int16_t free_slot = -1;
+            for (uint16_t i = 0; i < global_fat.large_file_count; i++)
+            {
+                if (!global_fat.large_files[i].is_valid)
+                {
+                    free_slot = (int16_t)i;
+                    break;
+                }
+            }
+            if (free_slot >= 0)
+            {
+                large_file_info_t *fi = &global_fat.large_files[free_slot];
+                fi->is_valid = 1;
+                fi->file_type = current_file_type;
+                fi->start_sector = current_start_sector;
+                fi->size = current_file_size;
+                fi->sector_count = current_sector_count;
+                memcpy(fi->filename, current_filename, MAX_FILENAME_LEN);
+                storage_fat_save();
+            }
+            else if (global_fat.large_file_count < MAX_LARGE_FILES)
             {
                 large_file_info_t *fi = &global_fat.large_files[global_fat.large_file_count];
                 fi->is_valid = 1;
@@ -505,7 +774,27 @@ static void process_host_command(void)
         }
         else if (current_file_type == 0x45)
         {
-            if (global_fat.small_file_count < MAX_SMALL_FILES)
+            // recycle deleted slot, fallback to append
+            int16_t free_slot = -1;
+            for (uint16_t i = 0; i < global_fat.small_file_count; i++)
+            {
+                if (!global_fat.small_files[i].is_valid)
+                {
+                    free_slot = (int16_t)i;
+                    break;
+                }
+            }
+            if (free_slot >= 0)
+            {
+                small_file_info_t *fi = &global_fat.small_files[free_slot];
+                fi->is_valid = 1;
+                fi->file_type = current_file_type;
+                fi->start_address = small_file_start_addr;
+                fi->size = current_file_size;
+                memcpy(fi->filename, current_filename, MAX_FILENAME_LEN);
+                storage_fat_save();
+            }
+            else if (global_fat.small_file_count < MAX_SMALL_FILES)
             {
                 small_file_info_t *fi = &global_fat.small_files[global_fat.small_file_count];
                 fi->is_valid = 1;
@@ -862,7 +1151,7 @@ bool storage_manager_init(void)
 {
     reset_host_state();
     bool fat_ok = storage_fat_load();
-    small_last_erased_sector = (global_fat.small_next_addr > 0)
+    small_last_erased_sector = (global_fat.small_next_addr > AREA_SMALL_START_ADDR)
         ? ((global_fat.small_next_addr - 1) / W25Q_SECTOR_SIZE)
         : (AREA_SMALL_START_SECTOR - 1);
     return fat_ok;
