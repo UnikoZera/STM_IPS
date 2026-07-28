@@ -1,4 +1,0 @@
-../Core/Src/call_back_functions.c:10:6:HAL_SPI_TxCpltCallback	8	static
-../Core/Src/call_back_functions.c:28:6:HAL_SPI_RxCpltCallback	8	static
-../Core/Src/call_back_functions.c:37:6:HAL_SPI_ErrorCallback	8	static
-../Core/Src/call_back_functions.c:48:6:HAL_TIM_PeriodElapsedCallback	0	static
