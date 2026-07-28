@@ -433,6 +433,7 @@ BLOCK_SIZE = 4  # 4x4 pixels per block
 _BLK_CFG = {
     10: (1, 2, 2, 4,  1, 0x1F, 0x3F, 0x1F),
      9: (4, 4, 2, 8,  2, 0x1F, 0x3F, 0x1F),
+     8: (2, 4, 4, 16, 4, 0x1F, 0x3F, 0x1F),
      7: (2, 4, 4, 16, 4, 0x1F, 0x3F, 0x1F),
 }
 
@@ -596,6 +597,9 @@ def compress_frame(rgb565_data: bytes, width: int, height: int,
     if quality >= 11:
         header = BL_MAGIC + bytes([BL_VERSION, quality, 0, 0])
         return header + rgb565_data
+    # 安全fallback：若 quality 不在配置中，取最接近的有效值
+    if quality not in _BLK_CFG:
+        quality = min(_BLK_CFG.keys(), key=lambda k: abs(k - quality))
     lvl = _BLK_CFG[quality][0]
     compressed = _compress_block(rgb565_data, width, height, quality)
     header = BL_MAGIC + bytes([BL_VERSION, quality, lvl, 0])
@@ -1130,7 +1134,7 @@ def _write_mjpeg_header(fobj, frame_count: int, width: int, height: int):
     fobj.write(b'\x00' * 4)
 
 
-def _pack_mjpeg(frames: list, width: int, height: int, quality: int) -> bytes:
+def _pack_mjpeg(frames: list, width: int, height: int) -> bytes:
     """Pack MJPEG frames into the W25Q file format (small image path)."""
     buf = io.BytesIO()
     _write_mjpeg_header(buf, len(frames), width, height)
@@ -1230,7 +1234,7 @@ def _process_image_mjpeg(in_path: str, width: int, height: int,
         frames.append(jpeg_bytes)
     if not frames:
         raise RuntimeError('No frame extracted from image')
-    compressed = _pack_mjpeg(frames, width, height, quality)
+    compressed = _pack_mjpeg(frames, width, height)
     name = Path(in_path).stem
     did = _save_temp(name, compressed, width, height, 1, 30)
     result = {

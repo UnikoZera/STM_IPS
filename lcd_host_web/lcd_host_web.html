@@ -143,8 +143,6 @@ body::after{
 @keyframes slideUp{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}
 @keyframes gradientFlow{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
 @keyframes spin{to{transform:rotate(360deg)}}
-@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
-@keyframes scaleIn{from{opacity:0;transform:scale(.88)}to{opacity:1;transform:scale(1)}}
 @keyframes titleShimmer{0%,100%{filter:brightness(1)}50%{filter:brightness(1.35)}}
 @keyframes btnRipple{0%{transform:scale(0);opacity:.6}100%{transform:scale(4);opacity:0}}
 @keyframes gentlePulse{0%,100%{box-shadow:0 0 4px var(--green)}50%{box-shadow:0 0 16px var(--green),0 0 32px rgba(0,230,118,.25)}}
@@ -1964,11 +1962,6 @@ document.getElementById('fileNameInput').addEventListener('input',function(){
 /* ===== Init ===== */
 loadAllSettings();
 window.addEventListener('beforeunload',function(){
-  if(sendState===ST_SENDING||sendState===ST_WAIT_ACK){
-    if(lcdStreamWasOn){
-      try{port.writable.getWriter().write(frame(C_LCD,new Uint8Array([0x01])))}catch(e){}
-    }
-  }
   sendState=ST_DONE;resetCont();readLoop=false;
   if(port){try{port.close()}catch(e){}}
 });
