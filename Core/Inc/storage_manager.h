@@ -6,6 +6,7 @@
  */
 #ifndef INC_STORAGE_MANAGER_H_
 #define INC_STORAGE_MANAGER_H_
+
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -13,10 +14,24 @@
 #include "at24c_controller.h"
 #include "w25q_controller.h"
 #include "usb_controller.h"
-#define MAX_FILENAME_LEN 16
-#define MAX_SMALL_FILES 32
-#define MAX_LARGE_FILES 32
-#define SMALL_FILE_COMPACT_THRESHOLD 4096  // 小文件区剩余空间小于此值(字节)时触发压缩，可自定义
+
+/* ============================================================================
+ *  对外可调配置宏
+ * ============================================================================ */
+
+/* 文件名最大长度（含结尾 '\0' 的存储容量） */
+#define MAX_FILENAME_LEN                 16
+
+/* 小/大文件槽位上限 */
+#define MAX_SMALL_FILES                  32
+#define MAX_LARGE_FILES                  32
+
+/* 小文件区剩余空间低于此值(字节)时触发压缩回收 */
+#define SMALL_FILE_COMPACT_THRESHOLD     4096
+
+/* ============================================================================
+ *  文件信息结构
+ * ============================================================================ */
 
 typedef struct
 {
@@ -26,6 +41,7 @@ typedef struct
     uint32_t size;
     char filename[MAX_FILENAME_LEN];
 } small_file_info_t;
+
 typedef struct
 {
     uint8_t is_valid;
@@ -35,6 +51,10 @@ typedef struct
     uint32_t size;
     char filename[MAX_FILENAME_LEN];
 } large_file_info_t;
+
+/* ============================================================================
+ *  公共 API
+ * ============================================================================ */
 
 bool storage_manager_init(void);
 void storage_manager_task(void);

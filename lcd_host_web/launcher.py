@@ -63,6 +63,11 @@ def main():
     threading.Thread(target=_open_browser, daemon=True).start()
 
     print(f'Starting STM IPS Host at {url}')
+    try:
+        accel = server._detect_hwaccel()
+        print(f'Video HW accel: {accel or "cpu"} (override: env STM_IPS_HWACCEL=cuda|d3d11va|off)')
+    except Exception as e:
+        print(f'Video HW accel probe failed: {e}')
     print('Press Ctrl+C to stop.')
     server.app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False)
 

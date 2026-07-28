@@ -24,47 +24,80 @@
 #include "storage_manager.h"
 #include "lcd.h"
 
+/* ============================================================================
+ *  内部宏定义（集中查阅区）
+ *  --------------------------------------------------------------------------
+ *  W25Q 16MB 分区:
+ *    [保留区]   Sector 0    ~ 1      (2 * 4KB  = 8KB)
+ *    [小文件区] Sector 2    ~ 63     (62 * 4KB = 248KB)  线性挤压分配
+ *    [大文件区] Sector 64   ~ 4031   (3968*4KB= 15.5MB)  位图管理
+ *    [用户区]   Sector 4032 ~ 4095   (64 * 4KB = 256KB)
+ * ============================================================================ */
+
+/* ---- Flash 基础 ---- */
+#define W25Q_SECTOR_SIZE                 4096
+#define W25Q_TOTAL_SECTORS               4096
+
+/* ---- 分区: 保留区 ---- */
+#define AREA_RESERVED_START_SECTOR       0
+#define AREA_RESERVED_SECTORS            2
+#define AREA_RESERVED_START_ADDR         (AREA_RESERVED_START_SECTOR * W25Q_SECTOR_SIZE)
+
+/* ---- 分区: 小文件区 ---- */
+#define AREA_SMALL_START_SECTOR          2
+#define AREA_SMALL_SECTORS               62
+#define AREA_SMALL_START_ADDR            (AREA_SMALL_START_SECTOR * W25Q_SECTOR_SIZE)
+#define AREA_SMALL_END_ADDR              ((AREA_SMALL_START_SECTOR + AREA_SMALL_SECTORS) * W25Q_SECTOR_SIZE)
+
+/* ---- 分区: 大文件区 ---- */
+#define AREA_LARGE_START_SECTOR          64
+#define AREA_LARGE_SECTORS               3968
+#define LARGE_BITMAP_SIZE                ((AREA_LARGE_SECTORS + 7) / 8)  /* 496 bytes */
+
+/* ---- 分区: 用户自定义区 ---- */
+#define AREA_USER_START_SECTOR           4032
+#define AREA_USER_SECTORS                64
+
+/* ---- FAT (存于 AT24C) ---- */
+#define FAT_MAGIC_NUMBER                 0x0D000722  /* bitmap-based FAT 版本号 */
+#define FAT_STORAGE_ADDR                 0x0000      /* FAT 在 AT24C 中的起始地址 */
+
+/* ---- 大文件区位图辅助 ---- */
+#define BITMAP_BYTE(b)                   ((b) >> 3)
+#define BITMAP_MASK(b)                   (1 << ((b) & 7))
+
+/* ---- Host 协议帧 ---- */
+#define HOST_FRAME_HEAD_0                0xBBU
+#define HOST_FRAME_HEAD_1                0x44U
+#define FRAME_HDR_SIZE                   9U          /* BB 44 CMD SIZE(4) LEN(2) */
+#define HOST_PAYLOAD_DATA_MAX            2048U       /* 单包 payload 最大数据字节数 */
+#define HOST_CRC_SIZE                    2U
+#define HOST_FRAME_BUF_SIZE              (FRAME_HDR_SIZE + HOST_PAYLOAD_DATA_MAX + HOST_CRC_SIZE)
+#define RETRY_SEND_ERROR_CODE            0xE0U
+#define CONTINUE_SEND_CODE               0xA1U
+
+/* ---- 超时 / 重试 ---- */
+#define DMA_WAIT_TIMEOUT_MS              100U
+#define HOST_STATE_TIMEOUT_MS            500U
+#define WRITE_VERIFY_RETRY_MAX           20U
+
 #pragma region 文件系统与分配表实现
 
-// ======================== 文件系统/分配表定义 ========================
-#define FAT_MAGIC_NUMBER 0x0D000722   // bumped version for new bitmap-based FAT
-#define W25Q_SECTOR_SIZE 4096
-#define W25Q_TOTAL_SECTORS 4096
-// --- 分区映射表 ---
-// [区段 1] 保留区: Sector 0 ~ 1 (8KB) 纯空置
-#define AREA_RESERVED_START_SECTOR 0
-#define AREA_RESERVED_SECTORS 2
-#define AREA_RESERVED_START_ADDR (AREA_RESERVED_START_SECTOR * W25Q_SECTOR_SIZE)
-// [区段 2] 小文件区: Sector 2 ~ 63 (共 62 个扇区 / 248KB)
-#define AREA_SMALL_START_SECTOR 2
-#define AREA_SMALL_SECTORS 62
-#define AREA_SMALL_START_ADDR (AREA_SMALL_START_SECTOR * W25Q_SECTOR_SIZE)
-#define AREA_SMALL_END_ADDR ((AREA_SMALL_START_SECTOR + AREA_SMALL_SECTORS) * W25Q_SECTOR_SIZE)
-// [区段 3] 大文件区: Sector 64 ~ 4031 (共 3968 个扇区 / 15.5MB) — 位图管理
-#define AREA_LARGE_START_SECTOR 64
-#define AREA_LARGE_SECTORS 3968
-#define LARGE_BITMAP_SIZE ((AREA_LARGE_SECTORS + 7) / 8)  // 496 bytes
-// [区段 4] 用户自定义区: Sector 4032 ~ 4095 (共 64 个扇区 / 256KB)
-#define AREA_USER_START_SECTOR 4032
-#define AREA_USER_SECTORS 64
-
-// 存储在 AT24C 中的总分配表 (FAT)
+/* 存储在 AT24C 中的总分配表 (FAT) */
 typedef struct
 {
     uint32_t magic;
-    // 小文件分配器状态 (线性挤压式)
-    uint32_t small_next_addr; // 小文件区下一个可分配的地址，向上挤压分配，不回收碎片
+    /* 小文件分配器状态 (线性挤压式) */
+    uint32_t small_next_addr; /* 下一个可分配地址，向上挤压，不回收碎片 */
     uint16_t small_file_count;
     small_file_info_t small_files[MAX_SMALL_FILES];
-    // 大文件位图: 每个bit代表一个sector, 1=已分配, 0=空闲
+    /* 大文件位图: 每 bit 一个 sector, 1=已分配, 0=空闲 */
     uint8_t large_sector_bitmap[LARGE_BITMAP_SIZE];
     uint16_t large_file_count;
     large_file_info_t large_files[MAX_LARGE_FILES];
 } storage_fat_t;
 
 static storage_fat_t global_fat;
-
-#define FAT_STORAGE_ADDR 0x0000  // FAT在AT24C中的存储地址
 
 #pragma endregion
 
@@ -150,10 +183,6 @@ bool get_large_file_info(uint8_t file_id, large_file_info_t *info)
 #pragma endregion
 
 #pragma region 大文件区位图管理
-
-// 位图辅助宏
-#define BITMAP_BYTE(b)    ((b) >> 3)
-#define BITMAP_MASK(b)    (1 << ((b) & 7))
 
 static inline bool bitmap_test_used(uint32_t sector)
 {
@@ -280,6 +309,11 @@ static uint32_t allocate_large_sectors(uint32_t required_sectors)
 #pragma endregion
 
 #pragma region 小文件区压缩
+
+/* compact / 协议共用缓冲，必须在 compact_small_files 之前声明 */
+static uint8_t dma_write_buf[HOST_PAYLOAD_DATA_MAX];
+static uint8_t rx_buffer[HOST_FRAME_BUF_SIZE];
+static uint32_t small_last_erased_sector = 0xFFFFFFFF;
 
 /**
  * @brief 小文件区垃圾回收压缩（分块式）
@@ -521,12 +555,6 @@ bool compact_small_files(void)
 
 #pragma region 协议常量与状态机
 
-#define HOST_FRAME_HEAD_0 0xBBU
-#define HOST_FRAME_HEAD_1 0x44U
-#define FRAME_HDR_SIZE 9U
-#define RETRY_SEND_ERROR_CODE 0xE0U
-#define CONTINUE_SEND_CODE 0xA1U
-
 typedef enum
 {
     STATE_WAIT_HEAD0,
@@ -538,7 +566,7 @@ typedef enum
     STATE_WAIT_TOTAL_SIZE_3,
     STATE_WAIT_LEN_L,
     STATE_WAIT_LEN_H,
-    STATE_WAIT_PAYLOAD // 包括crc16在内的完整数据段
+    STATE_WAIT_PAYLOAD /* 包括 crc16 在内的完整数据段 */
 } host_cmd_state_t;
 
 #pragma endregion
@@ -548,14 +576,14 @@ typedef enum
 static host_cmd_state_t host_state = STATE_WAIT_HEAD0;
 static uint32_t host_state_tick = 0;
 static uint8_t host_cmd;
-// host_total_file_size 是发送文件的完整大小（仅第一包有效）, host_payload_len 是本包数据段长度(含CRC)
+/* host_total_file_size: 发送文件完整大小（仅第一包有效）
+ * host_payload_len:     本包数据段长度(含CRC) */
 static uint32_t host_total_file_size = 0;
 static uint16_t host_payload_len;
 static uint16_t host_payload_idx;
-// host_payload存储布局：[0..8]=帧头9字节，[9..]=payload数据(含CRC16)
-static uint8_t host_payload[FRAME_HDR_SIZE + 2048 + 2] = {0};
-static uint8_t rx_buffer[FRAME_HDR_SIZE + 2048 + 2];
-static uint8_t dma_write_buf[2048];
+/* host_payload 布局: [0..8]=帧头9字节, [9..]=payload数据(含CRC16)
+ * rx_buffer / dma_write_buf / small_last_erased_sector 见上方“小文件区压缩”区域 */
+static uint8_t host_payload[HOST_FRAME_BUF_SIZE] = {0};
 
 static bool is_downloading = false;
 static bool lcd_stream_was_enabled = false;
@@ -568,7 +596,6 @@ static uint32_t current_start_sector = 0;
 static uint32_t current_sector_count = 0;
 static uint32_t small_file_start_addr = 0;
 static uint8_t error_payload = 0x00;
-static uint32_t small_last_erased_sector = 0xFFFFFFFF;
 
 #pragma endregion
 
@@ -615,10 +642,6 @@ static void abort_download_with_error(uint8_t error_type)
  * @brief 写入W25Q并回读验证，失败自动重试（最多WRITE_VERIFY_RETRY_MAX次）
  *        验证方式：写入后用 w25q_read_data 回读，与 dma_write_buf memcmp 对比
  */
-#define DMA_WAIT_TIMEOUT_MS 500U
-#define HOST_STATE_TIMEOUT_MS 500U
-#define WRITE_VERIFY_RETRY_MAX 20U
-
 static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t size)
 {
     if (size == 0U) return true;

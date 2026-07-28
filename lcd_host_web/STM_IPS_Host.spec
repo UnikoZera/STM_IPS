@@ -1,12 +1,29 @@
 # -*- mode: python ; coding: utf-8 -*-
+# 由 build.py 重新生成更可靠；此文件作为参考模板保留。
+# 推荐：python build.py
 
+import os
+from pathlib import Path
+
+try:
+    import imageio_ffmpeg
+    _ff = Path(imageio_ffmpeg.get_ffmpeg_exe())
+    _ff_binaries = [(_ff.as_posix(), 'imageio_ffmpeg/binaries')] if _ff.is_file() else []
+except Exception:
+    _ff_binaries = []
+
+block_cipher = None
+here = Path(SPECPATH)
 
 a = Analysis(
-    ['D:\\mcu\\projects\\stm_ips\\lcd_host_web\\launcher.py'],
-    pathex=[],
-    binaries=[],
-    datas=[('lcd_host_web.html', '.'), ('server.py', '.')],
-    hiddenimports=['flask'],
+    [str(here / 'launcher.py')],
+    pathex=[str(here)],
+    binaries=_ff_binaries,
+    datas=[
+        (str(here / 'lcd_host_web.html'), '.'),
+        (str(here / 'server.py'), '.'),
+    ],
+    hiddenimports=['flask', 'imageio_ffmpeg', 'imageio_ffmpeg.binaries'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

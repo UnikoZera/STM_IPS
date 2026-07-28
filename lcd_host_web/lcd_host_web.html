@@ -712,13 +712,13 @@ input[type=range]::-moz-range-thumb{
         <div style="margin-bottom:5px;display:flex;align-items:center;gap:10px;">
           <span style="font-size:10.5px;color:var(--text2);flex-shrink:0;">编码方式</span>
           <select id="vpCodec" style="flex:1;padding:7px 9px;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);outline:none;" onchange="onVpCodecChange()">
-            <option value="bl" selected>BL 块压缩</option>
-            <option value="mjpeg">MJPEG 压缩</option>
+            <option value="mjpeg" selected>MJPEG 压缩</option>
+            <option value="bl">BL 块压缩</option>
           </select>
-          <span style="font-size:9px;color:var(--text3);flex-shrink:0;">算法决定画质与帧率</span>
+          <span style="font-size:9px;color:var(--text3);flex-shrink:0;">算法决定体积与画质</span>
         </div>
         <!-- BL 压缩质量 (仅 BL 模式可见) -->
-        <div id="vpBlQualityGroup" style="margin-bottom:5px;display:flex;align-items:center;gap:10px;">
+        <div id="vpBlQualityGroup" style="margin-bottom:5px;display:none;align-items:center;gap:10px;">
           <span style="font-size:10.5px;color:var(--text2);flex-shrink:0;">BL 画质</span>
           <select id="vpQuality" style="flex:1;padding:7px 9px;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);outline:none;">
             <option value="11">无损 (不压缩)</option>
@@ -728,11 +728,11 @@ input[type=range]::-moz-range-thumb{
           </select>
           <span style="font-size:9px;color:var(--text3);flex-shrink:0;">画质越高质量体积越大</span>
         </div>
-        <!-- MJPEG 质量 (仅 MJPEG 模式可见) -->
-        <div id="vpMjpegQualityGroup" style="margin-bottom:5px;display:none;align-items:center;gap:10px;">
+        <!-- MJPEG 质量 (仅 MJPEG 模式可见；默认编码) -->
+        <div id="vpMjpegQualityGroup" style="margin-bottom:5px;display:flex;align-items:center;gap:10px;">
           <span style="font-size:10.5px;color:var(--text2);flex-shrink:0;">JPEG 质量</span>
-          <input type="range" id="vpMjpegQuality" min="1" max="100" value="80" style="flex:1;accent-color:var(--gold);">
-          <span id="vpMjpegQualityLabel" style="font-size:11px;color:var(--gold);font-weight:600;min-width:36px;text-align:right;">80</span>
+          <input type="range" id="vpMjpegQuality" min="1" max="100" value="70" style="flex:1;accent-color:var(--gold);">
+          <span id="vpMjpegQualityLabel" style="font-size:11px;color:var(--gold);font-weight:600;min-width:36px;text-align:right;">70</span>
           <span style="font-size:9px;color:var(--text3);flex-shrink:0;">越高画质越好</span>
         </div>
         <button class="btn btn-retry file-upload" id="btnPickVP">
@@ -826,19 +826,19 @@ input[type=range]::-moz-range-thumb{
 
 <!-- VP 详情弹窗 -->
 <div id="vpDetailModal" class="modal-overlay" onclick="if(!vpDragging)closeVPDetail()">
-  <div class="modal-content" onclick="event.stopPropagation()" style="width:90vw;max-width:900px;">
+  <div class="modal-content" onclick="event.stopPropagation()" style="width:min(94vw,900px);max-width:900px;max-height:90vh;overflow:auto;">
     <div class="modal-hd">
       <span class="modal-title" id="vpDTitle">&#128249; 预览</span>
       <button class="modal-close" onclick="closeVPDetail()">&times;</button>
     </div>
     <div id="vpDCompInfo" style="font-size:10px;color:var(--text2);padding:4px 12px;text-align:center;background:rgba(0,188,212,.02);border-bottom:1px solid var(--border);"></div>
     <div class="modal-body" style="text-align:center;">
-      <div id="vpDResizer" style="background:#000;border-radius:var(--rad-sm);display:inline-block;overflow:hidden;min-width:80px;cursor:ew-resize;line-height:0;position:relative;user-select:none;">
+      <div id="vpDResizer" style="background:#000;border-radius:var(--rad-sm);display:inline-block;overflow:hidden;min-width:80px;max-width:100%;width:min(100%,700px);cursor:ew-resize;line-height:0;position:relative;user-select:none;">
         <canvas id="vpDCanvas" style="display:block;width:100%;height:auto;border:none;image-rendering:pixelated;background:#000;pointer-events:none;"></canvas>
         <div id="vpDGrip" style="position:absolute;right:0;top:0;bottom:0;width:12px;cursor:ew-resize;background:transparent;"></div>
       </div>
       <div style="font-size:10px;color:var(--text3);margin-top:2px;">拖拽右边缘 ⇌ 水平缩放</div>
-      <div id="vpDVideoCtrls" style="display:none;margin-top:12px;">
+      <div id="vpDVideoCtrls" style="display:none;margin-top:10px;">
         <div class="btn-row" style="margin-bottom:6px;">
           <button class="btn btn-query" id="vpDPlayBtn" onclick="toggleVPPlay()" style="font-size:12px;">&#9654; 播放</button>
           <span style="font-size:11px;color:var(--text2);line-height:34px;" id="vpDFrameInfo">0 / 0</span>
@@ -1624,8 +1624,11 @@ const VP = {
   fileBytes: null,
   result: null,
   abort: false,
-  frames: [],
+  frames: [],          // 预览帧槽：完整帧数，但按需解码（未解码为 null）
+  frameIndex: [],      // 压缩流中每帧 [start,end) 偏移（MJPEG/BL 通用）
+  compressedBytes: null, // 完整烧录 payload（二进制，禁止用超大 hex）
   curFrame: 0,
+  decodeGen: 0,        // 取消在途解码
 };
 const $vp = id => document.getElementById('vp'+id);
 
@@ -1638,7 +1641,10 @@ function onVPFileSelected(input){
   VP.file = f;
   VP.result = null;
   VP.frames = [];
+  VP.frameIndex = [];
+  VP.compressedBytes = null;
   VP.curFrame = 0;
+  VP.decodeGen++;
   $vp('Result').style.display = 'none';
   $vp('Status').textContent = '';
   $vp('ProgWrap').style.display = 'none';
@@ -1653,6 +1659,9 @@ function onVPFileSelected(input){
   const icon = isVideo ? '&#127909;' : '&#128247;';
   $vp('FileInfo').innerHTML = icon+' '+f.name+' ('+sz+')';
   $vp('Process').disabled = false;
+  if(isVideo && f.size > 80*1024*1024){
+    toast('源视频较大，转换会占用较多内存/磁盘；建议适当降低 FPS 或分辨率','warn');
+  }
 }
 
 let vpAbortController = null;
@@ -1669,6 +1678,16 @@ async function startVPProcess(){
   if(w < 1 || w > 1024 || h < 1 || h > 1024){
     toast('尺寸范围: 1-1024','error'); return;
   }
+
+  // 转换期间尽量关掉 LCD USB 推流，减少浏览器+串口额外负载
+  let _lcdWasOn = false;
+  try{
+    if(typeof lcdStreamOn !== 'undefined' && lcdStreamOn){
+      _lcdWasOn = true;
+      if(typeof stopLcdStream === 'function') await stopLcdStream();
+      else if(typeof writeSer === 'function') await writeSer(frame(C_LCD, new Uint8Array([0x00])));
+    }
+  }catch(e){}
 
   $vp('Process').style.display = 'none';
   $vp('Cancel').style.display = 'block';
@@ -1705,6 +1724,9 @@ async function startVPProcess(){
     });
     if(!resp.ok){
       const err = await resp.json().catch(()=>({error:'HTTP '+resp.status}));
+      if(resp.status === 429){
+        throw new Error(err.error || '转换忙，请稍后再试');
+      }
       throw new Error(err.error || 'Server error');
     }
 
@@ -1712,26 +1734,44 @@ async function startVPProcess(){
     updateVPProg(90);
 
     VP.result = await resp.json();
+    VP.frames = [];
+    VP.frameIndex = [];
+    VP.curFrame = 0;
+    VP.compressedBytes = null;
+    VP.decodeGen++;
 
-    {
-      VP.frames = [];
-      VP.curFrame = 0;
-      const raw = hexToBytes(VP.result.hex);
-      const fs = VP.result.frame_size;
-      const avail = fs ? Math.floor(raw.length / fs) : 0;
-      for(let i=0; i<avail; i++){
-        VP.frames.push(raw.slice(i*fs, (i+1)*fs));
-      }
+    // 优先 download_id 拉完整二进制；禁止依赖超大 compressed_hex
+    if(VP.result.download_id){
+      $vp('Status').innerHTML = '<span class="spinner"></span> 正在拉取完整结果...';
+      $vp('ProgInfo').textContent = '(下载中)';
+      const binResp = await fetch(SERVER+'/download/'+VP.result.download_id, {
+        signal: vpAbortController.signal,
+      });
+      if(!binResp.ok) throw new Error('下载转换结果失败 HTTP '+binResp.status);
+      VP.compressedBytes = new Uint8Array(await binResp.arrayBuffer());
+    } else if(VP.result.compressed_hex){
+      VP.compressedBytes = hexToBytes(VP.result.compressed_hex);
     }
 
-    // 解码帧数据（MJPEG 模式下耗时，需先提示用户等待）
-    $vp('Status').innerHTML = '<span class="spinner"></span> 正在解码...';
-    $vp('ProgInfo').textContent = '(生成预览中)';
+    // 缩略图（若服务端给了少量 preview_hex）
+    if(VP.result.hex){
+      try{
+        const raw = hexToBytes(VP.result.hex);
+        const fs = VP.result.frame_size || (VP.result.width*VP.result.height*2);
+        if(fs && raw.length >= fs){
+          // 仅作首帧 fallback，真正完整预览走按需解码
+          VP._thumb = raw.subarray(0, fs);
+        }
+      }catch(e){}
+    }
+
+    $vp('Status').innerHTML = '<span class="spinner"></span> 正在建立帧索引...';
+    $vp('ProgInfo').textContent = '(完整预览按需解码)';
 
     await showVPResult();
 
     updateVPProg(100);
-    $vp('Status').innerHTML = '&#10003; 转换完成';
+    $vp('Status').innerHTML = '&#10003; 转换完成: '+VP.result.frame_count+' 帧（完整）';
     toast('转换完成: '+VP.result.frame_count+' 帧','success');
   } catch(e){
     stopVpProgSim();
@@ -1770,11 +1810,12 @@ function startVpProgSim(){
   stopVpProgSim();
   let pct = 10;
   updateVPProg(pct);
+  // 降低进度 UI 刷新频率，转换期间少占主线程
   vpProgTimer = setInterval(function(){
-    pct += (90 - pct) * 0.06;  // progressively slow down
+    pct += (90 - pct) * 0.04;
     if(pct >= 88) pct = 88;
     updateVPProg(pct);
-  }, 400);
+  }, 800);
 }
 
 function stopVpProgSim(){
@@ -1803,20 +1844,28 @@ async function showVPResult(){
   const totalBytes = r.frame_count * r.frame_size;
   const totalKB = (totalBytes / 1024).toFixed(1);
   let info = '分辨率: '+r.width+'x'+r.height+' | 帧数: '+r.frame_count+' | 原始: '+totalKB+' KB' + (r.endian ? ' | '+r.endian : '');
-  if(isVid && r.fps) info += ' | FPS: '+r.fps.toFixed(1);
+  if(isVid && r.fps) info += ' | FPS: '+Number(r.fps).toFixed(1);
+  if(r.hwaccel){
+    const avail = r.hwaccel_available || '';
+    info += ' | 加速: '+r.hwaccel + (avail && avail!==r.hwaccel ? ' (可用:'+avail+')' : '');
+  }
   $vp('ResultInfo').textContent = info;
 
-  // rebuild frames from compressed data to show compressed quality
-  if (r.compressed_hex) {
-    if (r.codec === 'mjpeg') {
-      await rebuildMJPEGFrames();
-    } else {
-      rebuildVPFramesFromCompressed();
-    }
+  // 建立完整帧索引 + 槽位；不一次性解码全部帧（防止 OOM / 整机重启）
+  if(getVPCompressedBytes()){
+    buildVPFrameIndex();
+    // 预热首帧，保证缩略图与弹窗可立即使用
+    await ensureVPFrame(0);
+  } else if(VP._thumb){
+    VP.frames = [VP._thumb];
+    VP.frameIndex = [[0, VP._thumb.length]];
   }
-  if(r.compressed_hex){
-    const compBytes = r.compressed_hex.length / 2;
-    const ratio = totalBytes / compBytes;
+
+  const compBytes = VP.compressedBytes
+    ? VP.compressedBytes.length
+    : (r.compressed_bytes || (r.compressed_hex ? r.compressed_hex.length/2 : 0));
+  if(compBytes > 0){
+    const ratio = totalBytes > 0 ? (totalBytes / compBytes) : 0;
     const qs = r.quality || 'N/A';
     const codecLabel = r.codec === 'mjpeg' ? 'MJPEG压缩' : (r.codec === 'bl'||!r.codec ? 'BL块压缩' : '不压缩');
     $vp('CompressStats').innerHTML =
@@ -1824,7 +1873,8 @@ async function showVPResult(){
       '<span style="color:var(--text2);">| 质量:'+qs+' |</span> ' +
       '<span style="color:var(--cyan);">压缩后:'+compBytes+' B</span> ' +
       '<span style="color:var(--text2);">|</span> ' +
-      '<span style="color:var(--green);">比率:'+ratio.toFixed(2)+':1</span>';
+      '<span style="color:var(--green);">比率:'+(ratio?ratio.toFixed(2):'?')+':1</span>' +
+      ' <span style="color:var(--text2);">| 完整 '+r.frame_count+' 帧（按需预览）</span>';
     $vp('CompressStats').style.display = 'block';
   } else {
     $vp('CompressStats').innerHTML =
@@ -1842,16 +1892,17 @@ async function showVPResult(){
 
   const pv = $vp('Preview');
   pv.style.cursor = 'pointer';
-  pv.title = '点击查看大图';
+  pv.title = '点击查看大图（完整帧，按需解码）';
 
-  if(VP.frames.length > 0){
-    renderRGB565toCanvas(pv, VP.frames[0], r.width, r.height, r.endian === 'little');
+  const first = await ensureVPFrame(0);
+  if(first){
+    renderRGB565toCanvas(pv, first, r.width, r.height, r.endian === 'little');
   }
 
   pv.onclick = openVPDetail;
 
   $vp('Download').disabled = false;
-  const canSend = VP.frames.length > 0;
+  const canSend = !!(getVPCompressedBytes() && getVPCompressedBytes().length) || !!r.download_id || !!r.compressed_hex || !!r.hex;
   $vp('Send').disabled = !canSend;
   if(!canSend){
     $vp('Send').title = '请先转换';
@@ -1863,18 +1914,23 @@ async function showVPResult(){
 /* ===== VP 详情弹窗 ===== */
 let vpDPlaying = false, vpDTimer = null, vpDragging = false, vpRafStart = 0, vpSliderDrag = false, vpFrameDurationMs = 0;
 
-function openVPDetail(){
+async function openVPDetail(){
   VP.curFrame = 0;
   const r = VP.result;
-  if(!r || !VP.frames.length) return;
+  if(!r) return;
+  // 保证索引与至少首帧就绪（完整帧数，按需解码）
+  if(getVPCompressedBytes() && !VP.frameIndex.length) buildVPFrameIndex();
+  const nf = Math.max(VP.frameIndex.length || 0, r.frame_count || 0, VP.frames.length || 0);
+  if(nf <= 0) return;
+  const first = await ensureVPFrame(0);
+  if(!first) return;
 
-  const isVid = r.type === 'video' && VP.frames.length > 1;
-  const nf = VP.frames.length;
+  const isVid = r.type === 'video' && nf > 1;
   const cv = document.getElementById('vpDCanvas');
   cv.width = r.width;
   cv.height = r.height;
 
-  renderRGB565toCanvas(cv, VP.frames[0], r.width, r.height, r.endian === 'little');
+  renderRGB565toCanvas(cv, first, r.width, r.height, r.endian === 'little');
   cv.style.aspectRatio = r.width+'/'+r.height;
 
   const ctrls = document.getElementById('vpDVideoCtrls');
@@ -1886,10 +1942,12 @@ function openVPDetail(){
   var compInfo = document.getElementById('vpDCompInfo');
   if (compInfo) {
     var rawBytes = r.frame_count * r.frame_size;
-    if (r.compressed_hex) {
-      var compBytes = r.compressed_hex.length / 2;
-      var ratio = (rawBytes / compBytes).toFixed(2);
-      compInfo.innerHTML = '原始:'+rawBytes+'B | 压缩后:'+compBytes+'B | 比率:'+ratio+':1';
+    var compBytes = (VP.compressedBytes && VP.compressedBytes.length)
+      ? VP.compressedBytes.length
+      : (r.compressed_bytes || (r.compressed_hex ? r.compressed_hex.length/2 : 0));
+    if (compBytes > 0) {
+      var ratio = rawBytes > 0 ? (rawBytes / compBytes).toFixed(2) : '?';
+      compInfo.innerHTML = '原始:'+rawBytes+'B | 压缩后:'+compBytes+'B | 比率:'+ratio+':1 | 完整'+nf+'帧';
     } else {
       compInfo.innerHTML = '原始:'+rawBytes+'B | 未压缩 (无损)';
     }
@@ -1904,8 +1962,12 @@ function openVPDetail(){
     slider.oninput = function(){
       const idx = parseInt(this.value);
       VP.curFrame = idx;
-      renderRGB565toCanvas(cv, VP.frames[idx], r.width, r.height, r.endian === 'little');
       finfo.textContent = (idx+1)+' / '+nf;
+      ensureVPFrame(idx).then(function(fr){
+        if(fr && VP.curFrame === idx){
+          renderRGB565toCanvas(cv, fr, r.width, r.height, r.endian === 'little');
+        }
+      });
     };
     // 拖动进度条时不暂停播放——rAF 跳过画布/滑块更新，松开后校正时间
     function onSliderSeekStart(){
@@ -1918,8 +1980,9 @@ function openVPDetail(){
         var dragIdx = parseInt(slider.value);
         VP.curFrame = dragIdx;
         vpRafStart = performance.now() - dragIdx * vpFrameDurationMs;
-        // 立即渲染新帧
-        renderRGB565toCanvas(cv, VP.frames[dragIdx], r.width, r.height, r.endian === 'little');
+        ensureVPFrame(dragIdx).then(function(fr){
+          if(fr) renderRGB565toCanvas(cv, fr, r.width, r.height, r.endian === 'little');
+        });
       }
     }
     slider.addEventListener('pointerdown', onSliderSeekStart);
@@ -1931,7 +1994,7 @@ function openVPDetail(){
     pbtn.disabled = false;
     vpDPlaying = false;
     pbtn.innerHTML = '&#9654; 播放';
-    if(vpDTimer){ clearInterval(vpDTimer); vpDTimer = null; }
+    if(vpDTimer){ cancelAnimationFrame(vpDTimer); vpDTimer = null; }
   } else {
     ctrls.style.display = 'none';
   }
@@ -1955,9 +2018,13 @@ function openVPDetail(){
 
 function initVPDrag(){
   const rz = document.getElementById('vpDResizer');
-  if(!rz || rz._dragInit) return;
+  if(!rz) return;
+  // 每次打开重置默认宽度（约 900 弹窗内 78%），仍可拖拽放大
+  const parentW = (rz.parentElement && rz.parentElement.clientWidth) || 860;
+  const defW = Math.max(240, Math.min(700, Math.floor(parentW * 0.78)));
+  rz.style.width = defW + 'px';
+  if(rz._dragInit) return;
   rz._dragInit = true;
-  rz.style.width = '100%';
   let dragging = false, sx = 0, sw = 0;
   function onStart(e){
     dragging = true;
@@ -1970,7 +2037,8 @@ function initVPDrag(){
   function onMove(e){
     if(!dragging) return;
     const dx = e.clientX - sx;
-    const nw = Math.max(80, sw + dx);
+    const maxW = Math.max(defW, (rz.parentElement && rz.parentElement.clientWidth) || 900);
+    const nw = Math.max(80, Math.min(maxW, sw + dx));
     rz.style.width = nw + 'px';
   }
   function onEnd(){
@@ -2001,7 +2069,8 @@ function toggleVPPlay(){
   const slider = document.getElementById('vpDSlider');
   const btn = document.getElementById('vpDPlayBtn');
   const finfo = document.getElementById('vpDFrameInfo');
-  const nf = VP.frames.length;
+  const nf = Math.max(VP.frameIndex.length || 0, r.frame_count || 0, VP.frames.length || 0);
+  if(nf <= 0) return;
 
   if(vpDPlaying){
     if(vpDTimer){ cancelAnimationFrame(vpDTimer); vpDTimer = null; }
@@ -2012,10 +2081,7 @@ function toggleVPPlay(){
 
   vpDPlaying = true;
   btn.innerHTML = '&#9646; 暂停';
-  // Use elapsed-time-based playback instead of setInterval
-  // Calculate frame duration from original video duration / frame count
-  // This guarantees correct speed even if ffmpeg's frame count doesn't
-  // match duration*fps exactly (VFR, rounding, etc.)
+  // 用总帧数计时，保证完整预览节奏与烧录帧数一致
   vpFrameDurationMs = 0;
   if (r.original_duration && r.original_duration > 0 && nf > 1) {
     vpFrameDurationMs = (r.original_duration * 1000) / nf;
@@ -2028,8 +2094,10 @@ function toggleVPPlay(){
   var startFrame = (VP.curFrame !== undefined ? VP.curFrame : 0) % nf;
   vpRafStart = performance.now() - startFrame * frameDuration;
   var lastFrame = startFrame - 1;
-  // 立即渲染当前帧（避免首个 rAF 前空白）
-  renderRGB565toCanvas(cv, VP.frames[startFrame], r.width, r.height, r.endian === 'little');
+  // 立即渲染当前帧（按需解码）
+  ensureVPFrame(startFrame).then(function(fr){
+    if(fr && vpDPlaying) renderRGB565toCanvas(cv, fr, r.width, r.height, r.endian === 'little');
+  });
 
   function playLoop(now){
     if(!vpDPlaying){ return; }
@@ -2040,9 +2108,17 @@ function toggleVPPlay(){
       lastFrame = frameIndex;
       // 用户拖动滑块时不覆盖画布/滑块显示（oninput 处理渲染）
       if(!vpSliderDrag){
-        renderRGB565toCanvas(cv, VP.frames[frameIndex], r.width, r.height, r.endian === 'little');
         slider.value = frameIndex;
         finfo.textContent = (frameIndex+1)+' / '+nf;
+        ensureVPFrame(frameIndex).then(function(fr){
+          if(fr && vpDPlaying && VP.curFrame === frameIndex && !vpSliderDrag){
+            renderRGB565toCanvas(cv, fr, r.width, r.height, r.endian === 'little');
+          }
+        });
+        // 轻量预取后续几帧，减少卡顿；不预取全部，避免 OOM
+        for(var p=1;p<=3;p++){
+          ensureVPFrame((frameIndex+p)%nf);
+        }
       }
     }
     vpDTimer = requestAnimationFrame(playLoop);
@@ -2122,29 +2198,148 @@ function blDecompress(hex, w, h, lvl) {
   return out;
 }
 
-/**
- * Rebuild VP.frames from compressed data for preview
- */
-async function rebuildMJPEGFrames() {
+function getVPCompressedBytes(){
+  if(VP.compressedBytes && VP.compressedBytes.length) return VP.compressedBytes;
   var r = VP.result;
-  if (!r || !r.compressed_hex || r.codec !== 'mjpeg') return;
-  var raw = hexToBytes(r.compressed_hex);
-  var w = r.width, h = r.height;
+  if(r && r.compressed_hex){
+    VP.compressedBytes = hexToBytes(r.compressed_hex);
+    return VP.compressedBytes;
+  }
+  return null;
+}
+
+/** 扫描完整压缩流，建立每帧 [start,end) 索引；不解码像素（O(frames) 轻量） */
+function buildVPFrameIndex(){
+  var r = VP.result;
+  var raw = getVPCompressedBytes();
+  VP.frameIndex = [];
   VP.frames = [];
-  var pos = 14;
-  for (var i = 0; i < r.frame_count && pos < raw.length; i++) {
-    var frameSize = (raw[pos] | (raw[pos+1]<<8) | (raw[pos+2]<<16) | (raw[pos+3]<<24)) >>> 0;
-    pos += 4;
-    if (frameSize === 0 || pos + frameSize > raw.length) break;
-    var jpegBytes = raw.slice(pos, pos + frameSize);
-    pos += frameSize;
-    try {
+  if(!r || !raw || !raw.length) return 0;
+  var w = r.width, h = r.height;
+  var pos = 0;
+  if(r.codec === 'mjpeg'){
+    if(raw.length < 14) return 0;
+    // 优先使用文件头 frame_count；与 r.frame_count 取一致
+    var hdrCount = raw[4] | (raw[5]<<8);
+    var expect = r.frame_count || hdrCount || 0;
+    pos = 14;
+    for(var i=0; i<expect && pos+4 <= raw.length; i++){
+      var frameSize = (raw[pos] | (raw[pos+1]<<8) | (raw[pos+2]<<16) | (raw[pos+3]<<24)) >>> 0;
+      pos += 4;
+      if(frameSize === 0 || pos + frameSize > raw.length) break;
+      VP.frameIndex.push([pos, pos + frameSize]);
+      VP.frames.push(null);
+      pos += frameSize;
+    }
+  } else {
+    // BL 连续帧：每帧 6B 头 + payload
+    var expectB = r.frame_count || 0x7fffffff;
+    for(var j=0; j<expectB && pos+6 <= raw.length; j++){
+      if(raw[pos] !== 0x42 || raw[pos+1] !== 0x4C) break;
+      var fLvl = raw[pos + 4];
+      var frameB;
+      if (fLvl === 0) {
+        frameB = 6 + w * h * 2;
+      } else {
+        var bw = fLvl == 1 ? 2 : (fLvl == 4 ? 4 : (fLvl == 3 ? 8 : 4));
+        var bh = (fLvl == 1 || fLvl == 4) ? 2 : 4;
+        var npix = bw * bh;
+        var bmB = Math.ceil(npix / 4);
+        var blkB = 4 + bmB;
+        var bxc = Math.ceil(w / bw);
+        var byc = Math.ceil(h / bh);
+        frameB = 6 + bxc * byc * blkB;
+      }
+      if(pos + frameB > raw.length) break;
+      VP.frameIndex.push([pos, pos + frameB]);
+      VP.frames.push(null);
+      pos += frameB;
+    }
+  }
+  // 同步真实帧数（完整，不截断）
+  if(VP.frameIndex.length > 0){
+    r.frame_count = VP.frameIndex.length;
+  }
+  if (!r.original_duration || r.original_duration <= 0) {
+    var fpsEst = (r.fps && r.fps > 0) ? r.fps : 30;
+    r.original_duration = (r.frame_count || 0) / fpsEst;
+  }
+  return VP.frameIndex.length;
+}
+
+function blDecompressBytes(rawFrame, w, h, lvl){
+  // rawFrame 为单帧 BL 二进制
+  if (!rawFrame || rawFrame.length < 6) return null;
+  if (rawFrame[0] !== 0x42 || rawFrame[1] !== 0x4C) return null;
+  if (lvl === 0) return rawFrame.slice(6);
+  var bw, bh, npix, bmBytes;
+  if (lvl === 1) { bw=2; bh=2; npix=4;  bmBytes=1; }
+  else if (lvl === 4) { bw=4; bh=2; npix=8;  bmBytes=2; }
+  else if (lvl === 3) { bw=8; bh=4; npix=32; bmBytes=8; }
+  else { bw=4; bh=4; npix=16; bmBytes=4; }
+
+  var blkBytes = 4 + bmBytes;
+  var bxc = Math.ceil(w / bw);
+  var byc = Math.ceil(h / bh);
+  var out = new Uint8Array(w * h * 2);
+  var off = 6;
+
+  for (var by = 0; by < byc; by++) {
+    for (var bx = 0; bx < bxc; bx++) {
+      var c0h = rawFrame[off], c0l = rawFrame[off+1];
+      var c1h = rawFrame[off+2], c1l = rawFrame[off+3];
+      var c0v = (c0h << 8) | c0l, c1v = (c1h << 8) | c1l;
+      var c0r = (c0v>>11)&0x1F, c0g = (c0v>>5)&0x3F, c0b = c0v&0x1F;
+      var c1r = (c1v>>11)&0x1F, c1g = (c1v>>5)&0x3F, c1b = c1v&0x1F;
+      var c2v = ((((c0r*2+c1r)/3)|0)<<11)|((((c0g*2+c1g)/3)|0)<<5)|(((c0b*2+c1b)/3)|0);
+      var c3v = ((((c0r+c1r*2)/3)|0)<<11)|((((c0g+c1g*2)/3)|0)<<5)|(((c0b+c1b*2)/3)|0);
+      var palH = [c0h, c1h, (c2v>>8)&0xFF, (c3v>>8)&0xFF];
+      var palL = [c0l, c1l, c2v&0xFF, c3v&0xFF];
+
+      var idxs = 0;
+      for (var b = 0; b < bmBytes; b++)
+        idxs = (idxs << 8) | rawFrame[off + 4 + b];
+      off += blkBytes;
+
+      for (var pi = 0; pi < npix; pi++) {
+        var px = bx * bw + (pi % bw);
+        var py = by * bh + Math.floor(pi / bw);
+        if (px >= w || py >= h) continue;
+        var ci = (idxs >> (2 * (npix - 1 - pi))) & 3;
+        var idx = (py * w + px) * 2;
+        out[idx] = palH[ci]; out[idx+1] = palL[ci];
+      }
+    }
+  }
+  return out;
+}
+
+/** 按需解码第 i 帧；完整帧可访问，但内存只缓存已访问帧 */
+async function ensureVPFrame(i){
+  var r = VP.result;
+  if(!r) return null;
+  if(!VP.frameIndex.length){
+    if(getVPCompressedBytes()) buildVPFrameIndex();
+  }
+  if(i < 0 || i >= VP.frameIndex.length) return null;
+  if(VP.frames[i]) return VP.frames[i];
+
+  var raw = getVPCompressedBytes();
+  if(!raw) return null;
+  var range = VP.frameIndex[i];
+  var w = r.width, h = r.height;
+  var gen = VP.decodeGen;
+
+  try{
+    if(r.codec === 'mjpeg'){
+      var jpegBytes = raw.subarray(range[0], range[1]);
       var blob = new Blob([jpegBytes], {type:'image/jpeg'});
-      var bitmap = await createImageBitmap(blob, 0, 0, w, h, {resizeWidth:w, resizeHeight:h});
+      var bitmap = await createImageBitmap(blob);
+      if(gen !== VP.decodeGen){ try{bitmap.close();}catch(e){} return null; }
       var c = document.createElement('canvas');
       c.width = w; c.height = h;
-      var ctx = c.getContext('2d');
-      ctx.drawImage(bitmap, 0, 0);
+      var ctx = c.getContext('2d', {willReadFrequently:true});
+      ctx.drawImage(bitmap, 0, 0, w, h);
       var imgData = ctx.getImageData(0, 0, w, h).data;
       var rgba = new Uint8Array(w * h * 2);
       for (var px = 0; px < w * h; px++) {
@@ -2153,59 +2348,34 @@ async function rebuildMJPEGFrames() {
         rgba[px*2] = (val>>8)&0xFF;
         rgba[px*2+1] = val&0xFF;
       }
-      VP.frames.push(rgba);
       bitmap.close();
-    } catch(e) {
-      console.warn('MJPEG 解码失败 ['+i+']:', e.message);
-      break;
+      VP.frames[i] = rgba;
+    } else {
+      var frameBytes = raw.subarray(range[0], range[1]);
+      var fLvl = frameBytes[4];
+      var frame = blDecompressBytes(frameBytes, w, h, fLvl);
+      if(!frame) return null;
+      if (r.endian === 'little') {
+        for (var j = 0; j < frame.length; j += 2) {
+          var t = frame[j]; frame[j] = frame[j+1]; frame[j+1] = t;
+        }
+      }
+      VP.frames[i] = frame;
     }
+  }catch(e){
+    console.warn('解码帧失败 ['+i+']:', e && e.message ? e.message : e);
+    return null;
   }
-  // 校验：实际解码帧数与服务器标注不一致时用实际数修正
-  if (VP.frames.length !== r.frame_count) {
-    console.warn('MJPEG: 实际解码 ' + VP.frames.length + '/' + r.frame_count + ' 帧');
-  }
-  // 回退：如果 original_duration 无效，用 (帧数 / fps) 计算
-  if (!r.original_duration || r.original_duration <= 0) {
-    var fpsEst = (r.fps && r.fps > 0) ? r.fps : 30;
-    r.original_duration = VP.frames.length / fpsEst;
-  }
+  return VP.frames[i] || null;
 }
 
-function rebuildVPFramesFromCompressed() {
-  var r = VP.result;
-  if (!r || !r.compressed_hex) return;
-  if (r.codec === 'mjpeg') return;  // handled by rebuildMJPEGFrames
-  var raw = hexToBytes(r.compressed_hex);
-  var w = r.width, h = r.height;
-  VP.frames = [];
-  var pos = 0;
-  for (var i = 0; i < r.frame_count && pos < raw.length; i++) {
-    var fLvl = raw[pos + 4];
-    var frameB;
-    if (fLvl === 0) {
-      frameB = 6 + w * h * 2;  // raw: 6B header + raw pixels
-    } else {
-      var bw = fLvl == 1 ? 2 : (fLvl == 4 ? 4 : (fLvl == 3 ? 8 : 4));
-      var bh = (fLvl == 1 || fLvl == 4) ? 2 : 4;
-      var npix = bw * bh;
-      var bmB = Math.ceil(npix / 4);  // 2-bit per pixel = npix*2/8 = npix/4
-      var blkB = 4 + bmB;
-      var bxc = Math.ceil(w / bw);
-      var byc = Math.ceil(h / bh);
-      frameB = 6 + bxc * byc * blkB;
-    }
-
-    var hex = r.compressed_hex.substr(pos * 2, frameB * 2);
-    var frame = blDecompress(hex, w, h, fLvl);
-    // compressed data is always BE; swap to LE if original was LE for correct preview
-    if (r.endian === 'little') {
-      for (var j = 0; j < frame.length; j += 2) {
-        var t = frame[j]; frame[j] = frame[j+1]; frame[j+1] = t;
-      }
-    }
-    VP.frames.push(frame);
-    pos += frameB;
-  }
+// 兼容旧调用名：不再全量解码
+async function rebuildMJPEGFrames(){
+  buildVPFrameIndex();
+  await ensureVPFrame(0);
+}
+function rebuildVPFramesFromCompressed(){
+  buildVPFrameIndex();
 }
 
 async function downloadVPResult(){
@@ -2260,19 +2430,45 @@ async function downloadVPResult(){
 async function sendVPToDevice(){
   if(!port){ toast('请先连接串口','error'); return; }
   const r = VP.result;
-  if(!r || (!r.compressed_hex && !r.hex)){ toast('没有数据','error'); return; }
+  if(!r){ toast('没有数据','error'); return; }
 
-  const raw = hexToBytes(r.compressed_hex || r.hex);
+  let raw = getVPCompressedBytes();
+  // 若内存中尚无完整 payload，再按 download_id 拉一次（完整，不截断）
+  if((!raw || !raw.length) && r.download_id){
+    try{
+      toast('正在拉取完整烧录数据...','info');
+      const resp = await fetch(VP_SERVER+'/download/'+r.download_id);
+      if(!resp.ok) throw new Error('HTTP '+resp.status);
+      raw = new Uint8Array(await resp.arrayBuffer());
+      VP.compressedBytes = raw;
+    }catch(e){
+      toast('拉取数据失败: '+e.message,'error');
+      return;
+    }
+  }
+  if(!raw || !raw.length){
+    if(r.hex) raw = hexToBytes(r.hex);
+  }
+  if(!raw || !raw.length){ toast('没有可发送的数据','error'); return; }
+
   const blob = new Blob([raw]);
-  const fakeFile = new File([blob], (VP.file ? VP.file.name.replace(/\.[^.]+$/,'') : 'st7735') + '.bin', {type:'application/octet-stream'});
+  const base = VP.file ? VP.file.name.replace(/\.[^.]+$/,'') : 'st7735';
+  const fakeFile = new File([blob], base + '.bin', {type:'application/octet-stream'});
 
   selFile = fakeFile;
   const sz = fakeFile.size < 1024 ? fakeFile.size+'B' : (fakeFile.size/1024).toFixed(1)+'KB';
   elFileInfo.textContent = '\u2714 [VP] '+fakeFile.name+' ('+sz+')';
-  elName.value = 'vp_img'; updateNBC();
+  try{
+    // 视频/大文件默认大文件区
+    if(r.type === 'video' || fakeFile.size > 6*1024){
+      document.getElementById('fileType').value = '0x11';
+      if(typeof updateSmallFileTypeHint === 'function') updateSmallFileTypeHint({toast:false});
+    }
+  }catch(e){}
+  elName.value = (r.type === 'video' ? 'vp_vid' : 'vp_img'); updateNBC();
   elBtnSend.disabled = false;
 
-  toast('已填入发送队列，请在上方配置参数后发送','success');
+  toast('已填入完整数据（'+sz+'，'+ (r.frame_count||'?') +'帧），请确认类型后发送','success');
 
   // scroll to send settings
   const sendCard = document.getElementById('fileType').closest('.card');
