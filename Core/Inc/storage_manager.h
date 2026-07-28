@@ -23,11 +23,11 @@
 #define MAX_FILENAME_LEN                 16
 
 /* 小/大文件槽位上限 */
-#define MAX_SMALL_FILES                  32
-#define MAX_LARGE_FILES                  32
+#define MAX_SMALL_FILES                  40
+#define MAX_LARGE_FILES                  35
 
 /* 小文件区剩余空间低于此值(字节)时触发压缩回收 */
-#define SMALL_FILE_COMPACT_THRESHOLD     4096
+#define SMALL_FILE_COMPACT_THRESHOLD     (1024 * 8)  /* 8KB */
 
 /* ============================================================================
  *  文件信息结构

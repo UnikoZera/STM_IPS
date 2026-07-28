@@ -1216,12 +1216,12 @@ function crc16(data,off,len) { let c=0xFFFF; for (let i=0;i<len;i++) c=(c>>>8)^C
 
 // ============= Constants =============
 const H0=0xBB,H1=0x44,HS=9;
-const C_L=0x11,C_S=0x45,C_END=0x14,C_DEL=0x19,C_QRY=0x20,C_LCD=0x10,C_BMP=0x21;
+const C_L=0x11,C_S=0x45,C_END=0x14,C_DEL=0x19,C_QRY=0x20,C_LCD=0x10,C_BMP=0x21,C_ABORT=0x15;
 const LCD_W=160,LCD_H=80,LCD_TAIL=4,LCD_FRAME_SZ=LCD_W*LCD_H*2;
 const R_LCD=0xA0;
 const UH0=0xAA,UH1=0x55,UHS=5;
 const R_CONT=0xA1,R_ERR=0xE0;
-const ERRMSG={1:'CRC错误',2:'未知类型',3:'大文件区满',4:'小文件区满',5:'类型不匹配',6:'大文件扩展失败',7:'小文件扩展失败',8:'索引无效',9:'未知命令',10:'DMA失败',11:'DMA等待超时',12:'写入验证失败'};
+const ERRMSG={1:'CRC错误',2:'未知类型',3:'大文件区满',4:'小文件区满',5:'类型不匹配',6:'大文件槽满',7:'小文件槽满',8:'索引无效',9:'未知命令',10:'DMA失败',11:'Flash写入失败',12:'写入验证失败'};
 const CHUNK_MAX=2048, WRITE_TIMEOUT=8000, SEND_TIMEOUT=15000;
 const ST_INIT=0, ST_SENDING=1, ST_WAIT_ACK=2, ST_DONE=3, ST_ERR=4;
 
@@ -1559,7 +1559,7 @@ async function sendLoop(){
     if(fileOff>=fileData.length){await sendEndFrame();return;}
     const cs=chunkSz(),len=Math.min(fileData.length-fileOff,cs);
     const chunk=fileData.slice(fileOff,fileOff+len);
-    const totalSize=(fileCmd===C_L&&fileOff===0)?fileData.length:0;
+    const totalSize=(fileOff===0)?fileData.length:0;
     const frm=frame(fileCmd,chunk,totalSize);
     const ok=await writeSer(frm);
     if(!ok){doAbort('写入失败');return;}
@@ -1583,6 +1583,7 @@ async function sendEndFrame(){
   sendTimer=setTimeout(function(){if(sendState===ST_WAIT_ACK)signalCont();},3000);
   await waitCont();
   if(sendTimer){clearTimeout(sendTimer);sendTimer=null;}
+  if(sendState!==ST_WAIT_ACK){return;} // MCU 返回了错误，doAbort 已处理清理
   await doFinish(true);
 }
 
@@ -1613,6 +1614,8 @@ async function doFinish(ok){
 function doAbort(reason){
   log('中止: '+reason,'error');toast('传输中止: '+reason,'error');
   isTransferring=false;
+  // 通知MCU中止下载，触发扇区回滚
+  writeSer(frame(C_ABORT,new Uint8Array(0)));
   if(lcdStreamWasOn){
     writeSer(frame(C_LCD,new Uint8Array([0x01])));
   }

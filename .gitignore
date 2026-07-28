@@ -1,5 +1,4 @@
-.vscode
-.settings
-.resonix
-.deepseek
-Debug
+.vscode/
+.settings/
+.reasonix/
+Debug/
