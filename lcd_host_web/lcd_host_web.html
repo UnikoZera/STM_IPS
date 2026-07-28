@@ -254,7 +254,7 @@ main{
   backdrop-filter:blur(14px) saturate(1.15);-webkit-backdrop-filter:blur(14px) saturate(1.15);
   border-radius:var(--radius);padding:12px 14px;
   border:1px solid var(--glass-border);position:relative;
-  margin-bottom:10px;transition:border-color .28s var(--ease-smooth),box-shadow .28s var(--ease-smooth),transform .28s var(--ease-smooth);
+  margin-bottom:10px;transition:border-color .28s var(--ease-smooth),box-shadow .28s var(--ease-smooth);
   box-shadow:var(--shadow-1);
   animation:fadeIn .35s ease both;
 }
@@ -270,7 +270,7 @@ main{
   pointer-events:none;
 }
 .card:last-child{margin-bottom:0;}
-.card:hover{border-color:rgba(34,211,238,.28);box-shadow:var(--shadow-2),0 0 0 1px rgba(34,211,238,.08);transform:translateY(-1px);}
+.card:hover{border-color:rgba(34,211,238,.28);box-shadow:var(--shadow-2),0 0 0 1px rgba(34,211,238,.08);}
 .card:hover::after{opacity:1;}
 .card-accent{border-color:rgba(34,211,238,.28);box-shadow:var(--shadow-1),0 0 28px rgba(34,211,238,.08);}
 .card-title{
@@ -289,6 +289,7 @@ main{
 .card input:focus,.card select:focus{
   border-color:rgba(34,211,238,.45);box-shadow:0 0 0 3px rgba(34,211,238,.12),0 0 24px rgba(34,211,238,.08);
   background:rgba(8,15,28,.72);
+  transform:none; /* 下拉框位置依赖控件几何，避免 focus 缩放导致选项框位移 */
 }
 
 /* ── Buttons ── */
@@ -501,7 +502,7 @@ html{transition:background .3s;}
 header h1 .gradient-text{background-size:200% auto;}
 .status-badge{transition:border-color .3s,box-shadow .3s;}
 .status-badge.connected:hover{border-color:rgba(52,211,153,.5);box-shadow:0 0 18px rgba(52,211,153,.16);}
-.card{transition:border-color .35s,box-shadow .35s,transform .28s var(--ease-smooth);}
+.card{transition:border-color .35s,box-shadow .35s;}
 .btn{letter-spacing:.04em;transition:all .28s var(--ease-out-expo);}
 .btn-connect:not(:disabled){background:var(--btn-connect-bg);}
 .btn-connect:not(:disabled):hover{box-shadow:0 12px 34px rgba(34,211,238,.28);}
@@ -610,7 +611,7 @@ input[type=range]::-moz-range-thumb{
 #log .log-line:hover{padding-left:12px;background:rgba(34,211,238,.04);}
 
 /* ── Card Enhancements ── */
-.card:hover{border-color:rgba(34,211,238,.28);box-shadow:var(--shadow-2),0 0 0 1px rgba(34,211,238,.08);transform:translateY(-1px);}
+.card:hover{border-color:rgba(34,211,238,.28);box-shadow:var(--shadow-2),0 0 0 1px rgba(34,211,238,.08);}
 
 /* ── Progress Bar ── */
 .progress-fill{position:relative;overflow:hidden;}
@@ -743,13 +744,13 @@ header h1 .byline{
   opacity:.8;
 }
 
-/* 卡片：边框呼吸 + 弹性 hover + 斜向扫光 */
+/* 卡片：边框呼吸 + 轻 hover 光感 + 斜向扫光
+   不对 .card 做 translate/scale，避免点击 select 时原生下拉菜单跟着位移 */
 .card{
   overflow:hidden;
   transition:
-    border-color .35s var(--ease-bounce),
-    box-shadow .4s var(--ease-bounce),
-    transform .45s var(--ease-elastic)!important;
+    border-color .3s var(--ease-smooth),
+    box-shadow .35s var(--ease-smooth)!important;
 }
 .card::before{
   background:
@@ -759,17 +760,16 @@ header h1 .byline{
   animation:edgeBreathe 4s ease-in-out infinite;
 }
 .card:hover{
-  transform:translateY(-3px) scale(1.012)!important;
-  border-color:rgba(34,211,238,.45)!important;
+  transform:none!important;
+  border-color:rgba(34,211,238,.4)!important;
   box-shadow:
     var(--shadow-2),
-    0 0 0 1px rgba(34,211,238,.12),
-    0 0 36px rgba(34,211,238,.14),
-    0 0 60px rgba(167,139,250,.08)!important;
+    0 0 0 1px rgba(34,211,238,.1),
+    0 0 28px rgba(34,211,238,.1),
+    0 0 48px rgba(167,139,250,.06)!important;
 }
 .card:active{
-  transform:translateY(-1px) scale(.995)!important;
-  transition-duration:.1s!important;
+  transform:none!important;
 }
 /* 扫光层 */
 .card > *{position:relative; z-index:1;}
@@ -831,15 +831,15 @@ header h1 .byline{
   box-shadow:0 0 10px rgba(52,211,153,.85), 0 0 22px rgba(52,211,153,.35)!important;
 }
 
-/* 输入框 focus 弹一下 */
+/* 输入框 focus：只加光晕，不做缩放（select 下拉依赖固定几何位置） */
 .card input[type=text],
 .card input[type=number],
 .card select{
-  transition:border-color .25s, box-shadow .3s var(--ease-bounce), background .25s, transform .35s var(--ease-elastic)!important;
+  transition:border-color .25s, box-shadow .25s var(--ease-smooth), background .25s!important;
 }
 .card input:focus,
 .card select:focus{
-  transform:scale(1.01);
+  transform:none!important;
   box-shadow:
     0 0 0 3px rgba(34,211,238,.14),
     0 0 24px rgba(34,211,238,.12),

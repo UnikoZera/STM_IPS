@@ -446,67 +446,111 @@ _LVL_TO_PROFILE = {
 
 
 def _compress_block(rgb565: bytes, w: int, h: int, quality: int) -> bytes:
+    """Moderate speedup: preallocate, reuse buffers, fewer Python list ops."""
     _, bw, bh, npix, idx_bytes, rm, gm, bm = _BLK_CFG[quality]
-    def _lerp(a, b, n, d): return (a*(d-n)+b*n)//d
     bxc = (w + bw - 1) // bw
     byc = (h + bh - 1) // bh
-    out = bytearray()
+    blk_bytes = 4 + idx_bytes
+    out = bytearray(bxc * byc * blk_bytes)
+    oi = 0
+
+    r5s = [0] * npix
+    g6s = [0] * npix
+    b5s = [0] * npix
+    bright = [0] * npix
+    get = rgb565.__getitem__
 
     for by in range(byc):
+        y0 = by * bh
         for bx in range(bxc):
-            r5s, g6s, b5s = [], [], []
+            x0 = bx * bw
+            pi = 0
             for py in range(bh):
+                iy = y0 + py
+                row_ok = iy < h
+                row_base = iy * w
                 for px in range(bw):
-                    ix = bx * bw + px
-                    iy = by * bh + py
-                    if ix < w and iy < h:
-                        off = (iy * w + ix) * 2
-                        hi, lo = rgb565[off], rgb565[off + 1]
-                        val = (hi << 8) | lo
-                        r5s.append((val >> 11) & 0x1F)
-                        g6s.append((val >> 5) & 0x3F)
-                        b5s.append(val & 0x1F)
+                    ix = x0 + px
+                    if row_ok and ix < w:
+                        off = (row_base + ix) * 2
+                        val = (get(off) << 8) | get(off + 1)
+                        r5s[pi] = (val >> 11) & 0x1F
+                        g6s[pi] = (val >> 5) & 0x3F
+                        b5s[pi] = val & 0x1F
                     else:
-                        r5s.append(0); g6s.append(0); b5s.append(0)
+                        r5s[pi] = 0
+                        g6s[pi] = 0
+                        b5s[pi] = 0
+                    pi += 1
 
-            bright = [r5s[i]*19595 + g6s[i]*38470 + b5s[i]*7471
-                      for i in range(npix)]
+            rsum = gsum = bsum = 0
+            for i in range(npix):
+                r = r5s[i]; g = g6s[i]; b = b5s[i]
+                rsum += r; gsum += g; bsum += b
+                bright[i] = r * 19595 + g * 38470 + b * 7471
             med = sorted(bright)[npix // 2]
 
-            sums = [[0,0,0,0],[0,0,0,0]]
+            c0n = c1n = 0
+            c0r = c0g = c0b = 0
+            c1r = c1g = c1b = 0
             for i in range(npix):
-                g = 0 if bright[i] < med else 1
-                sums[g][0] += 1
-                sums[g][1] += r5s[i]; sums[g][2] += g6s[i]; sums[g][3] += b5s[i]
+                if bright[i] < med:
+                    c0n += 1
+                    c0r += r5s[i]; c0g += g6s[i]; c0b += b5s[i]
+                else:
+                    c1n += 1
+                    c1r += r5s[i]; c1g += g6s[i]; c1b += b5s[i]
 
-            def _avg(s, fb):
-                return (s[1]//s[0], s[2]//s[0], s[3]//s[0]) if s[0] else fb
-            fb = (sum(r5s)//npix, sum(g6s)//npix, sum(b5s)//npix)
-            c0 = _avg(sums[0], fb); c1 = _avg(sums[1], fb)
-            c0 = (c0[0]&rm, c0[1]&gm, c0[2]&bm)
-            c1 = (c1[0]&rm, c1[1]&gm, c1[2]&bm)
+            fbr, fbg, fbb = rsum // npix, gsum // npix, bsum // npix
+            if c0n:
+                c0r //= c0n; c0g //= c0n; c0b //= c0n
+            else:
+                c0r, c0g, c0b = fbr, fbg, fbb
+            if c1n:
+                c1r //= c1n; c1g //= c1n; c1b //= c1n
+            else:
+                c1r, c1g, c1b = fbr, fbg, fbb
 
-            # 4-colour palette: c0, c1, and 2 interpolated
-            c2 = (_lerp(c0[0],c1[0],1,3), _lerp(c0[1],c1[1],1,3), _lerp(c0[2],c1[2],1,3))
-            c3 = (_lerp(c0[0],c1[0],2,3), _lerp(c0[1],c1[1],2,3), _lerp(c0[2],c1[2],2,3))
-            pal = [c0, c1, c2, c3]
+            c0r &= rm; c0g &= gm; c0b &= bm
+            c1r &= rm; c1g &= gm; c1b &= bm
 
-            c0v = (c0[0]<<11)|(c0[1]<<5)|c0[2]
-            c1v = (c1[0]<<11)|(c1[1]<<5)|c1[2]
-            out.append((c0v>>8)&0xFF); out.append(c0v&0xFF)
-            out.append((c1v>>8)&0xFF); out.append(c1v&0xFF)
+            c2r = (c0r * 2 + c1r) // 3
+            c2g = (c0g * 2 + c1g) // 3
+            c2b = (c0b * 2 + c1b) // 3
+            c3r = (c0r + c1r * 2) // 3
+            c3g = (c0g + c1g * 2) // 3
+            c3b = (c0b + c1b * 2) // 3
+
+            c0v = (c0r << 11) | (c0g << 5) | c0b
+            c1v = (c1r << 11) | (c1g << 5) | c1b
+            out[oi] = (c0v >> 8) & 0xFF
+            out[oi + 1] = c0v & 0xFF
+            out[oi + 2] = (c1v >> 8) & 0xFF
+            out[oi + 3] = c1v & 0xFF
+            oi += 4
 
             indices = 0
             for i in range(npix):
                 pr, pg, pb = r5s[i], g6s[i], b5s[i]
-                best_d, best_i = 99999, 0
-                for ci in range(4):
-                    dr = pr-pal[ci][0]; dg = pg-pal[ci][1]; db = pb-pal[ci][2]
-                    d = dr*dr + dg*dg + db*db
-                    if d < best_d: best_d, best_i = d, ci
+                d0 = (pr - c0r) * (pr - c0r) + (pg - c0g) * (pg - c0g) + (pb - c0b) * (pb - c0b)
+                d1 = (pr - c1r) * (pr - c1r) + (pg - c1g) * (pg - c1g) + (pb - c1b) * (pb - c1b)
+                d2 = (pr - c2r) * (pr - c2r) + (pg - c2g) * (pg - c2g) + (pb - c2b) * (pb - c2b)
+                d3 = (pr - c3r) * (pr - c3r) + (pg - c3g) * (pg - c3g) + (pb - c3b) * (pb - c3b)
+                best_i = 0
+                best_d = d0
+                if d1 < best_d:
+                    best_d, best_i = d1, 1
+                if d2 < best_d:
+                    best_d, best_i = d2, 2
+                if d3 < best_d:
+                    best_i = 3
                 indices = (indices << 2) | best_i
-            for b in range(idx_bytes):
-                out.append((indices >> (8*(idx_bytes-1-b))) & 0xFF)
+
+            shift = 8 * (idx_bytes - 1)
+            for _ in range(idx_bytes):
+                out[oi] = (indices >> shift) & 0xFF
+                oi += 1
+                shift -= 8
     return bytes(out)
 
 
@@ -728,25 +772,39 @@ def _convert_to_rgb565(rgb_pixels: bytes, w: int, h: int,
     """Convert packed RGB888 -> RGB565 with pre-sized buffer (avoid O(n) realloc)."""
     n = len(rgb_pixels) // 3
     out = bytearray(n * 2)
-    ratio = brightness / 100.0 if brightness != 100.0 else 1.0
+    get = rgb_pixels.__getitem__
     be = (endian != '<')
     oi = 0
-    for i in range(0, n * 3, 3):
-        r = rgb_pixels[i]
-        g = rgb_pixels[i + 1]
-        b = rgb_pixels[i + 2]
-        if ratio != 1.0:
-            r = min(255, max(0, round(r * ratio)))
-            g = min(255, max(0, round(g * ratio)))
-            b = min(255, max(0, round(b * ratio)))
-        p = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
-        if be:
-            out[oi] = (p >> 8) & 0xFF
-            out[oi + 1] = p & 0xFF
-        else:
-            out[oi] = p & 0xFF
-            out[oi + 1] = (p >> 8) & 0xFF
-        oi += 2
+    if brightness == 100.0:
+        for i in range(0, n * 3, 3):
+            r = get(i)
+            g = get(i + 1)
+            b = get(i + 2)
+            p = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+            if be:
+                out[oi] = p >> 8
+                out[oi + 1] = p & 0xFF
+            else:
+                out[oi] = p & 0xFF
+                out[oi + 1] = p >> 8
+            oi += 2
+    else:
+        rq = int(brightness * 2.56 + 0.5)
+        for i in range(0, n * 3, 3):
+            r = (get(i) * rq) >> 8
+            g = (get(i + 1) * rq) >> 8
+            b = (get(i + 2) * rq) >> 8
+            if r > 255: r = 255
+            if g > 255: g = 255
+            if b > 255: b = 255
+            p = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+            if be:
+                out[oi] = p >> 8
+                out[oi + 1] = p & 0xFF
+            else:
+                out[oi] = p & 0xFF
+                out[oi + 1] = p >> 8
+            oi += 2
     return bytes(out)
 
 
@@ -1203,13 +1261,13 @@ def _process_video(in_path: str, width: int, height: int,
     # 仅保留首帧作为缩略图预览（完整预览由前端按需解码 compressed）
     thumb = b''
 
+    # compress always big-endian; thumb follows requested endian
     with open(out_path, 'wb') as out_f:
         for rgb, fw, fh in _stream_frames(in_path, width, height, fps=output_fps):
-            frame = _convert_to_rgb565(rgb, fw, fh, endian, brightness)
-            be_frame = _to_be(frame) if endian == '<' else frame
+            be_frame = _convert_to_rgb565(rgb, fw, fh, '>', brightness)
             out_f.write(compress_frame(be_frame, width, height, quality))
             if count == 0:
-                thumb = frame
+                thumb = _to_be(be_frame) if endian == '<' else be_frame
             count += 1
 
     if count == 0:
