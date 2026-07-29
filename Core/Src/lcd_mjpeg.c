@@ -127,9 +127,8 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
         return;
     }
 
-    /* ---- 判断是否为新文件/位置变化 ---- */
+    /* ---- 仅文件源变化才重置进度；x/y 动画移动不得打断播放 ---- */
     bool is_new = (!s_mjpeg.active ||
-                   s_mjpeg.lcd_x != x || s_mjpeg.lcd_y != y ||
                    s_mjpeg.start_addr != w25q_start_addr ||
                    s_mjpeg.end_addr != w25q_end_addr);
 
@@ -149,8 +148,6 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
         s_mjpeg.start_addr  = w25q_start_addr;
         s_mjpeg.end_addr    = w25q_end_addr;
         s_mjpeg.frame_count = hdr_count;
-        s_mjpeg.lcd_x       = x;
-        s_mjpeg.lcd_y       = y;
 
         width  = hdr_w;
         height = hdr_h;
@@ -170,6 +167,10 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
         s_mjpeg.current_frame_pos = w25q_start_addr + 14;
         s_mjpeg.last_error        = 0;
     }
+
+    /* 每帧更新绘制原点（动画改 x/y 时生效，不重置解码进度） */
+    s_mjpeg.lcd_x = x;
+    s_mjpeg.lcd_y = y;
 
     /* ---- 空帧检查 ---- */
     if (s_mjpeg.frame_count == 0)

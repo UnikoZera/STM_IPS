@@ -171,13 +171,31 @@ header h1 .gradient-text{
   filter:drop-shadow(0 0 18px rgba(34,211,238,.18));
 }
 header h1 .byline{
-  font-size:10px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;
+  font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;
   padding-left:12px;border-left:1px solid var(--border);
-  color:var(--text2);
-  opacity:.85;
-  transition:color .25s, opacity .25s;
+  background:linear-gradient(90deg,
+    #22d3ee 0%,
+    #67e8f9 12%,
+    #a78bfa 28%,
+    #f472b6 44%,
+    #fbbf24 58%,
+    #34d399 72%,
+    #22d3ee 88%,
+    #a78bfa 100%);
+  background-size:220% 100%;
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;color:transparent;
+  opacity:1;
+  animation:bylineScroll 6s linear infinite;
+  transition:filter .25s, opacity .25s;
 }
-header h1 .byline:hover{color:var(--cyan);opacity:1;}
+header h1 .byline:hover{
+  filter:brightness(1.15) saturate(1.15);
+  opacity:1;
+}
+.light header h1 .byline{
+  filter:saturate(1.05);
+}
 .status-badge{
   display:flex;align-items:center;gap:8px;
   background:var(--glass-bg);backdrop-filter:blur(12px);
@@ -200,9 +218,9 @@ main{
 /* ── Panels ── */
 .panel{background:rgba(5,7,13,.35);display:flex;flex-direction:column;overflow:hidden;min-height:0;}
 .panel::after{content:'';position:fixed;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(34,211,238,.55),rgba(167,139,250,.45),transparent);opacity:.55;pointer-events:none;z-index:30;}
-.panel-left{width:340px;min-width:260px;max-width:520px;flex-shrink:0;}
+.panel-left{width:340px;min-width:260px;max-width:560px;flex-shrink:0;}
 .panel-center{flex:1;min-width:200px;background:rgba(255,255,255,.01);}
-.panel-right{width:340px;min-width:260px;max-width:520px;flex-shrink:0;}
+.panel-right{width:340px;min-width:260px;max-width:560px;flex-shrink:0;}
 .splitter{width:1px;background:linear-gradient(180deg,transparent,var(--border),transparent);flex-shrink:0;cursor:col-resize;transition:background .15s,box-shadow .15s;position:relative;}
 .splitter::after{content:'';position:absolute;left:-3px;right:-3px;top:0;bottom:0;}
 .splitter:hover,.splitter.active{background:var(--cyan);box-shadow:0 0 12px rgba(34,211,238,.45);}
@@ -284,7 +302,8 @@ main{
   box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
 }
 .card input::placeholder,.card select::placeholder{color:var(--text3);opacity:.75;}
-.card input:focus,.card select:focus{
+/* 文本/数字/下拉框 focus；排除 range，避免滑块出现方框描边 */
+.card input:not([type=range]):focus,.card select:focus{
   border-color:rgba(34,211,238,.45);box-shadow:0 0 0 3px rgba(34,211,238,.12),0 0 24px rgba(34,211,238,.08);
   background:rgba(8,15,28,.72);
   transform:none; /* 下拉框位置依赖控件几何，避免 focus 缩放导致选项框位移 */
@@ -467,11 +486,12 @@ main{
 
 /* ── Toast ── */
 .toast{
-  position:fixed;top:56px;right:16px;
+  /* 由 #toastContainer 负责视口定位；单条 toast 不再 fixed */
+  position:relative;
   background:var(--glass-bg);backdrop-filter:blur(16px) saturate(1.15);
   border:1px solid var(--glass-border);
   border-radius:14px;padding:12px 16px 12px 18px;
-  font-size:12.5px;z-index:100;animation:bounceIn .4s var(--ease-spring);
+  font-size:12.5px;z-index:1;animation:bounceIn .4s var(--ease-spring);
   max-width:380px;box-shadow:var(--shadow-2);
   display:flex;align-items:flex-start;gap:10px;cursor:default;
 }
@@ -479,8 +499,12 @@ main{
 .toast-msg{flex:1;word-break:break-word;line-height:1.4;}
 .toast-close{cursor:pointer;font-size:14px;color:var(--text2);line-height:1;padding:0 2px;flex-shrink:0;opacity:.6;transition:opacity .2s;}
 .toast-close:hover{opacity:1;color:var(--red);}
-#toastContainer{position:fixed;top:56px;right:16px;z-index:100;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
-#toastContainer .toast{position:static;pointer-events:auto;animation:bounceIn .35s cubic-bezier(.34,1.56,.64,1);}
+#toastContainer{
+  position:fixed;top:64px;right:16px;left:auto;bottom:auto;
+  z-index:1100;display:flex;flex-direction:column;align-items:flex-end;
+  gap:8px;pointer-events:none;max-width:min(380px,calc(100vw - 24px));
+}
+#toastContainer .toast{position:relative;pointer-events:auto;animation:bounceIn .35s cubic-bezier(.34,1.56,.64,1);}
 #sendStatus{font-size:11.5px;color:var(--magenta);margin-top:4px;min-height:16px;}
 
 /* ── Spinner ── */
@@ -533,22 +557,52 @@ select:hover,input[type=text]:hover,input[type=number]:hover{border-color:rgba(1
 /* ── Custom Range Slider ── */
 input[type=range]{
   -webkit-appearance:none;appearance:none;
-  background:transparent;cursor:pointer;height:20px;
+  background:transparent!important;
+  cursor:pointer;height:22px;
   accent-color:var(--cyan);
-  outline:none!important;border:none;
+  outline:none!important;
+  border:none!important;
+  box-shadow:none!important;
+  border-radius:0!important;
+  padding:0!important;
+  margin:0;
+  color:transparent; /* 减少部分引擎 focus 描边 */
 }
-input[type=range]:focus{outline:none!important;border:none;box-shadow:none;}
-input[type=range]::-moz-focus-inner{border:0;outline:none;}
-input[type=range]:focus-visible{outline:none!important;border:none;box-shadow:none;}
+/* 拖动/聚焦时禁止任何外框（覆盖 .card input:focus 等） */
+input[type=range]:focus,
+input[type=range]:focus-visible,
+input[type=range]:active,
+.card input[type=range]:focus,
+.card input[type=range]:focus-visible,
+.card input[type=range]:active{
+  outline:none!important;
+  outline-offset:0!important;
+  border:none!important;
+  box-shadow:none!important;
+  background:transparent!important;
+  filter:none!important;
+  transform:none!important;
+}
+input[type=range]::-moz-focus-outer{border:0!important;}
+input[type=range]::-moz-focus-inner{border:0!important;outline:none!important;}
+/* Chromium 偶发的内部 focus ring */
+input[type=range]::-webkit-slider-container,
 input[type=range]::-webkit-slider-runnable-track{
-  height:4px;border-radius:2px;
+  outline:none!important;
+  border:none!important;
+}
+input[type=range]::-webkit-slider-runnable-track{
+  height:4px;border-radius:999px;
   background:linear-gradient(90deg,var(--surface3),var(--border));
   transition:background .3s;
+  box-shadow:none!important;
 }
 input[type=range]::-webkit-slider-thumb{
   -webkit-appearance:none;appearance:none;
   width:14px;height:14px;border-radius:50%;
   margin-top:-5px;
+  border:none!important;
+  outline:none!important;
   background:linear-gradient(135deg,var(--cyan),#0097a7);
   box-shadow:0 0 10px rgba(0,188,212,.3);
   transition:box-shadow .25s var(--ease-out-expo),transform .2s var(--ease-out-expo);
@@ -561,28 +615,32 @@ input[type=range]::-webkit-slider-thumb{
 }
 input[type=range]::-webkit-slider-thumb:hover{
   animation:none;
-  box-shadow:0 0 20px rgba(0,188,212,.5),0 0 0 8px rgba(0,188,212,.08);
-  transform:scale(1.15);
+  box-shadow:0 0 18px rgba(0,188,212,.5),0 0 0 6px rgba(0,188,212,.08);
+  transform:scale(1.12);
 }
 input[type=range]::-webkit-slider-thumb:active{
   animation:none;
-  box-shadow:0 0 28px rgba(0,188,212,.65),0 0 0 12px rgba(0,188,212,.06);
-  transform:scale(1.25);cursor:grabbing;
+  box-shadow:0 0 22px rgba(0,188,212,.6),0 0 0 8px rgba(0,188,212,.1);
+  transform:scale(1.18);cursor:grabbing;
   transition-duration:.1s;
 }
 input[type=range]::-moz-range-track{
-  height:4px;border-radius:2px;
+  height:4px;border-radius:999px;
   background:var(--surface3);border:none;
 }
 input[type=range]::-moz-range-progress{
-  height:4px;border-radius:2px;
+  height:4px;border-radius:999px;
   background:var(--cyan);
 }
 input[type=range]::-moz-range-thumb{
-  width:14px;height:14px;border-radius:50%;border:none;
+  width:14px;height:14px;border-radius:50%;border:none!important;
+  outline:none!important;
   background:linear-gradient(135deg,var(--cyan),#0097a7);
   box-shadow:0 0 10px rgba(0,188,212,.3);
   cursor:grab;
+}
+input[type=range]::-moz-range-thumb:active{
+  box-shadow:0 0 22px rgba(0,188,212,.55),0 0 0 8px rgba(0,188,212,.1);
 }
 
 /* ── Modal Enhancements ── */
@@ -721,11 +779,14 @@ header::after{
   animation:neonPulse 3.6s ease-in-out infinite;
   pointer-events:none;
 }
+/* 标题仅保留柔和渐变位移，去掉亮度/glitch 闪烁以免突兀暗一下 */
 header h1 .gradient-text{
-  animation:titleShimmer 5s ease-in-out infinite, glitchFlicker 7s steps(1,end) infinite;
+  animation:gradientFlow 10s ease-in-out infinite;
+  filter:none;
 }
 header h1 .byline{
-  animation:softFloat 4.5s ease-in-out infinite;
+  /* rainbow scroll 已在主样式中；此处仅保留轻微浮动 */
+  animation:bylineScroll 6s linear infinite, softFloat 4.5s ease-in-out infinite;
 }
 
 /* 面板标题霓虹条更亮 + 扫描 */
@@ -835,7 +896,7 @@ header h1 .byline{
 .card select{
   transition:border-color .25s, box-shadow .25s var(--ease-smooth), background .25s!important;
 }
-.card input:focus,
+.card input:not([type=range]):focus,
 .card select:focus{
   transform:none!important;
   box-shadow:
@@ -947,16 +1008,589 @@ header h1 .byline{
   }
 }
 
+/* ════════════════════════════════════════
+   Material Depth — 更深材质 / 布局层次
+   ════════════════════════════════════════ */
+:root{
+  --ink-void:#03050a;
+  --panel-veil:rgba(6,10,18,.42);
+  --chip-bg:rgba(255,255,255,.04);
+  --chip-bd:rgba(255,255,255,.08);
+  --lcd-bezel:linear-gradient(160deg,#121a28 0%,#070b12 48%,#0c1420 100%);
+  --noise-opacity:.035;
+}
+@keyframes auroraShift{
+  0%{transform:translate3d(-2%,-1%,0) scale(1)}
+  50%{transform:translate3d(3%,2%,0) scale(1.06)}
+  100%{transform:translate3d(-2%,-1%,0) scale(1)}
+}
+@keyframes hudTick{
+  0%,100%{opacity:.35}
+  50%{opacity:.9}
+}
+@keyframes chipIn{
+  from{opacity:0;transform:translateY(6px)}
+  to{opacity:1;transform:translateY(0)}
+}
+@keyframes barGrow{
+  from{transform:scaleX(0);opacity:0}
+  to{transform:scaleX(1);opacity:1}
+}
+
+/* 背景层次：虚空 + 极光 + 细噪点（不改 body 几何，避免布局抖动） */
+html:not(.light) body{
+  background:
+    radial-gradient(1000px 520px at 8% -8%, rgba(34,211,238,.16), transparent 52%),
+    radial-gradient(820px 480px at 92% 4%, rgba(167,139,250,.13), transparent 50%),
+    radial-gradient(700px 420px at 50% 110%, rgba(244,114,182,.07), transparent 55%),
+    linear-gradient(180deg,#0a1220 0%, var(--bg) 42%, var(--ink-void) 100%)!important;
+}
+html:not(.light) body::after{
+  opacity:.7!important;
+  background:
+    radial-gradient(ellipse at 72% 12%,rgba(34,211,238,.1) 0%,transparent 42%),
+    radial-gradient(ellipse at 16% 88%,rgba(167,139,250,.09) 0%,transparent 46%),
+    radial-gradient(ellipse at 50% 40%,rgba(244,114,182,.03) 0%,transparent 55%)!important;
+  animation:auroraShift 22s ease-in-out infinite;
+  will-change:transform;
+}
+/* 细颗粒噪点叠层 */
+.ui-grain{
+  position:fixed;inset:0;z-index:0;pointer-events:none;opacity:var(--noise-opacity);
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+  mix-blend-mode:overlay;
+}
+/* 仅 header/main 参与文档层叠；toast/modal 必须保持 fixed 贴视口 */
+header,main{position:relative;z-index:1;}
+header{z-index:20!important;}
+.modal-overlay{position:fixed!important;inset:0!important;z-index:1000!important;}
+#toastContainer{
+  position:fixed!important;
+  top:64px!important;
+  right:16px!important;
+  left:auto!important;
+  bottom:auto!important;
+  z-index:1100!important;
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:flex-end!important;
+  gap:8px!important;
+  max-width:min(380px,calc(100vw - 24px))!important;
+  pointer-events:none!important;
+}
+#toastContainer .toast{
+  position:relative!important; /* 相对容器堆叠，不要再 fixed 到别处 */
+  pointer-events:auto!important;
+  max-width:100%!important;
+}
+
+/* 顶栏：更厚玻璃 + 品牌芯片 */
+header{
+  padding:11px 22px!important;
+  min-height:56px;
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.05),transparent 40%),
+    var(--header-bg)!important;
+  box-shadow:0 12px 40px rgba(0,0,0,.28), inset 0 -1px 0 rgba(255,255,255,.04)!important;
+}
+header h1{gap:14px!important;}
+header h1 .brand-mark{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:28px;height:28px;border-radius:9px;flex-shrink:0;
+  background:linear-gradient(145deg,rgba(34,211,238,.25),rgba(167,139,250,.18));
+  border:1px solid rgba(34,211,238,.35);
+  box-shadow:0 0 18px rgba(34,211,238,.2), inset 0 1px 0 rgba(255,255,255,.2);
+  font-size:13px;color:var(--cyan);
+  animation:softFloat 5s ease-in-out infinite;
+}
+.header-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:5px 10px;border-radius:999px;
+  background:var(--chip-bg);border:1px solid var(--chip-bd);
+  font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--text2);animation:chipIn .5s var(--ease-out-expo) both;
+}
+.header-chip .tick{
+  width:6px;height:6px;border-radius:50%;background:var(--cyan);
+  box-shadow:0 0 8px rgba(34,211,238,.7);animation:hudTick 2.2s ease-in-out infinite;
+}
+.header-actions{display:flex;align-items:center;gap:10px;}
+#themeBtn{
+  width:36px!important;height:36px!important;border-radius:12px!important;
+  background:var(--glass-bg)!important;
+}
+
+/* 主布局：三栏悬浮感 */
+main{
+  gap:0!important;
+  padding:0!important;
+  background:
+    linear-gradient(90deg, rgba(0,0,0,.18), transparent 12%, transparent 88%, rgba(0,0,0,.18))!important;
+}
+.panel{
+  background:var(--panel-veil)!important;
+  backdrop-filter:blur(8px);
+}
+.panel-left,.panel-right{
+  box-shadow:inset 0 0 40px rgba(0,0,0,.12);
+}
+.panel-center{
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.02), transparent 30%),
+    rgba(255,255,255,.015)!important;
+  position:relative;
+}
+.panel-center::before{
+  content:'';position:absolute;inset:0;pointer-events:none;opacity:.4;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(34,211,238,.04), transparent 55%);
+}
+/* 不用 !important 锁死宽度，否则 JS 拖拽改 style.width 无效 */
+.panel-left{width:356px;max-width:560px;}
+.panel-right{width:356px;max-width:560px;}
+
+/* 面板标题条：收紧字距与高度，中栏更利落 */
+.panel-hd{
+  padding:10px 14px!important;
+  letter-spacing:1.1px!important;
+  min-height:0;
+  background:
+    linear-gradient(90deg, rgba(34,211,238,.06), transparent 55%),
+    linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01))!important;
+}
+.panel-center > .panel-hd{
+  padding:9px 12px!important;
+  letter-spacing:.9px!important;
+  font-size:10.5px!important;
+}
+.panel-hd .hd-sub{
+  margin-left:auto;font-size:9px;font-weight:600;letter-spacing:.1em;
+  color:var(--text3);text-transform:uppercase;opacity:.8;
+  flex-shrink:0;
+}
+.panel-hd .btn-log-clear{
+  margin-left:8px!important;
+  padding:4px 10px!important;
+  font-size:10px!important;
+}
+
+/* 分区标签（左栏） */
+.section-label{
+  display:flex;align-items:center;gap:8px;
+  margin:4px 2px 10px;padding:0 2px;
+  font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;
+  color:var(--text3);animation:chipIn .45s var(--ease-out-expo) both;
+}
+.section-label::before{
+  content:'';width:10px;height:2px;border-radius:2px;
+  background:linear-gradient(90deg,var(--cyan),var(--magenta));
+  box-shadow:0 0 8px rgba(34,211,238,.4);
+}
+.section-label::after{
+  content:'';flex:1;height:1px;
+  background:linear-gradient(90deg,rgba(148,163,184,.18),transparent);
+  transform-origin:left center;animation:barGrow .6s var(--ease-out-expo) both;
+}
+
+/* 卡片更深：内高光 + 底阴影（仍禁止位移，保护 select） */
+.card{
+  border-radius:16px!important;
+  padding:13px 15px!important;
+  margin-bottom:12px!important;
+  background:
+    linear-gradient(165deg,rgba(255,255,255,.06) 0%, rgba(255,255,255,.015) 40%, rgba(0,0,0,.16) 100%),
+    var(--glass-bg)!important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.05) inset,
+    0 10px 28px rgba(0,0,0,.32),
+    0 0 0 1px rgba(255,255,255,.03)!important;
+}
+.card-title{
+  display:flex!important;align-items:center;gap:8px;
+  margin-bottom:10px!important;
+  color:var(--text2)!important;
+}
+.card-title::before{
+  content:'';width:6px;height:6px;border-radius:2px;flex-shrink:0;
+  background:linear-gradient(135deg,var(--cyan),var(--magenta));
+  box-shadow:0 0 10px rgba(34,211,238,.45);
+}
+.card.card-accent{
+  border-color:rgba(34,211,238,.32)!important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.06) inset,
+    0 12px 32px rgba(0,0,0,.34),
+    0 0 32px rgba(34,211,238,.1)!important;
+}
+
+/* 表单行对齐 */
+.field-row{
+  display:flex;align-items:center;gap:8px;margin-bottom:8px;
+}
+.field-row:last-child{margin-bottom:0;}
+.field-label{
+  font-size:11px;color:var(--text2);white-space:nowrap;
+  width:72px;flex-shrink:0;letter-spacing:.02em;
+}
+.field-hint{font-size:10px;color:var(--text3);flex-shrink:0;}
+
+/* 按钮：更厚、圆角统一 */
+.btn{
+  border-radius:12px!important;
+  padding:12px 16px!important;
+  font-weight:700!important;
+  letter-spacing:.05em!important;
+}
+.btn-connect,.btn-send,.btn-retry,.btn-disconnect,.btn-cancel{
+  box-shadow:0 10px 26px rgba(0,0,0,.22)!important;
+}
+.btn-query{
+  border-radius:11px!important;
+  background:rgba(255,255,255,.035)!important;
+}
+
+/* 进度条：轨道更深 */
+.progress-bar{
+  height:8px!important;
+  background:rgba(2,6,14,.55)!important;
+  border:1px solid rgba(148,163,184,.1);
+}
+.progress-text{
+  font-variant-numeric:tabular-nums;
+  margin-top:5px!important;
+}
+
+/* LCD：金属边框 + 内凹屏 */
+.lcd-fixed{
+  padding:12px 14px!important;
+  background:
+    linear-gradient(180deg,rgba(20,28,44,.7),rgba(5,7,13,.35))!important;
+  border-bottom:1px solid var(--border)!important;
+}
+.lcd-bezel{
+  margin-top:8px;padding:10px;border-radius:14px;
+  background:var(--lcd-bezel);
+  border:1px solid rgba(255,255,255,.07);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.06) inset,
+    0 12px 28px rgba(0,0,0,.4),
+    0 0 0 1px rgba(0,0,0,.35);
+  position:relative;
+}
+.lcd-bezel::before{
+  content:'';position:absolute;left:12px;right:12px;top:6px;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.18),transparent);
+  pointer-events:none;
+}
+.lcd-bezel #lcdCanvas{
+  width:100%!important;display:block!important;
+  border-radius:8px!important;border:1px solid rgba(0,0,0,.55)!important;
+  box-shadow:inset 0 0 24px rgba(0,0,0,.45)!important;
+  margin:0!important;
+}
+.lcd-status-row{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;
+}
+.lcd-status-pill{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:4px 10px;border-radius:999px;
+  background:rgba(0,0,0,.25);border:1px solid var(--border);
+  font-size:11px;font-weight:600;
+}
+
+/* 日志区：终端质感 */
+.panel-center .panel-body{
+  background:
+    linear-gradient(180deg, rgba(0,0,0,.12), transparent 20%),
+    transparent;
+}
+#log{
+  font-size:11.5px!important;
+  line-height:1.75!important;
+}
+#log .log-line{
+  border-radius:8px!important;
+  margin:1px 0;
+  border-bottom:none!important;
+  border:1px solid transparent;
+}
+#log .log-line:hover{
+  border-color:rgba(34,211,238,.12);
+  background:rgba(34,211,238,.04)!important;
+}
+
+/* 文件列表：更像磁盘槽位 */
+.file-item{
+  border-radius:14px!important;
+  padding:12px 14px!important;
+  background:
+    linear-gradient(165deg,rgba(255,255,255,.04),rgba(255,255,255,.01)),
+    rgba(8,12,22,.55)!important;
+}
+.file-item-name{letter-spacing:.02em;}
+.tag{
+  border-radius:6px!important;
+  padding:2px 8px!important;
+  letter-spacing:.04em;
+}
+
+/* 视频处理器结果区（深色默认） */
+#vpResult{
+  border-radius:14px!important;
+  background:
+    linear-gradient(165deg,rgba(52,211,153,.08),rgba(0,0,0,.14)),
+    rgba(6,16,14,.55)!important;
+  border:1px solid rgba(52,211,153,.28)!important;
+  box-shadow:0 0 24px rgba(52,211,153,.08)!important;
+  color:var(--text);
+}
+#vpResult .vp-result-title{
+  font-size:10.5px;color:var(--green);
+  text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:4px;
+}
+#vpResultInfo{font-size:11px;color:var(--text2)!important;margin-bottom:6px;}
+#vpCompressStats{
+  font-size:10px;color:var(--text2)!important;margin-bottom:6px;
+  padding:6px 8px;border-radius:8px;text-align:center;
+  background:rgba(0,188,212,.05)!important;
+  border:1px solid rgba(34,211,238,.1);
+}
+#vpPreview{
+  border-radius:10px!important;
+  border:1px solid var(--border)!important;
+  background:#000;
+}
+#vpBtnRow .btn-query{
+  background:rgba(255,255,255,.04)!important;
+}
+
+/* 分割条：可点可拖（扩大命中区，避免被相邻 panel 盖住） */
+.splitter{
+  width:6px!important;
+  flex-shrink:0;
+  z-index:5;
+  position:relative;
+  background:linear-gradient(180deg,transparent,rgba(148,163,184,.18),transparent)!important;
+  margin:0;
+  cursor:col-resize;
+  touch-action:none;
+}
+.splitter::after{
+  content:''!important;
+  position:absolute!important;
+  left:-6px!important;right:-6px!important;top:0!important;bottom:0!important;
+  cursor:col-resize;
+  z-index:6;
+}
+.splitter:hover,.splitter.active{
+  background:linear-gradient(180deg,transparent,var(--cyan),transparent)!important;
+  box-shadow:0 0 14px rgba(34,211,238,.45)!important;
+}
+body.is-resizing{cursor:col-resize!important;user-select:none!important;}
+body.is-resizing *{cursor:col-resize!important;}
+
+/* 主题切换：颜色与背景平滑过渡 */
+html{
+  transition:background-color .45s var(--ease-smooth), color .45s var(--ease-smooth);
+}
+html.theme-animating,
+html.theme-animating body,
+html.theme-animating body::before,
+html.theme-animating body::after,
+html.theme-animating header,
+html.theme-animating main,
+html.theme-animating .panel,
+html.theme-animating .panel-hd,
+html.theme-animating .card,
+html.theme-animating .lcd-fixed,
+html.theme-animating .lcd-bezel,
+html.theme-animating .status-badge,
+html.theme-animating .btn-query,
+html.theme-animating .file-item,
+html.theme-animating .section-label,
+html.theme-animating #themeBtn{
+  transition:
+    background .45s var(--ease-smooth),
+    background-color .45s var(--ease-smooth),
+    color .4s var(--ease-smooth),
+    border-color .4s var(--ease-smooth),
+    box-shadow .45s var(--ease-smooth),
+    opacity .4s var(--ease-smooth),
+    filter .4s var(--ease-smooth)!important;
+}
+
+/* 浅色主题：Material Depth + 右侧栏完整覆盖 */
+.light .ui-grain{opacity:.02;mix-blend-mode:multiply;}
+.light body{background:linear-gradient(180deg,#f8fafc 0%,#eef2f7 50%,#e8eef5 100%)!important;}
+.light body::after{opacity:.25!important;animation:none!important;}
+.light .panel{background:rgba(255,255,255,.55)!important;box-shadow:none!important;}
+.light .panel-left,.light .panel-right{box-shadow:inset 0 0 24px rgba(15,23,42,.03)!important;}
+.light .panel-center{
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.65), rgba(248,250,252,.4) 40%),
+    rgba(255,255,255,.5)!important;
+}
+.light .panel-center::before{opacity:.25;background:radial-gradient(ellipse at 50% 0%,rgba(8,145,178,.06),transparent 55%);}
+.light .panel-hd{
+  background:linear-gradient(180deg,rgba(255,255,255,.9),rgba(241,245,249,.75))!important;
+  color:var(--cyan)!important;
+  border-bottom-color:rgba(15,23,42,.08)!important;
+}
+.light .card{
+  background:linear-gradient(180deg,#fff,#f8fafc)!important;
+  box-shadow:var(--shadow-1)!important;
+  border-color:rgba(15,23,42,.08)!important;
+}
+.light .lcd-fixed,
+.light .lcd-fixed.streaming{
+  background:linear-gradient(180deg,rgba(255,255,255,.92),rgba(241,245,249,.7))!important;
+  border-bottom-color:rgba(15,23,42,.08)!important;
+}
+.light .lcd-bezel{
+  background:linear-gradient(160deg,#e8eef5,#f8fafc)!important;
+  border-color:rgba(15,23,42,.1)!important;
+  box-shadow:var(--shadow-1)!important;
+}
+.light .lcd-bezel #lcdCanvas{
+  border-color:rgba(15,23,42,.12)!important;
+  box-shadow:inset 0 0 12px rgba(15,23,42,.06)!important;
+}
+.light .lcd-status-pill{
+  background:rgba(255,255,255,.8)!important;
+  border-color:rgba(15,23,42,.1)!important;
+  color:var(--text2)!important;
+}
+.light .file-item{
+  background:linear-gradient(180deg,#fff,#f8fafc)!important;
+  border-color:rgba(15,23,42,.08)!important;
+}
+.light .section-label{color:var(--text2);}
+.light header h1 .brand-mark{
+  background:linear-gradient(145deg,rgba(8,145,178,.2),rgba(124,58,237,.12));
+}
+.light main{
+  background:linear-gradient(90deg,rgba(15,23,42,.03),transparent 12%,transparent 88%,rgba(15,23,42,.03))!important;
+}
+.light .splitter{
+  background:linear-gradient(180deg,transparent,rgba(15,23,42,.12),transparent)!important;
+}
+.light #fileInfo{
+  background:rgba(241,245,249,.9)!important;
+  border-color:rgba(15,23,42,.08)!important;
+}
+
+/* 转换结果卡：浅色模式改为浅底 + 可读正文（覆盖深色内联/Material 背景） */
+.light #vpResult{
+  background:linear-gradient(165deg,rgba(16,185,129,.08),#ffffff 42%,#f0fdf4 100%)!important;
+  border:1px solid rgba(5,150,105,.22)!important;
+  box-shadow:0 8px 24px rgba(15,23,42,.06),0 0 0 1px rgba(16,185,129,.06)!important;
+  color:var(--text)!important;
+}
+.light #vpResult .vp-result-title{
+  color:#047857!important;
+}
+.light #vpResultInfo{
+  color:var(--text2)!important;
+}
+.light #vpCompressStats{
+  background:rgba(236,253,245,.95)!important;
+  border:1px solid rgba(16,185,129,.16)!important;
+  color:var(--text2)!important;
+}
+.light #vpCompressStats span{
+  /* 内联 gold/cyan 在浅底仍可读；略加深 */
+  filter:saturate(1.05);
+}
+.light #vpPreview{
+  border:1px solid rgba(15,23,42,.12)!important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.4);
+}
+.light #vpBtnRow .btn-query{
+  background:#fff!important;
+  border:1px solid rgba(15,23,42,.1)!important;
+  color:var(--text)!important;
+  box-shadow:0 1px 0 rgba(255,255,255,.8) inset!important;
+}
+.light #vpBtnRow .btn-query:hover{
+  border-color:rgba(8,145,178,.35)!important;
+  background:#f0fdfa!important;
+}
+.light #vpStatus{
+  color:#b45309!important; /* 浅色下金黄偏暗更清晰 */
+}
+
+/* 入场：左栏卡片错峰（仅 opacity，不位移卡片自身以免影响 select） */
+.panel-left .card:nth-child(1){animation-delay:.02s;}
+.panel-left .card:nth-child(2){animation-delay:.05s;}
+.panel-left .card:nth-child(3){animation-delay:.08s;}
+.panel-left .card:nth-child(4){animation-delay:.11s;}
+.panel-left .card:nth-child(5){animation-delay:.14s;}
+.panel-left .card:nth-child(6){animation-delay:.17s;}
+
 /* ── Responsive ── */
-@media(max-width:900px){main{flex-direction:column;}.panel-left,.panel-right{width:100%!important;max-width:none!important;min-width:0!important;flex:auto;}.panel-center{min-width:0;}.splitter{display:none;}.lcd-fixed{max-height:300px;overflow-y:auto;}}
+@media(max-width:900px){
+  main{flex-direction:column;}
+  .panel-left,.panel-right{width:100%!important;max-width:none!important;min-width:0!important;flex:auto;}
+  .panel-center{min-width:0;}
+  .splitter{display:none;}
+  .lcd-fixed{max-height:320px;overflow-y:auto;}
+  .header-chip{display:none;}
+}
+@media(max-width:1100px){
+  /* 初始更窄，仍允许拖拽覆盖；勿用 !important 锁死 width */
+  .panel-left:not([style*="width"]),
+  .panel-right:not([style*="width"]){width:300px;}
+}
+
+/* LCD 开启：高对比实心绿，避免被 .btn-query 玻璃底盖掉 */
+#btnLcdOn.btn-lcd-on,
+button#btnLcdOn{
+  background:linear-gradient(135deg,#34d399 0%,#10b981 55%,#059669 100%)!important;
+  color:#04140e!important;
+  border:1px solid rgba(52,211,153,.55)!important;
+  font-size:12px!important;
+  font-weight:800!important;
+  letter-spacing:.04em!important;
+  box-shadow:0 8px 22px rgba(16,185,129,.28),0 0 18px rgba(52,211,153,.18)!important;
+  text-shadow:none!important;
+}
+#btnLcdOn.btn-lcd-on:hover:not(:disabled),
+button#btnLcdOn:hover:not(:disabled){
+  transform:translateY(-1px)!important;
+  box-shadow:0 12px 28px rgba(16,185,129,.38),0 0 24px rgba(52,211,153,.28)!important;
+  filter:saturate(1.08) brightness(1.05);
+}
+.light #btnLcdOn.btn-lcd-on,
+.light button#btnLcdOn{
+  color:#052e1c!important;
+  box-shadow:0 8px 20px rgba(5,150,105,.22)!important;
+}
+
+/* 选文件 + 传输：合并卡片内分隔 */
+.card-burn-file #fileInfo{
+  margin-top:8px;
+  margin-bottom:0;
+}
+.card-burn-file .burn-divider{
+  height:1px;
+  margin:12px 0 10px;
+  background:linear-gradient(90deg,transparent,rgba(167,139,250,.35),rgba(34,211,238,.25),transparent);
+  border:0;
+}
 </style>
 </head>
 <body>
 
+<div class="ui-grain" aria-hidden="true"></div>
 <header>
-  <h1><span class="gradient-text">&#9670; STM IPS Host</span><a href="https://github.com/UnikoZera" target="_blank" class="byline" style="text-decoration:none;color:inherit;cursor:pointer;">Powered by UnikoZera</a></h1>
-  <div style="display:flex;align-items:center;gap:10px;">
-    <button id="themeBtn" onclick="toggleTheme()" style="background:var(--surface3);border:1px solid var(--border);border-radius:6px;color:var(--text2);cursor:pointer;font-size:18px;width:34px;height:34px;padding:0;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .25s;" title="浅色模式" onmouseenter="this.style.borderColor='var(--cyan)'" onmouseleave="this.style.borderColor=''">&#9790;</button>
+  <h1>
+    <span class="brand-mark" aria-hidden="true">&#9670;</span>
+    <span class="gradient-text">STM IPS Host</span>
+    <a href="https://github.com/UnikoZera" target="_blank" class="byline" style="text-decoration:none;color:inherit;cursor:pointer;">Powered by UnikoZera</a>
+    <span class="header-chip" title="Web Serial · USB CDC"><span class="tick"></span> Web Serial</span>
+  </h1>
+  <div class="header-actions">
+    <button id="themeBtn" onclick="toggleTheme()" style="background:var(--surface3);border:1px solid var(--border);border-radius:12px;color:var(--text2);cursor:pointer;font-size:18px;width:36px;height:36px;padding:0;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .25s;" title="浅色模式" onmouseenter="this.style.borderColor='var(--cyan)'" onmouseleave="this.style.borderColor=''">&#9790;</button>
     <div class="status-badge" id="statusBadge">
       <span class="status-dot off" id="statusDot"></span>
       <span id="statusText">脱机</span>
@@ -968,9 +1602,10 @@ header h1 .byline{
 <main>
   <!-- Left: Controls -->
   <div class="panel panel-left" id="leftPanel">
-    <div class="panel-hd">控制面板</div>
+    <div class="panel-hd">控制面板 <span class="hd-sub">HOST</span></div>
     <div class="panel-body">
 
+      <div class="section-label">连接</div>
       <div class="card card-accent">
         <span class="card-title">串口连接</span>
         <button class="btn btn-connect" id="btnConnect" onclick="connectSerial()">&#9889; 连接串口</button>
@@ -993,36 +1628,36 @@ header h1 .byline{
         </div>
       </div>
 
+      <div class="section-label">烧录</div>
       <div class="card">
         <span class="card-title">发送设置</span>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
-          <span style="font-size:11px;color:var(--text2);white-space:nowrap;width:72px;flex-shrink:0;">存储类型</span>
+        <div class="field-row">
+          <span class="field-label">存储类型</span>
           <select id="fileType" style="flex:1;">
             <option value="0x11">大文件 0x11 (扇区对齐)</option>
             <option value="0x45">小文件 0x45 (紧凑存储)</option>
           </select>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
-          <span style="font-size:11px;color:var(--text2);white-space:nowrap;width:72px;flex-shrink:0;">数据块大小</span>
+        <div class="field-row">
+          <span class="field-label">数据块大小</span>
           <input type="number" id="chunkSize" value="512" min="0" max="2048" step="16" style="flex:1;" onchange="this.value=Math.max(0,Math.min(2048,parseInt(this.value)||0))" oninput="this.value=Math.max(0,Math.min(2048,parseInt(this.value)||0))">
-          <span style="font-size:10px;color:var(--text3);flex-shrink:0;">字节</span>
+          <span class="field-hint">字节</span>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:11px;color:var(--text2);white-space:nowrap;width:72px;flex-shrink:0;">文件名</span>
+        <div class="field-row">
+          <span class="field-label">文件名</span>
           <input type="text" id="fileNameInput" value="" maxlength="16" style="flex:1;">
-          <span style="font-size:10px;color:var(--text2);flex-shrink:0;text-align:right;" id="nameByteCount">0 / 16</span>
+          <span class="field-hint" id="nameByteCount">0 / 16</span>
         </div>
       </div>
 
-      <div class="card">
+      <div class="card card-burn-file" style="border-color:rgba(124,77,255,.28);">
+        <span class="card-title">文件与传输</span>
         <button class="btn btn-send file-upload" id="btnPickFile">
           &#128193; 选择文件
           <input type="file" id="fileInput" onchange="onFileSelected(this)">
         </button>
-        <div id="fileInfo" style="font-size:11px;color:var(--text2);margin-top:5px;word-break:break-all;">未选择文件</div>
-      </div>
-
-      <div class="card" style="border-color:rgba(124,77,255,.25);">
+        <div id="fileInfo" style="font-size:11px;color:var(--text2);word-break:break-all;padding:8px 10px;border-radius:10px;background:rgba(0,0,0,.18);border:1px solid var(--border);">未选择文件</div>
+        <div class="burn-divider" aria-hidden="true"></div>
         <div id="lcdSendWarn" class="send-warn" style="display:none;">&#9888; 请先关闭LCD帧流</div>
         <button class="btn btn-send" id="btnStartSend" onclick="userStartSend()" disabled>&#9654; 开始发送</button>
         <button class="btn btn-cancel" id="btnCancelSend" onclick="cancelSend()" style="display:none;margin-top:6px;">&#9646; 取消发送</button>
@@ -1036,15 +1671,17 @@ header h1 .byline{
         </div>
       </div>
 
+      <div class="section-label">设备</div>
       <div class="card">
         <span class="card-title">设备管理</span>
         <button class="btn btn-query" onclick="queryFileList()">&#128260; 刷新文件列表</button>
-        <button class="btn btn-query" onclick="queryBitmap()" style="margin-top:5px;">Flash Map</button>
+        <button class="btn btn-query" onclick="queryBitmap()" style="margin-top:6px;">Flash Map</button>
         <div style="margin-top:6px;">
           <button class="btn btn-danger" id="btnDeleteMenu" onclick="openDeleteModal()">&#128465; 删除文件</button>
         </div>
       </div>
 
+      <div class="section-label">媒体</div>
       <!-- 视频处理器 -->
       <div class="card" id="vpCard">
         <span class="card-title">&#128249; 视频处理器</span>
@@ -1061,7 +1698,7 @@ header h1 .byline{
         
         <div style="margin-bottom:5px;display:flex;align-items:center;gap:10px;">
           <span style="font-size:10.5px;color:var(--text2);flex-shrink:0;">亮度</span>
-          <input type="range" id="vpBrightness" min="10" max="300" value="100" style="flex:1;accent-color:var(--gold);">
+          <input type="range" id="vpBrightness" min="10" max="300" value="100" style="flex:1;">
           <span id="vpBrightnessLabel" style="font-size:11px;color:var(--gold);font-weight:600;min-width:36px;text-align:right;">100%</span>
         </div>
         <!-- 编码方式 -->
@@ -1087,7 +1724,7 @@ header h1 .byline{
         <!-- MJPEG 质量 (仅 MJPEG 模式可见；默认编码) -->
         <div id="vpMjpegQualityGroup" style="margin-bottom:5px;display:flex;align-items:center;gap:10px;">
           <span style="font-size:10.5px;color:var(--text2);flex-shrink:0;">JPEG 质量</span>
-          <input type="range" id="vpMjpegQuality" min="1" max="100" value="70" style="flex:1;accent-color:var(--gold);">
+          <input type="range" id="vpMjpegQuality" min="1" max="100" value="70" style="flex:1;">
           <span id="vpMjpegQualityLabel" style="font-size:11px;color:var(--gold);font-weight:600;min-width:36px;text-align:right;">70</span>
           <span style="font-size:9px;color:var(--text3);flex-shrink:0;">越高画质越好</span>
         </div>
@@ -1103,11 +1740,11 @@ header h1 .byline{
           <div class="progress-bar"><div class="progress-fill" id="vpProgBar" style="background:var(--gold);box-shadow:0 0 10px rgba(255,171,0,.35);"></div></div>
           <div class="progress-text"><span id="vpProgPct"></span><span id="vpProgInfo" style="color:var(--text2);"></span></div>
         </div>
-        <div id="vpResult" style="display:none;margin-top:6px;padding:8px;background:rgba(0,230,118,.04);border:1px solid rgba(0,230,118,.2);border-radius:var(--rad-sm);">
-          <div style="font-size:10.5px;color:var(--green);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:4px;">&#10003; 转换完成</div>
-          <div id="vpResultInfo" style="font-size:11px;color:var(--text2);margin-bottom:6px;"></div>
-          <div id="vpCompressStats" style="font-size:10px;color:var(--text2);margin-bottom:6px;padding:5px 7px;background:rgba(0,188,212,.03);border-radius:4px;text-align:center;"></div>
-          <canvas id="vpPreview" width="160" height="80" style="width:100%;border:1px solid var(--border);border-radius:var(--rad-sm);image-rendering:pixelated;margin-bottom:6px;"></canvas>
+        <div id="vpResult" style="display:none;margin-top:6px;padding:10px;">
+          <div class="vp-result-title">&#10003; 转换完成</div>
+          <div id="vpResultInfo"></div>
+          <div id="vpCompressStats"></div>
+          <canvas id="vpPreview" width="160" height="80" style="width:100%;display:block;image-rendering:pixelated;margin-bottom:6px;"></canvas>
           <div class="btn-row" id="vpBtnRow">
             <button class="btn btn-query" id="vpDownload" onclick="downloadVPResult()" style="font-size:11px;">&#128229; 下载</button>
             <button class="btn btn-query" id="vpSend" onclick="sendVPToDevice()" style="font-size:11px;" disabled>&#9654; 发送到设备</button>
@@ -1122,7 +1759,7 @@ header h1 .byline{
 
   <!-- Center: Log -->
   <div class="panel panel-center">
-    <div class="panel-hd">通信日志 <span style="font-size:10px;color:var(--text3);margin-left:4px;font-weight:400;">(烧录仅记录开始/结束)</span><button class="btn-log-clear" onclick="clearLog()">清除</button></div>
+    <div class="panel-hd">通信日志 <span class="hd-sub">仅关键事件</span><button class="btn-log-clear" onclick="clearLog()">清除</button></div>
     <div class="panel-body" id="logPanelBody">
       <div id="log"></div>
     </div>
@@ -1132,22 +1769,23 @@ header h1 .byline{
 
   <!-- Right: LCD (fixed) + File List (scrollable) -->
   <div class="panel panel-right" id="rightPanel">
-    <div class="panel-hd">LCD 屏幕流</div>
+    <div class="panel-hd">LCD 屏幕流 <span class="hd-sub">160×80</span></div>
     <div class="lcd-fixed" id="lcdCard">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-        <span style="font-size:11px;color:var(--text2);">状态:</span>
-        <span id="lcdStreamStatus" style="font-size:12px;font-weight:600;color:var(--red);">\u25CB 已关闭</span>
+      <div class="lcd-status-row">
+        <span class="lcd-status-pill">状态 · <span id="lcdStreamStatus" style="font-weight:700;color:var(--red);">○ 已关闭</span></span>
       </div>
       <div class="btn-row">
-        <button class="btn btn-query" id="btnLcdOn" onclick="lcdStreamEnable()" style="background:var(--green);color:#000;font-size:11px;">&#9654; 开启</button>
+        <button class="btn btn-lcd-on" id="btnLcdOn" onclick="lcdStreamEnable()">&#9654; 开启</button>
         <button class="btn btn-danger" id="btnLcdOff" onclick="lcdStreamDisable()" style="font-size:11px;">&#9646; 关闭</button>
       </div>
-      <canvas id="lcdCanvas" width="160" height="80" style="width:100%;display:block;border:1px solid var(--border);border-radius:var(--rad-sm);margin-top:6px;image-rendering:pixelated;"></canvas>
+      <div class="lcd-bezel">
+        <canvas id="lcdCanvas" width="160" height="80" style="width:100%;display:block;image-rendering:pixelated;"></canvas>
+      </div>
     </div>
     <div class="panel-hd" style="border-top:1px solid var(--border);">设备文件列表 <span class="hd-badge" id="fileCountBadge"></span></div>
     <div class="panel-body" id="fileListPanelBody">
       <div id="fileList">
-        <div class="empty-state"><span class="icon">&#9783;</span>点击左侧"刷新文件列表"获取</div>
+        <div class="empty-state"><span class="icon">&#9783;</span>点击左侧「刷新文件列表」获取</div>
       </div>
     </div>
   </div>
@@ -1935,28 +2573,45 @@ document.getElementById('fileNameInput').addEventListener('input',function(){
     const sp=document.getElementById(splitterId);
     const pn=document.getElementById(panelId);
     if(!sp||!pn)return;
-    let sx,sw;
-    sp.addEventListener('mousedown',function(e){
+    let sx=0, sw=0, dragging=false;
+    function onDown(e){
+      if(e.button!=null && e.button!==0)return;
       e.preventDefault();
-      sx=e.clientX;sw=pn.getBoundingClientRect().width;
+      e.stopPropagation();
+      const pt=e.touches?e.touches[0]:e;
+      sx=pt.clientX;
+      sw=pn.getBoundingClientRect().width;
+      dragging=true;
       sp.classList.add('active');
-      document.body.style.cursor='col-resize';document.body.style.userSelect='none';
-      function mv(ev){
-        let dx=ev.clientX-sx;
-        let nw=side==='left'?sw+dx:sw-dx;
-        nw=Math.max(260,Math.min(520,nw));
-        pn.style.width=nw+'px';
-      }
-      function up(){
-        sp.classList.remove('active');
-        document.body.style.cursor='';document.body.style.userSelect='';
-        document.removeEventListener('mousemove',mv);
-        document.removeEventListener('mouseup',up);
-        saveAllSettings();
-      }
-      document.addEventListener('mousemove',mv);
-      document.addEventListener('mouseup',up);
-    });
+      document.body.classList.add('is-resizing');
+      document.addEventListener('mousemove',onMove);
+      document.addEventListener('mouseup',onUp);
+      document.addEventListener('touchmove',onMove,{passive:false});
+      document.addEventListener('touchend',onUp);
+    }
+    function onMove(e){
+      if(!dragging)return;
+      if(e.cancelable)e.preventDefault();
+      const pt=e.touches?e.touches[0]:e;
+      let dx=pt.clientX-sx;
+      let nw=side==='left'?sw+dx:sw-dx;
+      nw=Math.max(260,Math.min(560,nw));
+      pn.style.width=nw+'px';
+      pn.style.flex='0 0 auto';
+    }
+    function onUp(){
+      if(!dragging)return;
+      dragging=false;
+      sp.classList.remove('active');
+      document.body.classList.remove('is-resizing');
+      document.removeEventListener('mousemove',onMove);
+      document.removeEventListener('mouseup',onUp);
+      document.removeEventListener('touchmove',onMove);
+      document.removeEventListener('touchend',onUp);
+      saveAllSettings();
+    }
+    sp.addEventListener('mousedown',onDown);
+    sp.addEventListener('touchstart',onDown,{passive:false});
   }
   makeSplitter('splitterL','leftPanel','left');
   makeSplitter('splitterR','rightPanel','right');
@@ -2837,11 +3492,16 @@ async function sendVPToDevice(){
 /* ===== Theme toggle ===== */
 function toggleTheme(){
   const html = document.documentElement;
+  html.classList.add('theme-animating');
   html.classList.toggle('light');
   const isLight = html.classList.contains('light');
   document.getElementById('themeBtn').innerHTML = isLight ? '&#9788;' : '&#9790;';
   document.getElementById('themeBtn').title = isLight ? '切换深色模式' : '切换浅色模式';
   try{ localStorage.setItem('stm_ips_theme', isLight ? 'light' : 'dark'); }catch(e){}
+  window.clearTimeout(toggleTheme._tid);
+  toggleTheme._tid = window.setTimeout(function(){
+    html.classList.remove('theme-animating');
+  }, 480);
 }
 (function initTheme(){
   const saved = (typeof localStorage!=='undefined') ? localStorage.getItem('stm_ips_theme') : null;

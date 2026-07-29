@@ -57,7 +57,7 @@ void lcd_ui_init(void)
 
     // 从文件系统获取视频文件的W25Q地址
     {
-        int16_t idx = find_large_file_by_name("ggg");
+        int16_t idx = find_large_file_by_name("aaa");
         if (idx >= 0)
         {
             large_file_info_t info;
@@ -201,6 +201,34 @@ void lcd_ui_init(void)
       .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_OUT_ELASTIC),
     };
     lcd_anim_start(&label3_anim_color2);
+
+	lcd_anim_config_t video_anim_x = {
+	  .target = &g_video.x,
+	  .start_value = 0,
+	  .end_value = 40,
+	  .duration_ms = 2000,
+	  .delay_ms = 0,
+	  .repeat = true,
+	  .yoyo = true,
+	  .exec_cb = lcd_anim_exec_set_i16,
+	  .done_cb = NULL,
+	  .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
+	};
+	lcd_anim_start(&video_anim_x);
+
+	lcd_anim_config_t video_anim_y = {
+	  .target = &g_video.y,
+	  .start_value = 0,
+	  .end_value = 20,
+	  .duration_ms = 1300,
+	  .delay_ms = 0,
+	  .repeat = true,
+	  .yoyo = true,
+	  .exec_cb = lcd_anim_exec_set_i16,
+	  .done_cb = NULL,
+	  .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
+	};
+	lcd_anim_start(&video_anim_y);
 
     #pragma endregion
 

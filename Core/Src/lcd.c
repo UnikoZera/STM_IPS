@@ -193,7 +193,7 @@ void lcd_init(void)
 	lcd_write_data(0xA0); // 160
 
 	lcd_write_cmd(0x2C);
-    set_lcd_brightness(75);
+    set_lcd_brightness(95);
 }
 
 void set_lcd_brightness(uint8_t brightness)
@@ -851,14 +851,12 @@ void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t heigh
     uint32_t frame_bytes = (uint32_t)width * height * 2;
     if (frame_bytes == 0) return;
 
+    /* 仅源地址/分辨率变化才重置播放进度；x/y 由动画驱动时不应从头重播 */
     if (!s_video_ctx.active ||
-        s_video_ctx.x != x || s_video_ctx.y != y ||
         s_video_ctx.width != width || s_video_ctx.height != height ||
         s_video_ctx.start_addr != w25q_start_addr ||
         s_video_ctx.end_addr != w25q_end_addr)
     {
-        s_video_ctx.x = x;
-        s_video_ctx.y = y;
         s_video_ctx.width = width;
         s_video_ctx.height = height;
         s_video_ctx.start_addr = w25q_start_addr;
@@ -867,6 +865,8 @@ void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t heigh
         s_video_ctx.frame_bytes = frame_bytes;
         s_video_ctx.active = true;
     }
+    s_video_ctx.x = x;
+    s_video_ctx.y = y;
 
     uint32_t done = 0;
     while (done < s_video_ctx.frame_bytes)
@@ -989,8 +989,8 @@ void lcd_play_compressed_video_from_w25q(int16_t x, int16_t y, int16_t width, in
     uint32_t frame_pixels = (uint32_t)width * height;
     if (frame_pixels == 0) return;
 
+    /* x/y 动画移动不重置帧指针，避免“动一下才播一点” */
     bool is_new = (!s_video_ctx.active ||
-                   s_video_ctx.x != x || s_video_ctx.y != y ||
                    s_video_ctx.width != width || s_video_ctx.height != height ||
                    s_video_ctx.start_addr != w25q_start_addr ||
                    s_video_ctx.end_addr != w25q_end_addr);
@@ -1008,8 +1008,6 @@ void lcd_play_compressed_video_from_w25q(int16_t x, int16_t y, int16_t width, in
             return;
         }
 
-        s_video_ctx.x = x;
-        s_video_ctx.y = y;
         s_video_ctx.width = width;
         s_video_ctx.height = height;
         s_video_ctx.start_addr = w25q_start_addr;
@@ -1020,6 +1018,8 @@ void lcd_play_compressed_video_from_w25q(int16_t x, int16_t y, int16_t width, in
         s_video_ctx.rle_chunk_len = 0;
         s_video_ctx.rle_chunk_pos = 0;
     }
+    s_video_ctx.x = x;
+    s_video_ctx.y = y;
 
     // 逐块解码一帧 (支持可变块大小)
     uint32_t done = 0;
