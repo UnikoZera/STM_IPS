@@ -212,14 +212,15 @@ void clear_all_files(void);
 bool storage_is_downloading(void);
 ```
 
-**Asset binding (matches current firmware):**
+**Asset binding (see `lcd_ui.c`; editable):**
 
 ```c
-// large name "photo_t" → still image
+// large name "photo_t" → still image (default)
 int16_t idx = find_large_file_by_name("photo_t");
-// large name "vp_vid"  → video (host VP burn default)
-int16_t vid = find_large_file_by_name("vp_vid");
-// address = start_sector * 4096
+// video name: repo example is "fff"; host VP often defaults to "vp_vid"
+// names must match or the list will show the file but UI will not bind it
+int16_t vid = find_large_file_by_name("fff");
+// address = start_sector * 4096; bound once in lcd_ui_init
 ```
 
 **Small-file compact:**
@@ -247,6 +248,9 @@ CRC: **CRC-16/USB** (same as `lcd_host_web.html`).
 ### 🔗 SPI DMA / EEPROM / CRC
 
 - W25Q: sync R/W + DMA write/read state machine (`w25q_dma_task`)
+  - SPI goes through wrappers: `w25q_spi_transmit` / `transmit_receive` / DMA helpers — **flush RX FIFO first**
+  - Sync reads prefer full-duplex `TransmitReceive` (command + dummy together)
+  - Page program waits SPI BSY before CS high to reduce incomplete latch
 - AT24C: paged buffer API (no DMA)
 - `crc16_usb_packing(data, len, has_crc)`
 
@@ -337,11 +341,14 @@ S4032~4095 256KB User zone
 AT24C @0x0000  storage_fat_t (magic / next / counts / tables / bitmap)
 ```
 
-**Design invariants (current code):**
+**Design invariants & write path (current code — update this when code changes):**
 
-- Large free sectors are **erased then cleared in the bitmap** on delete → new allocations treated as blank; burn path does not erase-before-write.
+- Large free sectors are **erased then cleared in the bitmap** on **delete/abort**.
+- **Download/burn path does not erase-before-write by default** (assumes delete erased sectors; dirty reuse or brown-out can corrupt playback).
+- `flash_write_and_verify`: prefers **`w25q_write_data_dma`**; on DMA start success the packet **returns OK without verify**; next packet waits DMA at entry; only sync fallback runs `memcmp`. Failures report `0x0B`.
 - Small files only append after `small_next_addr`; delete does not rewind next.
 - Large abort/slot-full: free allocated sectors; small abort/slot-full: keep next; holes reclaimed by later compact.
+- ~**5 s** without a new download packet auto-aborts.
 
 ---
 
@@ -359,7 +366,7 @@ Flask transcoding service + **browser Web Serial** host page (`lcd_host_web.html
 | List / delete | `0x20` / `0x19` |
 | Flash bitmap | `0x21` large-zone occupancy UI |
 | LCD stream | `0x10` + receive `0xA0` preview |
-| VP quick burn | default large name `vp_vid`, etc. |
+| VP quick burn | host often defaults to `vp_vid`; must match `lcd_ui.c` binding |
 
 ```bash
 cd lcd_host_web
@@ -400,12 +407,13 @@ openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
 ## 🚀 Quick Start
 
 1. **Flash firmware** to STM32F401RC  
-2. **Power up**: init peripherals → load FAT → `lcd_ui` looks up `photo_t` / `vp_vid`  
+2. **Power up**: init peripherals → load FAT → `lcd_ui` looks up configured image/video names  
 3. **Start host** `lcd_host_web`, connect CDC serial  
-4. **Convert and burn** images/videos (`0x11` large, `0x45` small)  
-5. **Refresh list**; device plays by filename  
+4. **Convert and burn** (`0x11` large, `0x45` small); filename must match `lcd_ui.c`  
+5. **Refresh list**; **reset once** before expecting playback (bind only in `lcd_ui_init`)  
 
-If the list does not respond: check `storage_ok` (reset once if FAT was just created) and free the COM port.
+If the list does not respond: check `storage_ok` (reset if FAT was just created) and free the COM port.  
+If listed but not playing: check bind name, container magic (`MJPG`/`BL`), and whether Flash really programmed.
 
 ---
 
@@ -417,7 +425,7 @@ Edit `find_large_file_by_name("...")` in `Core/Src/lcd_ui.c` to match host burn 
 
 ### Keep the main loop responsive
 
-Long erase/program runs on the protocol path; Flash DMA progress depends on `w25q_dma_task()`—avoid heavy work in ISRs.
+Long erase/program runs on the protocol path; Flash DMA progress depends on `w25q_dma_task()`; while waiting DMA, keep pumping `usb_controller_task()`. Avoid heavy work in ISRs.
 
 ### Format
 
@@ -432,15 +440,29 @@ uint16_t crc = crc16_usb_packing(data, len, false); // compute
 // crc16_usb_packing(frame, frame_len, true);       // verify → 1/0
 ```
 
+### For automation / AI
+
+See root [`AGENT.md`](./AGENT.md): build entry points, protocol pitfalls, fault table, verification checklist.
+
 ---
 
 ## 📘 Docs & Closed-Loop Notes
 
 | Doc | Content |
 |:---|:---|
-| [`docs/storage_host_mcu_flow.md`](./docs/storage_host_mcu_flow.md) | Host↔MCU storage protocol, large/small burn·delete·query·abort flows, FAT change matrix |
+| [`AGENT.md`](./AGENT.md) | Operator/AI handbook and change boundaries |
+| [`docs/storage_host_mcu_flow.md`](./docs/storage_host_mcu_flow.md) | Host↔MCU storage protocol, burn/delete/abort flows, write-path notes |
 
-Current firmware covers chunked ACK, end registration, slot-full errors, write fail `0x0B`, abort `0x15`, download timeout, list/bitmap query. Edge cases (empty file, end-frame timeout policy, no same-name overwrite, delete without dedicated success ACK, etc.) follow source and the doc above.
+Current firmware covers chunked ACK, end registration, slot-full errors, write fail `0x0B` (sync verify path), abort `0x15`, download timeout, list/bitmap query.
+
+**Known edges / risks (as implemented):**
+
+- DMA write success path **does not per-packet verify** — bad data may still get `0xA1`
+- Download path **does not erase-before-write by default**
+- Same-name overwrite is not automatic; delete has no dedicated success ACK (rely on list)
+- Host end-frame timeout policy is implementation-defined
+
+When docs disagree with code, **`Core/Src` wins**.
 
 ---
 

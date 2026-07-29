@@ -276,6 +276,21 @@ void clear_all_files(void)
     storage_fat_save();
 }
 
+void clear_all_files_manual(void)
+{
+    for (uint32_t i = AREA_LARGE_START_SECTOR; i < AREA_LARGE_START_SECTOR + AREA_LARGE_SECTORS; i++)
+    {
+        if (bitmap_test_used(i))
+        {
+            erase_sector(i);
+        }
+    }
+    for (uint16_t i = AREA_SMALL_START_SECTOR; i < AREA_SMALL_START_SECTOR + AREA_SMALL_SECTORS; i++)
+    {
+        erase_sector(i);
+    }
+}
+
 #pragma region 分配器核心
 
 /**

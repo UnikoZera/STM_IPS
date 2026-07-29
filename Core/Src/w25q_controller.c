@@ -1,4 +1,4 @@
-/*
+﻿/*
  * w25q_controller.c
  *
  *  Created on: 2026年3月15日
@@ -6,6 +6,7 @@
  */
 
 #include "w25q_controller.h"
+#include <string.h>
 
 volatile bool w25q_rx_dma_busy = false;
 volatile bool w25q_tx_dma_busy = false;
@@ -17,13 +18,13 @@ volatile bool w25q_tx_dma_busy = false;
 typedef enum
 {
     W25Q_DMA_IDLE = 0,
-    W25Q_DMA_WRITE_PENDING_START,        // [挂起] 收到写请求且Flash正忙，自动排队等待后续调用
-    W25Q_DMA_READ_PENDING_START,         // [挂起] 收到普通读请求，排队等待总线或Flash空闲
+    W25Q_DMA_WRITE_PENDING_START,        // [挂起] 收到写请求且 Flash 正忙，自动排队等待后续调用
+    W25Q_DMA_READ_PENDING_START,         // [挂起] 收到普通读请求，排队等待总线或 Flash 空闲
     W25Q_DMA_FAST_READ_PENDING_START,    // [挂起] 收到快速读请求，排队等待空闲
     W25Q_DMA_WRITE_STARTING,             // [启动] 正在发送写使能和页编程命令
-    W25Q_DMA_WAIT_TX_DONE,               // [传输] 等待SPI DMA写数据搬运到Flash完成
-    W25Q_DMA_WAIT_RX_DONE,               // [传输] 等待SPI DMA读数据搬运到内存完成
-    W25Q_DMA_WAIT_FLASH_READY,           // [烧录] 等待Flash内部将单页数据固化入介质
+    W25Q_DMA_WAIT_TX_DONE,               // [传输] 等待 SPI DMA 写数据搬运到 Flash 完成
+    W25Q_DMA_WAIT_RX_DONE,               // [传输] 等待 SPI DMA 读数据搬运到内存完成
+    W25Q_DMA_WAIT_FLASH_READY,           // [烧录] 等待 Flash 内部将单页数据固化入介质
     W25Q_DMA_DONE,                       // [完成] 本次请求的所有页面写入或读取完成
     W25Q_DMA_ERROR                       // [错误] 发生通信或重试超时错误
 } w25q_dma_state_t;
@@ -40,29 +41,89 @@ typedef struct
 
 static w25q_dma_context_t w25q_dma_ctx = {0U, NULL, 0U, 0U, 0U, W25Q_DMA_IDLE};
 
-// 可能不太有用
-// static void w25q_spi_transmit_receive(uint8_t *txData, uint8_t *rxData, uint16_t size) // not using dma for now, just base functions.
-// {
-//     HAL_SPI_TransmitReceive(&hspi2, txData, rxData, size, W25Q_TIMEOUT);
-// }
-
-static void w25q_spi_transmit(uint8_t *pData, uint16_t size) // not using dma for now, just base functions.
+/* 清空 RX FIFO + 清除 OVR 错误标志 */
+static inline void w25q_flush_rx_fifo(void)
 {
-    HAL_SPI_Transmit(&hspi2, pData, size, W25Q_TIMEOUT);
+    while (SPI2->SR & SPI_FLAG_RXNE) { (void)SPI2->DR; }
+    (void)SPI2->SR;
+    (void)SPI2->DR;
 }
 
-static void w25q_spi_receive(uint8_t *pData, uint16_t size) // not using dma for now, just base functions.
+/* ---- SPI 同步/DMA 统一封装：统一先 flush RX FIFO，避免 OVR/脏数据 ---- */
+
+static HAL_StatusTypeDef w25q_spi_transmit(uint8_t *pData, uint16_t size)
 {
-    HAL_SPI_Receive(&hspi2, pData, size, W25Q_TIMEOUT);
+    if (pData == NULL || size == 0U)
+    {
+        return HAL_ERROR;
+    }
+    w25q_flush_rx_fifo();
+    return HAL_SPI_Transmit(&hspi2, pData, size, W25Q_TIMEOUT);
+}
+
+/* 纯接收（当前读路径多用全双工 TransmitReceive，此接口保留备用） */
+__attribute__((unused))
+static HAL_StatusTypeDef w25q_spi_receive(uint8_t *pData, uint16_t size)
+{
+    if (pData == NULL || size == 0U)
+    {
+        return HAL_ERROR;
+    }
+    w25q_flush_rx_fifo();
+    return HAL_SPI_Receive(&hspi2, pData, size, W25Q_TIMEOUT);
+}
+
+static HAL_StatusTypeDef w25q_spi_transmit_receive(uint8_t *pTxData, uint8_t *pRxData, uint16_t size)
+{
+    if (pTxData == NULL || pRxData == NULL || size == 0U)
+    {
+        return HAL_ERROR;
+    }
+    w25q_flush_rx_fifo();
+    return HAL_SPI_TransmitReceive(&hspi2, pTxData, pRxData, size, W25Q_TIMEOUT);
+}
+
+/** 可指定超时的全双工传输（状态轮询等场景） */
+static HAL_StatusTypeDef w25q_spi_transmit_receive_to(uint8_t *pTxData, uint8_t *pRxData,
+                                                      uint16_t size, uint32_t timeout_ms)
+{
+    if (pTxData == NULL || pRxData == NULL || size == 0U)
+    {
+        return HAL_ERROR;
+    }
+    w25q_flush_rx_fifo();
+    return HAL_SPI_TransmitReceive(&hspi2, pTxData, pRxData, size, timeout_ms);
 }
 
 static HAL_StatusTypeDef w25q_dma_transmit(uint8_t *pData, uint16_t size)
 {
+    if (pData == NULL || size == 0U)
+    {
+        return HAL_ERROR;
+    }
+    w25q_flush_rx_fifo();
     return HAL_SPI_Transmit_DMA(&hspi2, pData, size);
+}
+
+/* 全双工 DMA（备用；当前写路径用 TX DMA + 同步命令） */
+__attribute__((unused))
+static HAL_StatusTypeDef w25q_dma_transmit_receive(uint8_t *pTxData, uint8_t *pRxData, uint16_t size)
+{
+    if (pTxData == NULL || pRxData == NULL || size == 0U)
+    {
+        return HAL_ERROR;
+    }
+    w25q_flush_rx_fifo();
+    return HAL_SPI_TransmitReceive_DMA(&hspi2, pTxData, pRxData, size);
 }
 
 static HAL_StatusTypeDef w25q_dma_receive(uint8_t *pData, uint16_t size)
 {
+    if (pData == NULL || size == 0U)
+    {
+        return HAL_ERROR;
+    }
+    w25q_flush_rx_fifo();
     return HAL_SPI_Receive_DMA(&hspi2, pData, size);
 }
 
@@ -75,23 +136,19 @@ static bool w25q_is_transfer_range_valid(uint32_t address, uint32_t size)
 
 static bool w25q_try_read_status_reg1(uint8_t *status, uint32_t timeout_ms)
 {
-    uint8_t cmd = W25Q_ReadStatusReg1;
-
+    uint8_t cmd[2] = {W25Q_ReadStatusReg1, 0xFF};
+    if (status == NULL)
+    {
+        return false;
+    }
     W25Q_CS_LOW();
-
-    if (HAL_SPI_Transmit(&hspi2, &cmd, 1, timeout_ms) != HAL_OK)
+    if (w25q_spi_transmit_receive_to(cmd, cmd, 2, timeout_ms) != HAL_OK)
     {
         W25Q_CS_HIGH();
         return false;
     }
-
-    if (HAL_SPI_Receive(&hspi2, status, 1, timeout_ms) != HAL_OK)
-    {
-        W25Q_CS_HIGH();
-        return false;
-    }
-
     W25Q_CS_HIGH();
+    *status = cmd[1]; /* cmd[0] 命令回显, cmd[1] 实际状态 */
     return true;
 }
 
@@ -113,18 +170,22 @@ void w25q_write_disable(void)
     W25Q_CS_HIGH();
 }
 
-void w25q_read_status_reg1(uint8_t *status) // 这里直接调用带超时的函数，避免在SPI异常时长时间阻塞
+void w25q_read_status_reg1(uint8_t *status) // 直接调用带超时的函数，避免 SPI 异常时长时阻塞
 {
     (void)w25q_try_read_status_reg1(status, W25Q_TIMEOUT);
 }
 
 void w25q_read_status_reg2(uint8_t *status)
 {
+    uint8_t cmd[2] = {W25Q_ReadStatusReg2, 0xFF};
+    if (status == NULL)
+    {
+        return;
+    }
     W25Q_CS_LOW();
-    uint8_t cmd = W25Q_ReadStatusReg2;
-    w25q_spi_transmit(&cmd, 1);
-    w25q_spi_receive(status, 1);
+    (void)w25q_spi_transmit_receive(cmd, cmd, 2);
     W25Q_CS_HIGH();
+    *status = cmd[1]; /* cmd[0] 是命令回显, cmd[1] 是状态寄存器值 */
 }
 
 static bool w25q_is_flash_busy(void)
@@ -155,16 +216,20 @@ void w25q_check_busy_nontimeout(void)
     } while ((status & 0x01) != 0);
 }
 
-// 读取设备ID
+// 读取设备 ID
 uint32_t w25q_read_id(void)
 {
+    uint8_t cmd[4] = {W25Q_JedecDeviceID, 0xFF, 0xFF, 0xFF};
+    uint8_t resp[4] = {0};
     W25Q_CS_LOW();
-    uint8_t cmd = W25Q_JedecDeviceID;
-    uint8_t id_bytes[3];
-    w25q_spi_transmit(&cmd, 1);
-    w25q_spi_receive(id_bytes, 3);
+    if (w25q_spi_transmit_receive(cmd, resp, 4) != HAL_OK)
+    {
+        W25Q_CS_HIGH();
+        return 0U;
+    }
     W25Q_CS_HIGH();
-    return ((uint32_t)id_bytes[0] << 16) | ((uint32_t)id_bytes[1] << 8) | (uint32_t)id_bytes[2]; // return the device ID
+    /* resp[0] 是命令回显(0x9F)，[1..3] 是 3 字节 Device ID */
+    return ((uint32_t)resp[1] << 16) | ((uint32_t)resp[2] << 8) | (uint32_t)resp[3];
 }
 
 // FIXME: 如果有人用的不是 w25q128
@@ -215,6 +280,11 @@ void w25q_page_program(uint32_t address, uint8_t *data, uint16_t size)
     cmd[3] = address & 0xFF;
     w25q_spi_transmit(cmd, 4);
     w25q_spi_transmit(data, size);
+    /* 轮询等待：等 SPI 移完最后一字节再拉 CS，否则 W25Q 锁存不完整 */
+    {
+        volatile uint32_t cnt = 50000;
+        while (__HAL_SPI_GET_FLAG(&hspi2, SPI_FLAG_BSY) != RESET && --cnt) {}
+    }
     W25Q_CS_HIGH();
     w25q_check_busy();
 }
@@ -237,31 +307,56 @@ void w25q_write_data(uint32_t address, uint8_t *data, uint32_t size)
     }
 }
 
+/* 4 字节命令 + 最多 2048 字节数据 = 2052，FAST_READ_BUF_SIZE(2053) 够用 */
+/* 全双工读共用缓冲 */
+#define FAST_READ_BUF_SIZE (5U + W25Q_PAGE_SIZE * 8U)
+static uint8_t fast_read_buf[FAST_READ_BUF_SIZE];
+
 void w25q_read_data(uint32_t address, uint8_t *data, uint32_t size)
 {
-    uint8_t cmd[4];
-    cmd[0] = W25Q_ReadData;
-    cmd[1] = (address >> 16) & 0xFF;
-    cmd[2] = (address >> 8) & 0xFF;
-    cmd[3] = address & 0xFF;
+    uint16_t total = (uint16_t)(4U + size);
+    if (total > FAST_READ_BUF_SIZE) return;
+
+    fast_read_buf[0] = W25Q_ReadData;
+    fast_read_buf[1] = (uint8_t)(address >> 16);
+    fast_read_buf[2] = (uint8_t)(address >> 8);
+    fast_read_buf[3] = (uint8_t)(address);
+    memset(&fast_read_buf[4], 0xFF, size);
+
     W25Q_CS_LOW();
-    w25q_spi_transmit(cmd, 4);
-    w25q_spi_receive(data, size);
+    if (w25q_spi_transmit_receive(fast_read_buf, fast_read_buf, total) != HAL_OK)
+    {
+        W25Q_CS_HIGH();
+        return;
+    }
     W25Q_CS_HIGH();
+
+    memcpy(data, &fast_read_buf[4], size);
 }
+
+/* 全双工 FastRead 共用缓冲：5 字节命令 + 最多 8 页(2048 字节)数据 */
 
 void w25q_fast_read_data(uint32_t address, uint8_t *data, uint32_t size)
 {
-    uint8_t cmd[5];
-    cmd[0] = W25Q_FastReadData;
-    cmd[1] = (address >> 16) & 0xFF;
-    cmd[2] = (address >> 8) & 0xFF;
-    cmd[3] = address & 0xFF;
-    cmd[4] = W25Q_DUMMY_BYTE;
+    uint16_t total = (uint16_t)(5U + size);
+    if (total > FAST_READ_BUF_SIZE) return;
+
+    fast_read_buf[0] = W25Q_FastReadData;
+    fast_read_buf[1] = (uint8_t)(address >> 16);
+    fast_read_buf[2] = (uint8_t)(address >> 8);
+    fast_read_buf[3] = (uint8_t)(address);
+    fast_read_buf[4] = W25Q_DUMMY_BYTE;
+    memset(&fast_read_buf[5], 0xFF, size);
+
     W25Q_CS_LOW();
-    w25q_spi_transmit(cmd, 5);
-    w25q_spi_receive(data, size);
+    if (w25q_spi_transmit_receive(fast_read_buf, fast_read_buf, total) != HAL_OK)
+    {
+        W25Q_CS_HIGH();
+        return;
+    }
     W25Q_CS_HIGH();
+
+    memcpy(data, &fast_read_buf[5], size);
 }
 
 #pragma endregion
@@ -275,7 +370,7 @@ static bool w25q_is_dma_active(void)
            (w25q_dma_ctx.state != W25Q_DMA_ERROR);
 }
 
-// 在SPI DMA传输过程中发生错误时调用，执行必要的状态复位和错误记录
+// 在 SPI DMA 传输过程中发生错误时调用，执行必要的状态复位和错误记录
 static void w25q_set_dma_error(void)
 {
     (void)HAL_SPI_DMAStop(&hspi2);
@@ -313,7 +408,7 @@ static bool w25q_start_dma_read_internal(uint8_t cmd_type)
 
     W25Q_CS_LOW();
 
-    if (HAL_SPI_Transmit(&hspi2, cmd, cmd_len, W25Q_TIMEOUT) != HAL_OK)
+    if (w25q_spi_transmit(cmd, cmd_len) != HAL_OK)
     {
         W25Q_CS_HIGH();
         return false;
@@ -407,7 +502,7 @@ static bool w25q_start_page_program_dma(uint32_t address, uint8_t *data, uint16_
     
     W25Q_CS_LOW();
 
-    if (HAL_SPI_Transmit(&hspi2, cmd, 4, W25Q_TIMEOUT) != HAL_OK)
+    if (w25q_spi_transmit(cmd, 4) != HAL_OK)
     {
         W25Q_CS_HIGH();
         return false;

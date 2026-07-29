@@ -115,6 +115,7 @@ int main(void)
   bool storage_ok = storage_manager_init();
 
   // clear_all_files(); // 注意！ 这个函数会清空所有文件，谨慎使用！ 你可以在调试阶段使用它来重置存储状态，但在正常使用时请注释掉以避免误删数据。
+  // clear_all_files_manual();
 
   lcd_ui_init();
   
@@ -146,6 +147,7 @@ int main(void)
       lcd_draw_string(10, 30, RED, BLACK, 8, "STORAGE FAIL"); // 存储管理器初始化失败，可能导致文件操作相关功能无法使用，但其他功能可能不受影响
     }
     // lcd_draw_string(10, 50, YELLOW, BLACK, 8, "STM IPS"); // 显示标题，确认系统至少部分功能正常
+
 
     usb_controller_task(&g_usb_controller);
 

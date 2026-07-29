@@ -212,14 +212,15 @@ void clear_all_files(void);
 bool storage_is_downloading(void);
 ```
 
-**资源绑定示例（与当前固件一致）**：
+**资源绑定示例（以 `lcd_ui.c` 为准，可改）**：
 
 ```c
-// 大文件名 "photo_t" → 图片
+// 大文件名 "photo_t" → 图片（默认）
 int16_t idx = find_large_file_by_name("photo_t");
-// 大文件名 "vp_vid"  → 视频（上位机 VP 烧录默认名）
-int16_t vid = find_large_file_by_name("vp_vid");
-// 地址 = start_sector * 4096
+// 大文件名：当前仓库示例为 "fff"；上位机 VP 常默认 "vp_vid"
+// 二者必须一致，否则列表有文件但不会挂到播放层
+int16_t vid = find_large_file_by_name("fff");
+// 地址 = start_sector * 4096；仅在 lcd_ui_init 绑定一次
 ```
 
 **小文件 compact 要点**：
@@ -247,6 +248,9 @@ CRC：**CRC-16/USB**（与上位机 `lcd_host_web.html` 一致）。
 ### 🔗 SPI DMA / EEPROM / CRC
 
 - W25Q：同步读写 + DMA 写/读状态机（`w25q_dma_task`）
+  - SPI 经统一封装：`w25q_spi_transmit` / `transmit_receive` / DMA 变体，**先 flush RX FIFO** 再访问
+  - 同步读优先全双工 `TransmitReceive`（命令与 dummy 一并发送）
+  - 页编程在拉高 CS 前等待 SPI BSY，降低锁存不完整风险
 - AT24C：页写缓冲 API（无 DMA）
 - `crc16_usb_packing(data, len, has_crc)`
 
@@ -337,11 +341,14 @@ S4032~4095 256KB 用户区
 AT24C  @0x0000  storage_fat_t（magic / next / counts / tables / bitmap）
 ```
 
-**设计不变量（当前实现立场）**：
+**设计不变量与写路径（当前实现立场，改代码后请同步本文）**：
 
-- 大文件空闲扇区在删除路径上 **先 erase 再清 bit** → 新分配区可视为空白，烧录路径不写前擦除。
+- 大文件空闲扇区在**删除/中止**路径上 **先 erase 再清 bit**。
+- **下载烧录路径默认不写前擦除**（依赖删除时已擦净；复用脏扇区或异常断电后可能花屏/校验失败）。
+- `flash_write_and_verify`：**优先 `w25q_write_data_dma`**；DMA 启动成功则本包**立即返回成功且不回读**，下一块在函数入口等待 DMA；仅同步回退路径做 `memcmp`。写失败上报 `0x0B`。
 - 小文件只在 `small_next_addr` 之后追加；删除不回退 next。
 - 大文件中止/槽满：释放已分配扇区；小文件中止/槽满：保持 next，死区靠后续 compact。
+- 下载约 **5s** 无新包自动中止回滚。
 
 ---
 
@@ -359,7 +366,7 @@ Flask 转码服务 + **浏览器 Web Serial** 主机页（`lcd_host_web.html`）
 | 文件列表/删除 | `0x20` / `0x19` |
 | Flash 位图 | `0x21` 可视化大文件区占用 |
 | LCD 流 | `0x10` + 接收 `0xA0` 预览 |
-| VP 快捷烧录 | 默认大文件名 `vp_vid` 等 |
+| VP 快捷烧录 | 上位机常默认名 `vp_vid`；需与 `lcd_ui.c` 绑定名一致 |
 
 ```bash
 cd lcd_host_web
@@ -400,12 +407,13 @@ openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
 ## 🚀 快速上手
 
 1. **烧录固件**到 STM32F401RC  
-2. **上电**：初始化外设 → 加载 FAT → `lcd_ui` 查找 `photo_t` / `vp_vid`  
+2. **上电**：初始化外设 → 加载 FAT → `lcd_ui` 按配置查找图片/视频文件名  
 3. **启动上位机** `lcd_host_web`，连接 CDC 串口  
-4. **转码并烧录**图片/视频（大文件选 `0x11`，小文件 `0x45`）  
-5. **刷新列表**确认；设备侧按文件名播放  
+4. **转码并烧录**图片/视频（大文件 `0x11`，小文件 `0x45`）；文件名与 `lcd_ui.c` 一致  
+5. **刷新列表**确认；**复位一次**后再看播放（绑定仅在 `lcd_ui_init`）  
 
-若列表无响应：确认 `storage_ok`（必要时复位一次完成 FAT 建表），并关闭冲突的串口占用。
+若列表无响应：确认 `storage_ok`（必要时复位完成 FAT 建表），并关闭冲突串口占用。  
+若列表有、不播：检查绑定名、容器 magic（`MJPG`/`BL`）、以及 Flash 是否真正写成功。
 
 ---
 
@@ -417,7 +425,7 @@ openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
 
 ### 主循环勿阻塞
 
-长时间擦写在协议处理路径内；Flash DMA 进度依赖 `w25q_dma_task()`，勿在中断里做重活。
+长时间擦写在协议处理路径内；Flash DMA 进度依赖 `w25q_dma_task()`；等待 DMA 时宜继续 `usb_controller_task()`，勿在中断里做重活。
 
 ### 格式化
 
@@ -432,15 +440,29 @@ uint16_t crc = crc16_usb_packing(data, len, false); // 计算
 // crc16_usb_packing(frame, frame_len, true);       // 校验 → 1/0
 ```
 
+### 给自动化 / AI
+
+见仓库根目录 [`AGENT.md`](./AGENT.md)：编译入口、协议注意点、故障速查、验证清单。
+
 ---
 
 ## 📘 文档与闭环说明
 
 | 文档 | 内容 |
 |:---|:---|
-| [`docs/storage_host_mcu_flow.md`](./docs/storage_host_mcu_flow.md) | Host↔MCU 存储协议、大/小文件烧录·删除·查询·中止流程图与 FAT 变更矩阵 |
+| [`AGENT.md`](./AGENT.md) | 面向协作者/AI 的操作手册与改动边界 |
+| [`docs/storage_host_mcu_flow.md`](./docs/storage_host_mcu_flow.md) | Host↔MCU 存储协议、烧录/删除/中止流程与写路径说明 |
 
-当前实现已覆盖：分包 ACK、结束登记、槽满错误、写失败 `0x0B`、中止 `0x15`、下载超时保护、列表/位图查询。边角行为（空文件、结束帧超时策略、同名不覆盖、删除无独立成功 ACK 等）以源码与上述文档为准。
+当前实现已覆盖：分包 ACK、结束登记、槽满错误、写失败 `0x0B`（同步路径校验失败）、中止 `0x15`、下载超时保护、列表/位图查询。
+
+**已知边角 / 风险（实现现状）**：
+
+- DMA 写成功路径**不逐包回读**，坏数据仍可能 `0xA1`  
+- 下载路径**默认不写前擦除**  
+- 同名文件不自动覆盖；删除无独立成功 ACK（依赖后续查询）  
+- 上位机结束帧超时策略以实现为准  
+
+文档与源码冲突时以 **`Core/Src` 当前源码** 为准。
 
 ---
 
