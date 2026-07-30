@@ -703,7 +703,7 @@ void lcd_draw_picture_layer(void *ctx)
 		return;
 	}
 
-	lcd_dma_draw_picture(pic->x, pic->y, pic->width, pic->height, pic->addr);
+	lcd_dma_draw_picture(pic->x, pic->y, 1, 1, pic->addr);
 }
 
 void lcd_draw_video_frame_layer(void *ctx)
@@ -722,7 +722,7 @@ void lcd_draw_video_frame_layer(void *ctx)
 		return;
 	}
 
-	lcd_dma_draw_video_frame(frame->x, frame->y, frame->width, frame->height, frame->start_addr, frame->end_addr);
+	lcd_dma_draw_video_frame(frame->x, frame->y, 1, 1, frame->start_addr, frame->end_addr);
 }
 
 #pragma endregion

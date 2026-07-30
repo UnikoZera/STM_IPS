@@ -772,6 +772,36 @@ static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t 
 
     return false;
 }
+
+/**
+ * @brief 从 W25Q 文件容器头读取图像尺寸
+ *
+ * 支持 MJPEG 和 RAW5 容器（14B 标准头，[6..9] 为 width/height LE）。
+ * 若文件无有效容器头，返回 0xFFFF 表示未知。
+ *
+ * @param data_addr  W25Q 中文件数据的起始地址
+ * @param p_width    输出：宽度（未知时填 0xFFFF）
+ * @param p_height   输出：高度（未知时填 0xFFFF）
+ */
+static void read_file_dimensions(uint32_t data_addr, uint16_t *p_width, uint16_t *p_height)
+{
+    uint8_t hdr[14];
+    *p_width = 0xFFFF;
+    *p_height = 0xFFFF;
+
+    if (!w25q_fast_read_verified(data_addr, hdr, 14))
+        return;
+
+    /* MJPEG: magic "MJPG", RAW5: magic "RAW5" */
+    bool is_mjpeg = (hdr[0] == 'M' && hdr[1] == 'J' && hdr[2] == 'P' && hdr[3] == 'G');
+    bool is_raw5  = (hdr[0] == 'R' && hdr[1] == 'A' && hdr[2] == 'W' && hdr[3] == '5');
+
+    if (is_mjpeg || is_raw5)
+    {
+        *p_width  = (uint16_t)hdr[6] | ((uint16_t)hdr[7] << 8);
+        *p_height = (uint16_t)hdr[8] | ((uint16_t)hdr[9] << 8);
+    }
+}
 #pragma endregion
 
 #pragma region 命令处理核心
@@ -1052,8 +1082,9 @@ static void process_host_command(void)
      *   文件记录: [rLen(1B)] [tag(1B)] [file_index(1B)] [name_len(1B)] [filename(NB)]
      *             [addr/sector(4B LE)] [size(4B LE)]
      *   大文件额外: sector_count(4B LE)
-     *   small: rLen = 12 + name_len, tag bit7=0
-     *   large: rLen = 16 + name_len, tag bit7=1
+     *   通用额外: [width(2B LE)] [height(2B LE)] — 未知尺寸填 0xFFFF
+     *   small: rLen = 16 + name_len, tag bit7=0
+     *   large: rLen = 20 + name_len, tag bit7=1
      * ================================================================== */
     case CMD_QUERY_FILE_LIST:
     {
@@ -1100,9 +1131,13 @@ static void process_host_command(void)
             if (!global_fat.small_files[i].is_valid)
                 continue;
             uint8_t namelen = (uint8_t)strlen(global_fat.small_files[i].filename);
-            uint8_t record_len = 12 + namelen;
+            uint8_t record_len = 16 + namelen; // 12(固定头) + 4(width/height) + namelen
             if (idx + record_len > sizeof(file_list_buffer))
                 break;
+
+            uint16_t img_w, img_h;
+            read_file_dimensions(global_fat.small_files[i].start_address, &img_w, &img_h);
+
             file_list_buffer[idx++] = record_len;
             file_list_buffer[idx++] = (0 << 7) | (global_fat.small_files[i].file_type & 0x7F);
             file_list_buffer[idx++] = i;
@@ -1113,6 +1148,10 @@ static void process_host_command(void)
             idx += 4;
             memcpy(&file_list_buffer[idx], &global_fat.small_files[i].size, 4);
             idx += 4;
+            memcpy(&file_list_buffer[idx], &img_w, 2);
+            idx += 2;
+            memcpy(&file_list_buffer[idx], &img_h, 2);
+            idx += 2;
             entry_count++;
         }
 
@@ -1121,9 +1160,13 @@ static void process_host_command(void)
             if (!global_fat.large_files[i].is_valid)
                 continue;
             uint8_t namelen = (uint8_t)strlen(global_fat.large_files[i].filename);
-            uint8_t record_len = 16 + namelen; // 12 字节固定头 + 4(sector_count) + namelen
+            uint8_t record_len = 20 + namelen; // 12(固定头) + 4(sector_count) + 4(width/height) + namelen
             if (idx + record_len > sizeof(file_list_buffer))
                 break;
+
+            uint16_t img_w, img_h;
+            read_file_dimensions(global_fat.large_files[i].start_sector * W25Q_SECTOR_SIZE, &img_w, &img_h);
+
             file_list_buffer[idx++] = record_len;
             file_list_buffer[idx++] = (1 << 7) | (global_fat.large_files[i].file_type & 0x7F);
             file_list_buffer[idx++] = i;
@@ -1134,9 +1177,12 @@ static void process_host_command(void)
             idx += 4;
             memcpy(&file_list_buffer[idx], &global_fat.large_files[i].size, 4);
             idx += 4;
-            // sector_count
             memcpy(&file_list_buffer[idx], &global_fat.large_files[i].sector_count, 4);
             idx += 4;
+            memcpy(&file_list_buffer[idx], &img_w, 2);
+            idx += 2;
+            memcpy(&file_list_buffer[idx], &img_h, 2);
+            idx += 2;
             entry_count++;
         }
 

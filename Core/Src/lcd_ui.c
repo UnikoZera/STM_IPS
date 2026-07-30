@@ -47,8 +47,6 @@ void lcd_ui_init(void)
 			{
 				g_picture.x = 0;
 				g_picture.y = 0;
-				g_picture.width = 31;
-				g_picture.height = 41;
 				g_picture.addr = info.start_sector * 4096;
 			}
 		}
@@ -56,7 +54,7 @@ void lcd_ui_init(void)
 
 	// 从文件系统获取视频文件的W25Q地址
 	{
-		int16_t idx = find_large_file_by_name("nnn");
+		int16_t idx = find_large_file_by_name("yyy");
 		if (idx >= 0)
 		{
 			large_file_info_t info;
@@ -64,8 +62,6 @@ void lcd_ui_init(void)
 			{
 				g_video.x = 0;
 				g_video.y = 0;
-				g_video.width = 82;
-				g_video.height = 62;
 				g_video.start_addr = info.start_sector * 4096;
 				g_video.end_addr = g_video.start_addr + info.size;
 			}

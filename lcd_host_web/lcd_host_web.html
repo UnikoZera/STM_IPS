@@ -2004,11 +2004,20 @@ function parseList(payload){
     const name=new TextDecoder('ascii').decode(payload.slice(idx+4,idx+4+nLen)).replace(/\0/g,'');
     const addr=new DataView(payload.buffer,payload.byteOffset+idx+4+nLen,4).getUint32(0,true);
     const size=new DataView(payload.buffer,payload.byteOffset+idx+8+nLen,4).getUint32(0,true);
-    let sectorCount=0;
+    let sectorCount=0, imgW=0xFFFF, imgH=0xFFFF;
     if(zn==='large'&&idx+16+nLen<=payload.length){
       sectorCount=new DataView(payload.buffer,payload.byteOffset+idx+12+nLen,4).getUint32(0,true);
+      // width/height at offset idx+16+nLen (if rLen >= 20+nLen)
+      if(idx+20+nLen<=payload.length){
+        imgW=new DataView(payload.buffer,payload.byteOffset+idx+16+nLen,2).getUint16(0,true);
+        imgH=new DataView(payload.buffer,payload.byteOffset+idx+18+nLen,2).getUint16(0,true);
+      }
+    }else if(zn==='small'&&idx+16+nLen<=payload.length){
+      // width/height at offset idx+12+nLen (if rLen >= 16+nLen)
+      imgW=new DataView(payload.buffer,payload.byteOffset+idx+12+nLen,2).getUint16(0,true);
+      imgH=new DataView(payload.buffer,payload.byteOffset+idx+14+nLen,2).getUint16(0,true);
     }
-    files.push({zn,zName:zn==='large'?'大文件':'小文件',fType,fi,name,addr,size,sectorCount});
+    files.push({zn,zName:zn==='large'?'大文件':'小文件',fType,fi,name,addr,size,sectorCount,imgW,imgH});
     idx+=rLen;
   }
 
@@ -2061,7 +2070,8 @@ function openFileDetail(f){
     +'<div class="fd-row"><span class="fd-label">类型代码</span><span class="fd-value">0x'+f.fType.toString(16).toUpperCase().padStart(2,'0')+'</span></div>'
     +'<div class="fd-row"><span class="fd-label">文件大小</span><span class="fd-value">'+szFormatted+'</span></div>'
     +'<div class="fd-row"><span class="fd-label">地址/扇区</span><span class="fd-value">'+addrStr+'</span></div>'
-    + (f.zn==='large'?'<div class="fd-row"><span class="fd-label">占用扇区</span><span class="fd-value">#'+f.addr+' ~ #'+(f.addr+f.sectorCount-1)+' ('+f.sectorCount+' sectors)</span></div>':'');
+    + (f.zn==='large'?'<div class="fd-row"><span class="fd-label">占用扇区</span><span class="fd-value">#'+f.addr+' ~ #'+(f.addr+f.sectorCount-1)+' ('+f.sectorCount+' sectors)</span></div>':'')
+    + (f.imgW!==undefined&&f.imgW!==0xFFFF&&f.imgW>0?'<div class="fd-row"><span class="fd-label">图像尺寸</span><span class="fd-value">'+f.imgW+' \u00D7 '+f.imgH+' px</span></div>':'');
   $('fileDetailModal').style.display='flex';
 }
 function openDeleteModal(){
