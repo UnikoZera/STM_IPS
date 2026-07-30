@@ -51,7 +51,7 @@
 |:---|:---|:---|
 | `Core/` | C (STM32 HAL) | LCD、动画、视频解码、存储管理、USB 协议 |
 | `USB_DEVICE/` | STM32 USB Device | USB CDC 虚拟串口 |
-| `lcd_host_web/` | Python Flask + HTML5 + Web Serial | 转码、串口烧录、文件管理、位图可视化 |
+| `lcd_host_web/` | Electron + Svelte + 本地 FFmpeg | 转码、串口烧录、文件管理、位图与 LCD 预览 |
 | `feature_tester/` | C + Python | 串口回环 / RGB565 校验 |
 | `docs/` | Markdown | 上下位机存储协议与流程说明 |
 
@@ -243,7 +243,7 @@ CDC 上自定义帧。设备→主机：
 [0xBB][0x44][CMD][TOTAL_SIZE LE 4B][PAYLOAD_LEN LE 2B][DATA...][CRC16 LE]
 ```
 
-CRC：**CRC-16/USB**（与上位机 `lcd_host_web.html` 一致）。
+CRC：**CRC-16/USB**（与 Electron 上位机 `lcd_host_web/src/lib/protocol.js` 一致）。
 
 ### 🔗 SPI DMA / EEPROM / CRC
 
@@ -354,29 +354,33 @@ AT24C  @0x0000  storage_fat_t（magic / next / counts / tables / bitmap）
 
 ## 🛠️ 上位机工具
 
-### 🌐 `lcd_host_web/`
+### 🖥️ `lcd_host_web/desktop/`
 
-Flask 转码服务 + **浏览器 Web Serial** 主机页（`lcd_host_web.html`）。
+Electron + Svelte 桌面上位机；通过主进程调用本地 FFmpeg 转码，不依赖 Python、Flask 或本地 HTTP 服务。
 
 | 能力 | 说明 |
 |:---|:---|
-| 图片/视频转码 | → RGB565 / BL / MJPEG 等 |
+| 图片/视频转码 | → RGB565 / MJPEG |
 | 串口烧录 | `0x11`/`0x45` 分包 + `0x14` 结束 |
 | 取消传输 | `0x15` 通知 MCU 回滚 |
 | 文件列表/删除 | `0x20` / `0x19` |
 | Flash 位图 | `0x21` 可视化大文件区占用 |
 | LCD 流 | `0x10` + 接收 `0xA0` 预览 |
-| VP 快捷烧录 | 上位机常默认名 `vp_vid`；需与 `lcd_ui.c` 绑定名一致 |
 
 ```bash
-cd lcd_host_web
-pip install -r requirements.txt
-python server.py
-# 浏览器打开页面（Chrome/Edge + Web Serial）
-# 也可使用打包入口 STM_IPS_Host.bat / launcher.py
+cd lcd_host_web/desktop
+pnpm install
+pnpm dev
 ```
 
-> 需 **FFmpeg** 做视频管线。详细协议时序见 `docs/storage_host_mcu_flow.md`。
+构建后启动桌面应用：
+
+```bash
+pnpm build
+pnpm start
+```
+
+> 需 FFmpeg；可用 `STM_IPS_FFMPEG` 指定可执行文件。详细协议时序见 `docs/storage_host_mcu_flow.md`。
 
 ### 🔧 `feature_tester/`
 
@@ -389,8 +393,8 @@ python server.py
 | 项目 | 要求 |
 |:---|:---|
 | IDE | STM32CubeIDE ≥ 1.15（或 Makefile + arm-none-eabi-gcc） |
-| Python | ≥ 3.9（上位机） |
-| FFmpeg | ≥ 5.0（Web Host 转码） |
+| Node.js + pnpm | Electron 上位机开发/构建 |
+| FFmpeg | 桌面上位机视频转码 |
 | 调试器 | ST-Link / OpenOCD / CubeProgrammer |
 
 ```bash
@@ -408,7 +412,7 @@ openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
 
 1. **烧录固件**到 STM32F401RC  
 2. **上电**：初始化外设 → 加载 FAT → `lcd_ui` 按配置查找图片/视频文件名  
-3. **启动上位机** `lcd_host_web`，连接 CDC 串口  
+3. **启动桌面上位机** `lcd_host_web/desktop`，连接 CDC 串口
 4. **转码并烧录**图片/视频（大文件 `0x11`，小文件 `0x45`）；文件名与 `lcd_ui.c` 一致  
 5. **刷新列表**确认；**复位一次**后再看播放（绑定仅在 `lcd_ui_init`）  
 

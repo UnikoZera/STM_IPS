@@ -2,3 +2,6 @@
 .settings/
 .reasonix/
 Debug/
+lcd_host_web/node_modules/
+lcd_host_web/dist/
+lcd_host_web/release/

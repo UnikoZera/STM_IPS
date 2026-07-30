@@ -11,7 +11,7 @@
 | 显示 | 160×80 IPS（ST7735 类），SPI1 + DMA |
 | 视频 | MJPEG（picojpeg）/ BL 块压缩 / 原始 RGB565 |
 | 存储 | W25Q128（SPI2）+ AT24C64（I2C，FAT） |
-| 主机 | USB CDC 自定义帧；`lcd_host_web` Web Serial 上位机 |
+| 主机 | USB CDC 自定义帧；`lcd_host_web` Electron 上位机 |
 
 目录：
 
@@ -19,7 +19,7 @@
 |:---|:---|
 | `Core/` | 固件：LCD、动画、存储、W25Q、USB 协议、主循环 |
 | `USB_DEVICE/` | STM32 USB CDC |
-| `lcd_host_web/` | Flask 转码 + HTML5 Web Serial 主机页 |
+| `lcd_host_web/` | Electron + Svelte + 本地 FFmpeg 上位机 |
 | `feature_tester/` | 串口 / RGB565 辅助测试 |
 | `Debug/` | Makefile 构建产物（勿手改生成物） |
 
@@ -34,12 +34,12 @@
 5. `Core/Src/w25q_controller.c` — Flash SPI/DMA  
 6. `Core/Src/usb_controller.c` — CDC 组帧发送  
 7. `Core/Src/lcd_ui.c` — 启动资源绑定（文件名）  
-8. `lcd_host_web/lcd_host_web.html` + `server.py` — 上位机帧与转码格式  
+8. `lcd_host_web/src/lib/protocol.js` + `electron/media-service.cjs` — 上位机协议与转码格式
 
 ## 关键模块与数据流
 
 ```
-Host (Web Serial)
+Host (Electron Web Serial)
   BB44 帧 ──► storage_manager_task() 解析
                  │
                  ├─► flash_write_and_verify / FAT (AT24C)
@@ -69,15 +69,16 @@ lcd_ui_updater → w25q_dma_task → storage_manager_task → usb_controller_tas
 
 ### 上位机
 
-- Python 3.9+  
-- FFmpeg（`lcd_host_web` 视频转码）  
+- Node.js + pnpm
+- FFmpeg（`lcd_host_web` 视频转码）
 
 ### Windows 检查
 
 ```powershell
 where arm-none-eabi-gcc
 where make
-where python
+where node
+where pnpm
 where ffmpeg
 ```
 
@@ -113,18 +114,12 @@ openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c "program Debug/stm_ips
 ## 上位机
 
 ```powershell
-cd lcd_host_web
-python -m pip install -r requirements.txt
-python server.py
+cd lcd_host_web/desktop
+pnpm install
+pnpm dev
 ```
 
-或 `launcher.py` / `STM_IPS_Host.bat`。语法检查：
-
-```powershell
-python -m py_compile .\lcd_host_web\server.py
-```
-
-浏览器需 **Chrome/Edge + Web Serial**。
+桌面应用通过 Electron Web Serial 访问 CDC；转码在主进程调用 FFmpeg，不依赖 Python 或 Flask。
 
 ## 协议与存储（改前必读）
 
@@ -158,9 +153,9 @@ python -m py_compile .\lcd_host_web\server.py
 
 ## 给 AI / 自动化工具的操作建议
 
-1. 先确认这是 **固件 + Python 上位机** 混合仓库，再动协议或存储。  
-2. 固件改动优先 `Core/Src`、`Core/Inc`；协议/CRC 必须与 `lcd_host_web` **双侧对齐**。  
-3. 编译：`make -C Debug -j4`；上位机：`py_compile` 或跑服务。  
+1. 先确认这是 **固件 + Electron 上位机** 混合仓库，再动协议或存储。
+2. 固件改动优先 `Core/Src`、`Core/Inc`；协议/CRC 必须与 `lcd_host_web` **双侧对齐**。
+3. 编译：`make -C Debug -j4`；上位机：`cd lcd_host_web && pnpm build`。
 4. **不要**手改 `Debug/` 下 `.o` / 自动生成 makefile 片段，除非明确维护构建系统。  
 5. 改存储/USB/LCD：检查  
    - 帧布局与 CRC  

@@ -1,6 +1,6 @@
 # Host ↔ MCU 存储协议与流程
 
-与 `README.md` / `AGENT.md` 配套。实现以 `Core/Src/storage_manager.c`、`w25q_controller.c`、`usb_controller.c`、`lcd_host_web/lcd_host_web.html` 为准。
+与 `README.md` / `AGENT.md` 配套。实现以 `Core/Src/storage_manager.c`、`w25q_controller.c`、`usb_controller.c`、`lcd_host_web/desktop/src/lib/protocol.js` 为准。
 
 ## 1. 帧格式
 

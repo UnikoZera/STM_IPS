@@ -50,8 +50,8 @@
 | Component | Stack | Role |
 |:---|:---|:---|
 | `Core/` | C (STM32 HAL) | LCD, animation, video decode, storage manager, USB protocol |
-| `USB_DEVICE/` | STM32 USB Device | USB CDC virtual COM |
-| `lcd_host_web/` | Python Flask + HTML5 + Web Serial | Transcode, serial burn, file manager, bitmap UI |
+| `USB_DEVICE/`  STM32 USB Device | USB CDC virtual COM |
+| `lcd_host_web/` | Electron + Svelte + local FFmpeg | Transcoding, serial burn, file management, bitmap and LCD preview |
 | `feature_tester/` | C + Python | Serial loopback / RGB565 checks |
 | `docs/` | Markdown | Host↔MCU storage protocol & flow notes |
 
@@ -243,7 +243,7 @@ Host → device (storage manager):
 [0xBB][0x44][CMD][TOTAL_SIZE LE 4B][PAYLOAD_LEN LE 2B][DATA...][CRC16 LE]
 ```
 
-CRC: **CRC-16/USB** (same as `lcd_host_web.html`).
+CRC: **CRC-16/USB** (same as the Electron host in `lcd_host_web/src/lib/protocol.js`).
 
 ### 🔗 SPI DMA / EEPROM / CRC
 
@@ -354,29 +354,33 @@ AT24C @0x0000  storage_fat_t (magic / next / counts / tables / bitmap)
 
 ## 🛠️ Host Tools
 
-### 🌐 `lcd_host_web/`
+### 🖥️ `lcd_host_web/`
 
-Flask transcoding service + **browser Web Serial** host page (`lcd_host_web.html`).
+Electron + Svelte desktop host. Its main process invokes local FFmpeg; Python, Flask, and a local HTTP service are not runtime dependencies.
 
 | Capability | Notes |
 |:---|:---|
-| Image/video convert | → RGB565 / BL / MJPEG, etc. |
+| Image/video convert | → RGB565 / MJPEG |
 | Serial burn | `0x11`/`0x45` chunks + `0x14` end |
 | Cancel transfer | `0x15` → MCU rollback |
 | List / delete | `0x20` / `0x19` |
 | Flash bitmap | `0x21` large-zone occupancy UI |
 | LCD stream | `0x10` + receive `0xA0` preview |
-| VP quick burn | host often defaults to `vp_vid`; must match `lcd_ui.c` binding |
 
 ```bash
 cd lcd_host_web
-pip install -r requirements.txt
-python server.py
-# Open the page in Chrome/Edge (Web Serial)
-# Or use STM_IPS_Host.bat / launcher.py
+pnpm install
+pnpm dev
 ```
 
-> **FFmpeg** is required for the video pipeline. Protocol details: `docs/storage_host_mcu_flow.md`.
+Build and start the desktop application:
+
+```bash
+pnpm build
+pnpm start
+```
+
+> FFmpeg is required; set `STM_IPS_FFMPEG` to select its executable. Protocol details: `docs/storage_host_mcu_flow.md`.
 
 ### 🔧 `feature_tester/`
 
@@ -389,8 +393,8 @@ Serial TX/RX helpers and RGB565 decode utilities.
 | Item | Requirement |
 |:---|:---|
 | IDE | STM32CubeIDE ≥ 1.15 (or Makefile + arm-none-eabi-gcc) |
-| Python | ≥ 3.9 (host tools) |
-| FFmpeg | ≥ 5.0 (Web Host convert) |
+| Node.js + pnpm | Electron host development/build |
+| FFmpeg | Desktop-host video transcoding |
 | Debugger | ST-Link / OpenOCD / CubeProgrammer |
 
 ```bash
@@ -408,7 +412,7 @@ openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
 
 1. **Flash firmware** to STM32F401RC  
 2. **Power up**: init peripherals → load FAT → `lcd_ui` looks up configured image/video names  
-3. **Start host** `lcd_host_web`, connect CDC serial  
+3. **Start the desktop host** in `lcd_host_web`, then connect the CDC serial port
 4. **Convert and burn** (`0x11` large, `0x45` small); filename must match `lcd_ui.c`  
 5. **Refresh list**; **reset once** before expecting playback (bind only in `lcd_ui_init`)  
 
