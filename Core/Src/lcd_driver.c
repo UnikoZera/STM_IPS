@@ -386,8 +386,8 @@ int32_t lcd_anim_path_ease_in_out_sine(int32_t start, int32_t end, uint32_t elap
 	}
 
 	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
-	double progress = (double)t / (double)duration;
-	double eased = 0.5 * (1 - cos(progress * M_PI));
+	float progress = (float)t / (float)duration;
+	float eased = 0.5f * (1.0f - cosf(progress * 3.14159265f));
 	return (int32_t)(start + (end - start) * eased);
 }
 
@@ -399,8 +399,8 @@ int32_t lcd_anim_path_ease_in_sine(int32_t start, int32_t end, uint32_t elapsed,
 	}
 
 	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
-	double progress = (double)t / (double)duration;
-	double eased = 1 - cos((progress * M_PI) / 2);
+	float progress = (float)t / (float)duration;
+	float eased = 1.0f - cosf((progress * 3.14159265f) * 0.5f);
 	return (int32_t)(start + (end - start) * eased);
 }
 
@@ -412,8 +412,8 @@ int32_t lcd_anim_path_ease_out_sine(int32_t start, int32_t end, uint32_t elapsed
 	}
 
 	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
-	double progress = (double)t / (double)duration;
-	double eased = sin((progress * M_PI) / 2);
+	float progress = (float)t / (float)duration;
+	float eased = sinf((progress * 3.14159265f) * 0.5f);
 	return (int32_t)(start + (end - start) * eased);
 }
 
@@ -425,16 +425,16 @@ int32_t lcd_anim_path_ease_in_out_expo(int32_t start, int32_t end, uint32_t elap
 	}
 
 	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
-	double progress = (double)t / (double)duration;
-	double eased;
+	float progress = (float)t / (float)duration;
+	float eased;
 
-	if (progress < 0.5)
+	if (progress < 0.5f)
 	{
-		eased = 0.5 * pow(2, 10 * (2 * progress - 1));
+		eased = 0.5f * powf(2.0f, 10.0f * (2.0f * progress - 1.0f));
 	}
 	else
 	{
-		eased = 0.5 * (2 - pow(2, -10 * (2 * progress - 1)));
+		eased = 0.5f * (2.0f - powf(2.0f, -10.0f * (2.0f * progress - 1.0f)));
 	}
 
 	return (int32_t)(start + (end - start) * eased);
@@ -448,8 +448,8 @@ int32_t lcd_anim_path_ease_in_expo(int32_t start, int32_t end, uint32_t elapsed,
 	}
 
 	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
-	double progress = (double)t / (double)duration;
-	double eased = (progress == 0) ? 0 : pow(2, 10 * (progress - 1));
+	float progress = (float)t / (float)duration;
+	float eased = (progress == 0.0f) ? 0.0f : powf(2.0f, 10.0f * (progress - 1.0f));
 	return (int32_t)(start + (end - start) * eased);
 }
 
@@ -461,8 +461,8 @@ int32_t lcd_anim_path_ease_out_expo(int32_t start, int32_t end, uint32_t elapsed
 	}
 
 	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
-	double progress = (double)t / (double)duration;
-	double eased = (progress == 1) ? 1 : 1 - pow(2, -10 * progress);
+	float progress = (float)t / (float)duration;
+	float eased = (progress >= 1.0f) ? 1.0f : 1.0f - powf(2.0f, -10.0f * progress);
 	return (int32_t)(start + (end - start) * eased);
 }
 
@@ -474,17 +474,17 @@ int32_t lcd_anim_path_ease_in_out_circ(int32_t start, int32_t end, uint32_t elap
 	}
 
 	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
-	double progress = (double)t / (double)duration;
-	double eased;
+	float progress = (float)t / (float)duration;
+	float eased;
 
-	if (progress < 0.5)
+	if (progress < 0.5f)
 	{
-		eased = 0.5 * (1 - sqrt(1 - 4 * progress * progress));
+		eased = 0.5f * (1.0f - sqrtf(1.0f - 4.0f * progress * progress));
 	}
 	else
 	{
-		double inv = 2 * progress - 2;
-		eased = 0.5 * (sqrt(1 - inv * inv) + 1);
+		float inv = 2.0f * progress - 2.0f;
+		eased = 0.5f * (sqrtf(1.0f - inv * inv) + 1.0f);
 	}
 
 	return (int32_t)(start + (end - start) * eased);
@@ -498,8 +498,8 @@ int32_t lcd_anim_path_ease_in_circ(int32_t start, int32_t end, uint32_t elapsed,
 	}
 
 	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
-	double progress = (double)t / (double)duration;
-	double eased = 1 - sqrt(1 - progress * progress);
+	float progress = (float)t / (float)duration;
+	float eased = 1.0f - sqrtf(1.0f - progress * progress);
 	return (int32_t)(start + (end - start) * eased);
 }
 
@@ -511,9 +511,9 @@ int32_t lcd_anim_path_ease_out_circ(int32_t start, int32_t end, uint32_t elapsed
 	}
 
 	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
-	double progress = (double)t / (double)duration;
-	double inv = progress - 1;
-	double eased = sqrt(1 - inv * inv);
+	float progress = (float)t / (float)duration;
+	float inv = progress - 1.0f;
+	float eased = sqrtf(1.0f - inv * inv);
 	return (int32_t)(start + (end - start) * eased);
 }
 
@@ -525,20 +525,21 @@ int32_t lcd_anim_path_ease_in_out_back(int32_t start, int32_t end, uint32_t elap
 	}
 
 	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
-	double progress = (double)t / (double)duration;
-	double eased;
+	float progress = (float)t / (float)duration;
+	float eased;
 
-	const double c1 = 1.70158;
-	const double c2 = c1 * 1.525;
+	const float c1 = 1.70158f;
+	const float c2 = c1 * 1.525f;
 
-	if (progress < 0.5)
+	if (progress < 0.5f)
 	{
-		eased = 0.5 * (pow(2 * progress, 2) * ((c2 + 1) * 2 * progress - c2));
+		float p2 = 2.0f * progress;
+		eased = 0.5f * (p2 * p2 * ((c2 + 1.0f) * p2 - c2));
 	}
 	else
 	{
-		double inv = 2 * progress - 2;
-		eased = 0.5 * (pow(inv, 2) * ((c2 + 1) * inv + c2) + 2);
+		float inv = 2.0f * progress - 2.0f;
+		eased = 0.5f * (inv * inv * ((c2 + 1.0f) * inv + c2) + 2.0f);
 	}
 
 	return (int32_t)(start + (end - start) * eased);
@@ -552,8 +553,8 @@ int32_t lcd_anim_path_ease_out_elastic(int32_t start, int32_t end, uint32_t elap
 	}
 
 	uint32_t t = lcd_anim_clamp_elapsed(elapsed, duration);
-	double progress = (double)t / (double)duration;
-	double eased = sin(-13 * M_PI_2 * (progress + 1)) * pow(2, -10 * progress) + 1;
+	float progress = (float)t / (float)duration;
+	float eased = sinf(-13.0f * 1.57079633f * (progress + 1.0f)) * powf(2.0f, -10.0f * progress) + 1.0f;
 	return (int32_t)(start + (end - start) * eased);
 }
 

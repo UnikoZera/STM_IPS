@@ -449,6 +449,8 @@ bool compact_small_files(void)
         uint16_t batch_indices[MAX_SMALL_FILES];
         uint16_t batch_count = 0;
         uint32_t batch_size = 0;
+        bool in_batch[MAX_SMALL_FILES];  /* O(1) 查重，替代线性扫描 batch_indices */
+        memset(in_batch, 0, sizeof(in_batch));
 
         // 初始扇区范围由领头的文件决定
         small_file_info_t *leader = &global_fat.small_files[valid_list[vi]];
@@ -463,20 +465,7 @@ bool compact_small_files(void)
             for (uint16_t j = vi; j < valid_count; j++)
             {
                 uint16_t idx = valid_list[j];
-                if (moved[idx])
-                    continue;
-
-                // 检查是否已在 batch 中
-                bool already_in = false;
-                for (uint16_t b = 0; b < batch_count; b++)
-                {
-                    if (batch_indices[b] == idx)
-                    {
-                        already_in = true;
-                        break;
-                    }
-                }
-                if (already_in)
+                if (moved[idx] || in_batch[idx])
                     continue;
 
                 small_file_info_t *fj = &global_fat.small_files[idx];
@@ -488,6 +477,7 @@ bool compact_small_files(void)
                 {
                     // 加入批
                     batch_indices[batch_count++] = idx;
+                    in_batch[idx] = true;
                     batch_size += fj->size;
 
                     // 扩展扇区范围

@@ -389,14 +389,21 @@ void lcd_screen_update_dma()
 	}
 }
 
-// 这里其实就算是清除画面的函数
+/**
+ * @brief 用指定颜色填充整个帧缓冲（清屏）
+ *
+ * 使用 32-bit 双像素写入，循环次数减半，速度约 2x 于逐 halfword 写入。
+ */
 void lcd_fill_screen_dma(uint16_t color)
 {
 	uint16_t swapped_color = swap_uint16_builtin(color);
-	uint16_t *draw_buf = lcd_write_ptr;
-	for (uint32_t i = 0; i < LCD_W * LCD_H; i++)
+	uint32_t *draw_buf32 = (uint32_t *)lcd_write_ptr;
+	uint32_t dual_pixel = ((uint32_t)swapped_color << 16) | swapped_color;
+	uint32_t count = (LCD_W * LCD_H) / 2;
+
+	for (uint32_t i = 0; i < count; i++)
 	{
-		draw_buf[i] = swapped_color;
+		draw_buf32[i] = dual_pixel;
 	}
 }
 
@@ -731,18 +738,28 @@ static void raw_blit_frame_from_w25q(int16_t x, int16_t y, int16_t width, int16_
         }
 
         uint32_t pixels = to_read / 2;
+        /* 计算当前 chunk 的起始行列（一次除法/取模，而非每像素重复） */
+        uint32_t base_idx = done / 2;
+        uint16_t img_row = (uint16_t)(base_idx / (uint32_t)width);
+        uint16_t img_col = (uint16_t)(base_idx % (uint32_t)width);
+
         for (uint32_t p = 0; p < pixels; p++)
         {
-            uint32_t g_idx = done / 2 + p;
-            uint16_t img_col = (uint16_t)(g_idx % (uint32_t)width);
-            uint16_t img_row = (uint16_t)(g_idx / (uint32_t)width);
             int16_t screen_x = x + (int16_t)img_col;
             int16_t screen_y = y + (int16_t)img_row;
-            if (screen_x < 0 || screen_x >= LCD_W || screen_y < 0 || screen_y >= LCD_H)
-                continue;
-            /* flash [hi,lo] BE -> LE halfword for SPI DMA */
-            uint16_t pixel_le = ((uint16_t)chunk[p * 2 + 1] << 8) | chunk[p * 2];
-            lcd_write_ptr[(uint32_t)screen_y * LCD_W + (uint32_t)screen_x] = pixel_le;
+            if (screen_x >= 0 && screen_x < LCD_W && screen_y >= 0 && screen_y < LCD_H)
+            {
+                /* flash [hi,lo] BE -> LE halfword for SPI DMA */
+                uint16_t pixel_le = ((uint16_t)chunk[p * 2 + 1] << 8) | chunk[p * 2];
+                lcd_write_ptr[(uint32_t)screen_y * LCD_W + (uint32_t)screen_x] = pixel_le;
+            }
+            /* 递增列；列到尾行后换行——纯递增运算，无除法 */
+            img_col++;
+            if (img_col >= (uint16_t)width)
+            {
+                img_col = 0;
+                img_row++;
+            }
         }
         done += to_read;
     }
