@@ -15,28 +15,47 @@ volatile bool w25q_tx_dma_busy = false;
 #define W25Q_ADDRESS_SPACE  0x01000000UL
 #define W25Q_TASK_SPI_TIMEOUT 5U
 
+/**
+ * @brief W25Q DMA 状态机
+ *
+ * 状态转移图（写路径）：
+ *   IDLE → WRITE_PENDING_START → WRITE_STARTING → WAIT_TX_DONE
+ *       → WAIT_FLASH_READY ──→ (还有数据) → WRITE_STARTING (循环)
+ *                           └─→ (写完) → DONE → IDLE
+ *
+ * 状态转移图（读路径）：
+ *   IDLE → READ_PENDING_START / FAST_READ_PENDING_START → WAIT_RX_DONE → DONE → IDLE
+ *
+ * 任何状态遇到超时/错误 → ERROR → 手动复位到 IDLE
+ */
 typedef enum
 {
     W25Q_DMA_IDLE = 0,
-    W25Q_DMA_WRITE_PENDING_START,        // [挂起] 收到写请求且 Flash 正忙，自动排队等待后续调用
-    W25Q_DMA_READ_PENDING_START,         // [挂起] 收到普通读请求，排队等待总线或 Flash 空闲
-    W25Q_DMA_FAST_READ_PENDING_START,    // [挂起] 收到快速读请求，排队等待空闲
-    W25Q_DMA_WRITE_STARTING,             // [启动] 正在发送写使能和页编程命令
-    W25Q_DMA_WAIT_TX_DONE,               // [传输] 等待 SPI DMA 写数据搬运到 Flash 完成
-    W25Q_DMA_WAIT_RX_DONE,               // [传输] 等待 SPI DMA 读数据搬运到内存完成
-    W25Q_DMA_WAIT_FLASH_READY,           // [烧录] 等待 Flash 内部将单页数据固化入介质
-    W25Q_DMA_DONE,                       // [完成] 本次请求的所有页面写入或读取完成
-    W25Q_DMA_ERROR                       // [错误] 发生通信或重试超时错误
+    W25Q_DMA_WRITE_PENDING_START,        /* [挂起] 收到写请求且 Flash 正忙，自动排队 */
+    W25Q_DMA_READ_PENDING_START,         /* [挂起] 普通读请求排队中 */
+    W25Q_DMA_FAST_READ_PENDING_START,    /* [挂起] 快速读请求排队中 */
+    W25Q_DMA_WRITE_STARTING,             /* [启动] 发送写使能和页编程命令 */
+    W25Q_DMA_WAIT_TX_DONE,               /* [传输] 等待 SPI DMA 写完成 */
+    W25Q_DMA_WAIT_RX_DONE,               /* [传输] 等待 SPI DMA 读完成 */
+    W25Q_DMA_WAIT_FLASH_READY,           /* [烧录] 等待 Flash 内部固化单页数据 */
+    W25Q_DMA_DONE,                       /* [完成] 本次请求所有页面写入/读取完成 */
+    W25Q_DMA_ERROR                       /* [错误] 通信或重试超时 */
 } w25q_dma_state_t;
 
+/**
+ * @brief DMA 操作上下文
+ *
+ * 记录当前 DMA 请求的地址、数据指针、剩余大小和状态机进度。
+ * 写操作按页拆分（每页 256B），逐页通过状态机推进。
+ */
 typedef struct
 {
-    uint32_t current_address;
-    uint8_t *current_data;
-    uint32_t remain_size;
-    uint16_t current_write_size;
-    uint32_t state_tick;
-    w25q_dma_state_t state;
+    uint32_t current_address;      /* 当前操作的 W25Q 地址 */
+    uint8_t *current_data;         /* 当前数据缓冲指针 */
+    uint32_t remain_size;          /* 剩余待传输字节数 */
+    uint16_t current_write_size;   /* 当前页写入大小（≤256B） */
+    uint32_t state_tick;           /* 当前状态进入时间戳（超时检测用） */
+    w25q_dma_state_t state;        /* 状态机当前状态 */
 } w25q_dma_context_t;
 
 static w25q_dma_context_t w25q_dma_ctx = {0U, NULL, 0U, 0U, 0U, W25Q_DMA_IDLE};
@@ -289,13 +308,22 @@ void w25q_page_program(uint32_t address, uint8_t *data, uint16_t size)
     w25q_check_busy();
 }
 
+/**
+ * @brief 多页数据写入（同步方式）
+ *
+ * 自动按页边界拆分，逐页调用 w25q_page_program。
+ *
+ * @param address W25Q 起始地址
+ * @param data    待写入数据
+ * @param size    数据字节数
+ */
 void w25q_write_data(uint32_t address, uint8_t *data, uint32_t size)
 {
     uint32_t current_address = address;
     uint8_t *current_data = data;
     uint32_t remain_size = size;
 
-    while (remain_size > 0) // sorry for the long func. Xp
+    while (remain_size > 0)
     {
         uint16_t current_page_remain = 256 - (current_address % 256);
         uint16_t write_size = (remain_size > current_page_remain) ? current_page_remain : remain_size;
@@ -438,7 +466,11 @@ bool w25q_fast_read_verified(uint32_t address, uint8_t *data, uint32_t size)
 
 #pragma endregion
 
-#pragma region dma functions
+#pragma region DMA 函数
+
+/* ---------------------------------------------------------------------------
+ * DMA 状态查询与错误处理
+ * --------------------------------------------------------------------------- */
 
 static bool w25q_is_dma_active(void)
 {
@@ -447,7 +479,9 @@ static bool w25q_is_dma_active(void)
            (w25q_dma_ctx.state != W25Q_DMA_ERROR);
 }
 
-// 在 SPI DMA 传输过程中发生错误时调用，执行必要的状态复位和错误记录
+/**
+ * @brief 设置 DMA 错误状态：停止传输、拉高 CS、复位所有繁忙标志
+ */
 static void w25q_set_dma_error(void)
 {
     (void)HAL_SPI_DMAStop(&hspi2);
@@ -659,15 +693,23 @@ bool w25q_write_data_dma(uint32_t address, uint8_t *data, uint32_t size)
     return w25q_start_next_write_chunk();
 }
 
+/**
+ * @brief DMA 状态机轮询任务（主循环中周期调用）
+ *
+ * 处理三种挂起请求（写/读/快速读）的启动、传输进度跟踪、等待 Flash 固化。
+ * 每次调用只推进当前状态，不会阻塞。
+ */
 void w25q_dma_task(void)
 {
     switch (w25q_dma_ctx.state)
     {
+        /* ── 空闲 / 完成 / 错误：不处理 ── */
         case W25Q_DMA_IDLE:
         case W25Q_DMA_DONE:
         case W25Q_DMA_ERROR:
             break;
 
+        /* ── 挂起状态：等待 DMA/Flash 空闲后启动 ── */
         case W25Q_DMA_WRITE_PENDING_START:
         case W25Q_DMA_READ_PENDING_START:
         case W25Q_DMA_FAST_READ_PENDING_START:
@@ -701,6 +743,7 @@ void w25q_dma_task(void)
             break;
         }
 
+        /* ── 写启动：等待写使能 + 页编程命令发送完成 ── */
         case W25Q_DMA_WRITE_STARTING:
         {
             if ((HAL_GetTick() - w25q_dma_ctx.state_tick) >= W25Q_TIMEOUT)
@@ -710,6 +753,7 @@ void w25q_dma_task(void)
             break;
         }
 
+        /* ── 等待 TX DMA 完成 → 转到等待 Flash 内部固化 ── */
         case W25Q_DMA_WAIT_TX_DONE:
         {
             if (!w25q_tx_dma_busy)
@@ -726,6 +770,7 @@ void w25q_dma_task(void)
             break;
         }
 
+        /* ── 等待 RX DMA 完成 → 读结束，标记完成 ── */
         case W25Q_DMA_WAIT_RX_DONE:
         {
             if (!w25q_rx_dma_busy)
@@ -744,6 +789,7 @@ void w25q_dma_task(void)
             break;
         }
 
+        /* ── 等待 Flash 内部编程完成 → 继续下一块或标记完成 ── */
         case W25Q_DMA_WAIT_FLASH_READY:
         {
             uint8_t status = 0U;

@@ -14,11 +14,19 @@
 volatile bool lcd_dma_busy = false;
 volatile bool lcd_usb_stream_enabled = false;
 
-static uint16_t lcd_frame_buffer[LCD_W * LCD_H + SEND_TAIL]; // 直接使用单个缓冲区，lcd_frame_ptr指向当前帧数据，lcd_write_ptr指向正在写入的数据位置 可以轻松移植到双缓冲方案
+/*
+ * 帧缓冲：单缓冲方案
+ *   lcd_frame_ptr → 当前显示帧
+ *   lcd_write_ptr → 正在写入的位置（可移植到双缓冲方案）
+ */
+static uint16_t lcd_frame_buffer[LCD_W * LCD_H + SEND_TAIL];
 uint16_t *lcd_frame_ptr = lcd_frame_buffer;
 uint16_t *lcd_write_ptr = lcd_frame_buffer;
-// USB帧流时间节流相关变量
+
+/* ---- USB 流节流 ---- */
 static uint32_t s_lcd_last_usb_stream_tick = 0U;
+
+/* ---- FPS / CPU 使用率统计 ---- */
 uint16_t lcd_fps = 0;
 static uint32_t s_dwt_last_cycle = 0;
 static uint32_t s_cycle_window = 0;
@@ -26,6 +34,10 @@ static uint32_t s_call_window = 0;
 static uint32_t s_best_cycle_per_call = 0;
 static bool s_dwt_ready = false;
 uint8_t cpu_usage_percent = 0;
+
+/* ============================================================================
+ *  SPI 底层写函数（同步方式）
+ * ============================================================================ */
 
 static void lcd_write_cmd(uint8_t cmd) // not using dma
 {
@@ -301,6 +313,10 @@ void lcd_draw_circle(uint16_t x0, uint16_t y0, uint8_t r, uint16_t color)
 
 
 
+/* ============================================================================
+ *  DMA 绘图函数
+ * ============================================================================ */
+
 #pragma region dma drawing functions
 
 /*
@@ -325,7 +341,14 @@ void lcd_draw_point_dma(int16_t x, int16_t y, uint16_t color)
 	lcd_draw_point_dma_swapped(x, y, swap_uint16_builtin(color));
 }
 
-// ! 注意，在每次改变显示图像时候都要调用 lcd_screen_update_dma() 来更新屏幕，否则屏幕不会刷新(最后调用!)
+/**
+ * @brief 将帧缓冲通过 SPI DMA 发送到 LCD 刷新显示
+ *
+ * ⚠ 每次修改绘制内容后必须调用此函数，屏幕才会更新。
+ *    应在所有绘图操作完成后最后调用。
+ *
+ * 若 USB 流模式已启用且不在下载中，同时通过 USB 发送帧数据供上位机预览。
+ */
 void lcd_screen_update_dma()
 {
 	if (lcd_dma_busy)
@@ -472,6 +495,10 @@ void lcd_draw_string(int16_t x, int16_t y, uint16_t fc, uint16_t bc, uint8_t siz
 		p++;
 	}
 }
+
+/* ============================================================================
+ *  FPS / CPU 使用率统计
+ * ============================================================================ */
 
 void lcd_calculate_fps()
 {

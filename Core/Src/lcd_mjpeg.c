@@ -92,6 +92,9 @@ static unsigned char mjpeg_read_cb(unsigned char *pBuf, unsigned char buf_size,
     return 0;
 }
 
+/**
+ * @brief 回绕到第一帧，重置 Flash 缓存
+ */
 #define MJPEG_REWIND()                                           \
     do                                                           \
     {                                                            \
@@ -101,6 +104,12 @@ static unsigned char mjpeg_read_cb(unsigned char *pBuf, unsigned char buf_size,
         s_cache_len = 0;                                         \
     } while (0)
 
+/**
+ * @brief 前进到下一帧；到达末端时自动回绕
+ *
+ * 更新 cur_frame_idx 和 current_frame_pos。
+ * 边界条件检测：帧数到头 / 地址超过 end_addr / 剩余空间不足 4B 前缀 → 回绕。
+ */
 #define MJPEG_ADVANCE_FRAME()                                    \
     do                                                           \
     {                                                            \
@@ -116,11 +125,16 @@ static unsigned char mjpeg_read_cb(unsigned char *pBuf, unsigned char buf_size,
     } while (0)
 
 /**
- * RGB565 转换 (SPI DMA 字节序)
+ * @brief 将 RGB888 转换为 SPI DMA 字节序的 RGB565
  *
- * SPI DMA 发送 uint16_t 时, 低字节先发出。
- * 为使 LCD 收到 [R4..R0 G5..G3] [G2..G0 B4..B4] 标准顺序,
- * 需要将标准 RGB565 的高低字节交换后存入 uint16_t。
+ * SPI DMA 发送 uint16_t 时低字节先发出。
+ * LCD 需要的顺序是 [R4..R0 G5..G3] [G2..G0 B4..B4]，
+ * 因此需要将标准 RGB565 的高低字节交换后存入 uint16_t。
+ *
+ * @param r 红色分量 (0-255)
+ * @param g 绿色分量 (0-255)
+ * @param b 蓝色分量 (0-255)
+ * @return 字节交换后的 RGB565 值
  */
 static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
 {

@@ -4,21 +4,25 @@
  *  Created on: 2026年4月27日
  *      Author: UnikoZera
  *
- *  Host command protocol frame:
- *    [0][1]: Frame header 0xBB 0x44 (2B)
- *    [2]:   Command (1B)
- *    [3-6]: Total file size uint32 LE (4B) — 0 for non-data commands (first packet only)
- *    [7-8]: Packet length uint16 LE (2B) = payload_len + 2 (CRC16)
- *    [9+]:  Payload data
- *    [last-2][last-1]: CRC16 (2B) over header + payload (before CRC)
+ *  ════════════════════════════════════════════════════════════
+ *  Host Command 协议帧格式
+ *  ════════════════════════════════════════════════════════════
+ *    [0]~[1]:   帧头 0xBB 0x44               (2B)
+ *    [2]:       命令码                        (1B)
+ *    [3]~[6]:   文件总大小 uint32 LE          (4B) 非数据命令填 0，仅首包有效
+ *    [7]~[8]:   本包长度 uint16 LE            (2B) = payload_len + 2(CRC16)
+ *    [9]~:      Payload 数据
+ *    [last-2]~[last-1]: CRC16                 (2B) 覆盖帧头 + payload（CRC 自身除外）
  *
- *  Commands:
- *    0x11 - Start/continue downloading large file, payload: data + CRC16
- *    0x45 - Start/continue downloading small file, payload: data + CRC16
- *    0x14 - End download, payload: filename(<=16B) + CRC16
- *    0x19 - Delete file, payload: file_type(1B) + file_index(1B) + CRC16
- *    0x20 - Query file list + slot info, no payload (only CRC16)
- *    0x10 - LCD stream control, payload: [sub_cmd(1B)] + CRC16
+ *  命令码：
+ *    0x11  下载大文件数据                     payload: data + CRC16
+ *    0x45  下载小文件数据                     payload: data + CRC16
+ *    0x14  结束下载                           payload: 文件名(<=16B) + CRC16
+ *    0x19  删除文件                           payload: 文件类型(1B) + 文件索引(1B) + CRC16
+ *    0x20  查询文件列表 + 槽位信息            无 payload（仅 CRC16）
+ *    0x21  发送大文件区位图                   无 payload
+ *    0x10  LCD 流控制                         payload: 子命令(1B) + CRC16
+ *    0x15  中止下载（上位机取消通知 MCU 回滚） 无 payload
  */
 
 #include "storage_manager.h"
@@ -75,6 +79,20 @@
 #define HOST_FRAME_BUF_SIZE (FRAME_HDR_SIZE + HOST_PAYLOAD_DATA_MAX + HOST_CRC_SIZE)
 #define RETRY_SEND_ERROR_CODE 0xE0U
 #define CONTINUE_SEND_CODE 0xA1U
+
+/* ---- 命令码 ---- */
+#define CMD_DOWNLOAD_LARGE     0x11U  /* 下载大文件数据 */
+#define CMD_DOWNLOAD_SMALL     0x45U  /* 下载小文件数据 */
+#define CMD_END_DOWNLOAD       0x14U  /* 结束下载 */
+#define CMD_DELETE_FILE        0x19U  /* 删除文件 */
+#define CMD_QUERY_FILE_LIST    0x20U  /* 查询文件列表 */
+#define CMD_SEND_BITMAP        0x21U  /* 发送大文件区位图 */
+#define CMD_LCD_STREAM         0x10U  /* LCD 流控制 */
+#define CMD_ABORT_DOWNLOAD     0x15U  /* 中止下载（上位机取消通知 MCU 回滚） */
+
+/* ---- LCD 流子命令 ---- */
+#define LCD_SUBCMD_STOP        0x00U
+#define LCD_SUBCMD_START       0x01U
 
 /* ---- 超时 / 重试 ---- */
 #define DMA_WAIT_TIMEOUT_MS 100U
@@ -574,29 +592,37 @@ bool compact_small_files(void)
 
 #pragma region 协议常量与状态机
 
+/**
+ * @brief Host 协议接收状态机
+ *
+ * 解析流程（按接收字节顺序）：
+ *   HEAD0 → HEAD1 → CMD → TOTAL_SIZE×4 → LEN_L → LEN_H → PAYLOAD → 处理命令 → 回到 HEAD0
+ */
 typedef enum
 {
-    STATE_WAIT_HEAD0,
-    STATE_WAIT_HEAD1,
-    STATE_WAIT_CMD,
-    STATE_WAIT_TOTAL_SIZE_0,
-    STATE_WAIT_TOTAL_SIZE_1,
-    STATE_WAIT_TOTAL_SIZE_2,
-    STATE_WAIT_TOTAL_SIZE_3,
-    STATE_WAIT_LEN_L,
-    STATE_WAIT_LEN_H,
-    STATE_WAIT_PAYLOAD /* 包括 crc16 在内的完整数据段 */
+    STATE_WAIT_HEAD0,          /* 等待帧头第 1 字节 0xBB */
+    STATE_WAIT_HEAD1,          /* 等待帧头第 2 字节 0x44 */
+    STATE_WAIT_CMD,            /* 等待命令码 */
+    STATE_WAIT_TOTAL_SIZE_0,   /* 等待文件总大小 byte 0 (LSB) */
+    STATE_WAIT_TOTAL_SIZE_1,   /* 等待文件总大小 byte 1 */
+    STATE_WAIT_TOTAL_SIZE_2,   /* 等待文件总大小 byte 2 */
+    STATE_WAIT_TOTAL_SIZE_3,   /* 等待文件总大小 byte 3 (MSB) */
+    STATE_WAIT_LEN_L,          /* 等待本包长度低字节 */
+    STATE_WAIT_LEN_H,          /* 等待本包长度高字节 */
+    STATE_WAIT_PAYLOAD         /* 等待 payload 数据 + CRC16 */
 } host_cmd_state_t;
 
 #pragma endregion
 
 #pragma region 协议解析缓冲区与下载状态
 
+/* ---- 协议接收状态 ---- */
 static host_cmd_state_t host_state = STATE_WAIT_HEAD0;
 static uint32_t host_state_tick = 0;
 static uint8_t host_cmd;
-/* host_total_file_size: 发送文件完整大小（仅第一包有效）
- * host_payload_len:     本包数据段长度(含CRC) */
+
+/* 首包中声明的文件完整大小（后续数据包该字段为 0）
+ * host_payload_len: 本包数据段长度（含 CRC16） */
 static uint32_t host_total_file_size = 0;
 static uint16_t host_payload_len;
 static uint16_t host_payload_idx;
@@ -604,21 +630,21 @@ static uint16_t host_payload_idx;
  * rx_buffer / dma_write_buf / small_last_erased_sector 见上方“小文件区压缩”区域 */
 static uint8_t host_payload[HOST_FRAME_BUF_SIZE] = {0};
 
+/* ---- 下载状态 ---- */
 static bool is_downloading = false;
 static bool lcd_stream_was_enabled = false;
-static uint32_t current_write_addr = 0;
-static uint32_t current_file_size = 0;
-static uint32_t current_allocated_size = 0;
+static uint32_t current_write_addr = 0;     /* 当前写入地址（W25Q 绝对地址） */
+static uint32_t current_file_size = 0;      /* 已接收字节数 */
+static uint32_t current_allocated_size = 0; /* 预分配空间大小 */
 /* 首包声明的完整文件大小；后续包 total_size 字段为 0，不能复用 host_total_file_size */
 static uint32_t expected_file_size = 0;
-static uint8_t current_file_type = 0;
+static uint8_t current_file_type = 0;       /* CMD_DOWNLOAD_LARGE=大文件, CMD_DOWNLOAD_SMALL=小文件 */
 static char current_filename[MAX_FILENAME_LEN] = {0};
-static uint32_t current_start_sector = 0;
-static uint32_t current_sector_count = 0;
-static uint32_t small_file_start_addr = 0;
+static uint32_t current_start_sector = 0;   /* 大文件起始扇区 */
+static uint32_t current_sector_count = 0;   /* 大文件占用扇区数 */
+static uint32_t small_file_start_addr = 0;  /* 小文件起始地址 */
+static uint32_t last_download_tick = 0;     /* 下载超时保护 */
 static uint8_t error_payload = 0x00;
-
-static uint32_t last_download_tick = 0; /* is_downloading 超时保护 */
 
 #pragma endregion
 
@@ -652,7 +678,7 @@ static void send_continue(void)
 static void abort_download_common(void)
 {
     // 回滚已分配的大文件扇区（擦除+释放位图），避免空间泄漏
-    if (current_allocated_size > 0 && current_file_type == 0x11)
+    if (current_allocated_size > 0 && current_file_type == CMD_DOWNLOAD_LARGE)
     {
         erase_and_free_large_sectors(current_start_sector, current_sector_count);
     }
@@ -690,11 +716,16 @@ static bool flash_wait_dma_idle(uint32_t timeout_ms)
 }
 
 /**
- * @brief 写入W25Q并回读验证，失败自动重试（最多WRITE_VERIFY_RETRY_MAX次）
+ * @brief 写入 W25Q 并回读验证，失败自动重试（最多 WRITE_VERIFY_RETRY_MAX 次）
  *
- * 注意：DMA 路径必须等到本块编程完成再返回。
- * 若仅“启动 DMA 就 ACK”，最后一包可能在 0x14 收尾后仍在写，
- * 文件尾损坏 → 播放循环到末尾花屏（raw/MJPEG 都会出现）。
+ * ⚠ DMA 路径必须等到本块编程完成再返回。
+ *   若仅"启动 DMA 就立即 ACK"，最后一包可能在收到 0x14（结束下载）后仍在写，
+ *   文件尾损坏 → 播放时循环到末尾花屏（RAW / MJPEG 都会出现）。
+ *
+ * @param addr  W25Q 目标地址
+ * @param data  待写入数据
+ * @param size  数据长度
+ * @return true=写入并验证成功, false=失败
  */
 static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t size)
 {
@@ -704,17 +735,15 @@ static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t 
     for (uint32_t retry = 0U; retry < WRITE_VERIFY_RETRY_MAX; retry++)
     {
         if (!flash_wait_dma_idle(DMA_WAIT_TIMEOUT_MS))
-        {
             return false;
-        }
 
-        // --- 拷贝数据到dma_write_buf ---
+        /* 拷贝数据到 DMA 写缓冲 */
         memcpy(dma_write_buf, data, size);
 
-        // --- 写入W25Q（优先DMA） ---
+        /* 尝试 DMA 写入；DMA 忙时自动排队等待 */
         if (w25q_write_data_dma(addr, dma_write_buf, size))
         {
-            // 必须等本块写完；大块多页编程可能超过默认 100ms
+            /* 大块多页编程可能超过默认 100ms，根据写入量估算超时 */
             uint32_t prog_timeout = DMA_WAIT_TIMEOUT_MS + (size / 16U);
             if (prog_timeout < 500U)
             {
@@ -758,15 +787,20 @@ static void process_host_command(void)
     }
 
     uint16_t actual_data_len = host_payload_len - 2;
-    // ==================== 0x19: 删除文件 ====================
-    if (host_cmd == 0x19)
+
+    switch (host_cmd)
+    {
+    /* ==================================================================
+     *  CMD_DELETE_FILE (0x19): 删除文件
+     * ================================================================== */
+    case CMD_DELETE_FILE:
     {
         if (host_payload_len < 4)
             return;
         uint8_t file_type_to_delete = host_payload[FRAME_HDR_SIZE];
         uint8_t file_index = host_payload[FRAME_HDR_SIZE + 1];
 
-        if (file_type_to_delete == 0x11)
+        if (file_type_to_delete == CMD_DOWNLOAD_LARGE)
         {
             if (file_index >= global_fat.large_file_count || !global_fat.large_files[file_index].is_valid)
             {
@@ -779,7 +813,7 @@ static void process_host_command(void)
             fi->is_valid = 0;
             storage_fat_save();
         }
-        else if (file_type_to_delete == 0x45)
+        else if (file_type_to_delete == CMD_DOWNLOAD_SMALL)
         {
             if (file_index >= global_fat.small_file_count || !global_fat.small_files[file_index].is_valid)
             {
@@ -800,10 +834,13 @@ static void process_host_command(void)
         {
             send_error(0x02);
         }
-        return;
+        break;
     }
-    // ==================== 0x14: 结束下载 ====================
-    if (host_cmd == 0x14)
+
+    /* ==================================================================
+     *  CMD_END_DOWNLOAD (0x14): 结束下载
+     * ================================================================== */
+    case CMD_END_DOWNLOAD:
     {
         if (!is_downloading)
             return;
@@ -824,7 +861,7 @@ static void process_host_command(void)
 
         memcpy(current_filename, (char *)&host_payload[FRAME_HDR_SIZE],
                (actual_data_len < MAX_FILENAME_LEN) ? actual_data_len : MAX_FILENAME_LEN);
-        if (current_file_type == 0x11)
+        if (current_file_type == CMD_DOWNLOAD_LARGE)
         {
             // recycle deleted slot, fallback to append
             int16_t free_slot = -1;
@@ -868,7 +905,7 @@ static void process_host_command(void)
                 return;
             }
         }
-        else if (current_file_type == 0x45)
+        else if (current_file_type == CMD_DOWNLOAD_SMALL)
         {
             // recycle deleted slot, fallback to append
             int16_t free_slot = -1;
@@ -915,8 +952,12 @@ static void process_host_command(void)
         send_continue();
         return;
     }
-    // ==================== 0x11 / 0x45: 下载数据 ====================
-    if (host_cmd == 0x11 || host_cmd == 0x45)
+
+    /* ==================================================================
+     *  CMD_DOWNLOAD_LARGE / CMD_DOWNLOAD_SMALL (0x11 / 0x45): 下载数据
+     * ================================================================== */
+    case CMD_DOWNLOAD_LARGE:
+    case CMD_DOWNLOAD_SMALL:
     {
         if (!is_downloading) // 新下载请求
         {
@@ -940,7 +981,7 @@ static void process_host_command(void)
                 total_size = W25Q_SECTOR_SIZE;
             }
 
-            if (host_cmd == 0x11)
+            if (host_cmd == CMD_DOWNLOAD_LARGE)
             {
                 uint32_t required_sectors = (total_size + W25Q_SECTOR_SIZE - 1) / W25Q_SECTOR_SIZE;
                 uint32_t allocated_first_sector = allocate_large_sectors(required_sectors);
@@ -954,7 +995,7 @@ static void process_host_command(void)
                 current_sector_count = required_sectors;
                 current_allocated_size = required_sectors * W25Q_SECTOR_SIZE;
             }
-            else if (host_cmd == 0x45)
+            else if (host_cmd == CMD_DOWNLOAD_SMALL)
             {
                 uint32_t required_size = total_size;
                 uint32_t allocated_addr = allocate_small_space(required_size);
@@ -1003,15 +1044,18 @@ static void process_host_command(void)
         return;
     }
 
-    // ==================== 0x20: 查询文件列表 (TLV 格式) ====================
-    // 总布局: [entry_count(1B)] [slot_count(1B)] [slot_records...] [file_records...]
-    // slot 记录: [rLen=10(1B)] [tag=0xFF(1B)] [start_sector(4B LE)] [sector_count(4B LE)]
-    // 文件记录: [rLen(1B)] [tag(1B)] [file_index(1B)] [name_len(1B)] [filename(NB)]
-    //           [addr/sector(4B LE)] [size(4B LE)]
-    //   大文件额外: sector_count(4B LE)
-    //   small: rLen = 12 + name_len, tag bit7=0
-    //   large: rLen = 16 + name_len, tag bit7=1
-    if (host_cmd == 0x20)
+    /* ==================================================================
+     *  CMD_QUERY_FILE_LIST (0x20): 查询文件列表 (TLV 格式)
+     *
+     * 总布局: [entry_count(1B)] [slot_count(1B)] [slot_records...] [file_records...]
+     *   slot 记录: [rLen=10(1B)] [tag=0xFF(1B)] [start_sector(4B LE)] [sector_count(4B LE)]
+     *   文件记录: [rLen(1B)] [tag(1B)] [file_index(1B)] [name_len(1B)] [filename(NB)]
+     *             [addr/sector(4B LE)] [size(4B LE)]
+     *   大文件额外: sector_count(4B LE)
+     *   small: rLen = 12 + name_len, tag bit7=0
+     *   large: rLen = 16 + name_len, tag bit7=1
+     * ================================================================== */
+    case CMD_QUERY_FILE_LIST:
     {
         static uint8_t file_list_buffer[2560];
         uint16_t idx = 0;
@@ -1098,36 +1142,42 @@ static void process_host_command(void)
 
         file_list_buffer[0] = entry_count;
         file_list_buffer[1] = slot_count;
-        usb_controller_send(&g_usb_controller, 0x20, file_list_buffer, idx);
+        usb_controller_send(&g_usb_controller, CMD_QUERY_FILE_LIST, file_list_buffer, idx);
         return;
     }
 
-    // ==================== 0x21: 发送bitmap ====================
-    if (host_cmd == 0x21)
+    /* ==================================================================
+     *  CMD_SEND_BITMAP (0x21): 发送大文件区位图
+     * ================================================================== */
+    case CMD_SEND_BITMAP:
     {
-        usb_controller_send(&g_usb_controller, 0x21, global_fat.large_sector_bitmap, LARGE_BITMAP_SIZE);
+        usb_controller_send(&g_usb_controller, CMD_SEND_BITMAP, global_fat.large_sector_bitmap, LARGE_BITMAP_SIZE);
         return;
     }
 
-    // ==================== 0x10: LCD检测 ====================
-    if (host_cmd == 0x10)
+    /* ==================================================================
+     *  CMD_LCD_STREAM (0x10): LCD 流控制
+     * ================================================================== */
+    case CMD_LCD_STREAM:
     {
         if (host_payload_len >= 3)
         {
             uint8_t sub_cmd = host_payload[FRAME_HDR_SIZE];
-            if (sub_cmd == 0x01)
+            if (sub_cmd == LCD_SUBCMD_START)
                 lcd_usb_stream_enabled = true;
-            else if (sub_cmd == 0x00)
+            else if (sub_cmd == LCD_SUBCMD_STOP)
                 lcd_usb_stream_enabled = false;
         }
         uint8_t resp[1];
         resp[0] = lcd_usb_stream_enabled ? 0x01 : 0x00;
-        usb_controller_send(&g_usb_controller, 0x10, resp, sizeof(resp));
+        usb_controller_send(&g_usb_controller, CMD_LCD_STREAM, resp, sizeof(resp));
         return;
     }
 
-    // ==================== 0x15: 中止下载（上位机取消/超时通知MCU回滚） ====================
-    if (host_cmd == 0x15)
+    /* ==================================================================
+     *  CMD_ABORT_DOWNLOAD (0x15): 中止下载
+     * ================================================================== */
+    case CMD_ABORT_DOWNLOAD:
     {
         if (is_downloading)
         {
@@ -1137,8 +1187,13 @@ static void process_host_command(void)
         return;
     }
 
-    // ==================== 未知指令 ====================
-    send_error(0x09);
+    /* ==================================================================
+     *  未知指令
+     * ================================================================== */
+    default:
+        send_error(0x09);
+        break;
+    }
 }
 
 #pragma endregion

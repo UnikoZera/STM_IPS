@@ -16,7 +16,17 @@ app = Flask(__name__, static_url_path='', static_folder='.')
 
 ALLOWED_EXT = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp', '.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv'}
 VIDEO_EXT = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.gif'}
+
+# ============================================================================
+#  FFmpeg 探测与配置
+# ============================================================================
+
 def _find_ffmpeg():
+    """Try system ffmpeg first, fall back to imageio-ffmpeg bundled binary.
+
+    注意：imageio-ffmpeg 通常只带 ffmpeg，不带 ffprobe。
+    无 ffprobe 时返回 None，调用方必须容错（时长等元数据可缺省）。
+    """
     """Try system ffmpeg first, fall back to imageio-ffmpeg bundled binary.
 
     注意：imageio-ffmpeg 通常只带 ffmpeg，不带 ffprobe。
@@ -48,27 +58,26 @@ def _find_ffmpeg():
     return 'ffmpeg', sys_probe
 
 FFMPEG, FFPROBE = _find_ffmpeg()
-_NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW
-# 同时只跑一个重转码任务（避免多任务抢 IO/显存）
-_CONVERT_LOCK = Lock()
+
+# ============================================================================
+#  全局配置常量
+# ============================================================================
+
+_NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW（隐藏控制台窗口）
+_CONVERT_LOCK = Lock()   # 同时只跑一个重转码任务（避免多任务抢 IO/显存）
 try:
     _CPU_COUNT = os.cpu_count() or 2
 except Exception:
     _CPU_COUNT = 2
-# 性能优先：多线程编解码/滤镜（上限 8，避免无意义线程爆炸）
-FFMPEG_THREADS = max(2, min(8, _CPU_COUNT))
-# 缩放质量：160x80 目标分辨率下 lanczos 成本很低，但边缘/文字明显更清晰
-# （预览与烧录共用此缩放结果，改这里会同时影响两端画质）
-SCALE_FLAGS = 'lanczos'
-# GPU 硬解：启动时探测；可用环境变量 STM_IPS_HWACCEL=cuda|d3d11va|dxva2|qsv|off 覆盖
-_HWACCEL = None  # None 表示纯 CPU
+FFMPEG_THREADS = max(2, min(8, _CPU_COUNT))  # 多线程编解码/滤镜，上限 8
+SCALE_FLAGS = 'lanczos'  # 缩放滤镜（预览与烧录共用，改这里同时影响两端画质）
+
+# GPU 硬解状态（启动时探测；可用 STM_IPS_HWACCEL 环境变量覆盖）
+_HWACCEL = None           # None = CPU
 _HWACCEL_PROBED = False
-# 最近一次实际转码是否用了硬解（供 /convert 回传）
-_LAST_DECODE_ACCEL = 'cpu'
-# 会话内最近一次成功的硬解后端（加速后续文件选型）
-_LAST_GOOD_ACCEL = None
-# 按文件属性缓存选型结果，避免同文件重复 file-probe
-_HW_FILE_CACHE = {}
+_LAST_DECODE_ACCEL = 'cpu'   # 最近一次实际解码后端（供 /convert 回传）
+_LAST_GOOD_ACCEL = None      # 最近一次成功的硬解后端
+_HW_FILE_CACHE = {}          # 按文件属性缓存选型结果，避免重复 file-probe
 
 
 def _ffmpeg_common_args():
@@ -380,7 +389,12 @@ def _popen_silent(*args, **kwargs):
 
 
 HERE = Path(__file__).parent
-# 注意：不截断视频帧。此阈值仅用于“JSON 内联 hex 的安全上限”，超大结果走 download_id 二进制。
+
+# ============================================================================
+#  下载管理：临时文件注册、过期清理
+# ============================================================================
+
+# 注意：不截断视频帧。此阈值仅用于"JSON 内联 hex 的安全上限"，超大结果走 download_id 二进制。
 INLINE_HEX_MAX_BYTES = 256 * 1024
 DOWNLOAD_TTL = 300        # seconds before temp files are cleaned
 
@@ -763,6 +777,11 @@ def convert():
     return jsonify(result)
 
 
+# ============================================================================
+#  RAW5 容器：图片处理
+# ============================================================================
+
+
 def _process_image_raw(in_path: str, width: int, height: int,
                        endian: str = '>', brightness: float = 100.0) -> dict:
     """Export raw RGB565 image as RAW5 container (14B header + BE pixels)."""
@@ -795,6 +814,10 @@ def _process_image_raw(in_path: str, width: int, height: int,
     }
     return _attach_payload_fields(result, payload, preview)
 
+
+# ============================================================================
+#  MJPEG 容器格式：编解码辅助函数
+# ============================================================================
 
 def _drain_stderr(proc, bucket: list):
     """后台吸干 stderr，避免 verbose 日志塞满管道导致 ffmpeg 卡死。"""
@@ -969,6 +992,11 @@ def _pack_mjpeg(frames: list, width: int, height: int) -> bytes:
     return buf.getvalue()
 
 
+# ============================================================================
+#  MJPEG 容器：视频处理
+# ============================================================================
+
+
 def _process_video_mjpeg(in_path: str, width: int, height: int,
                           output_fps: float = 30, quality: int = 80) -> dict:
     """Process full video with MJPEG: stream frames to disk, no frame truncation."""
@@ -1076,6 +1104,11 @@ def _process_image_mjpeg(in_path: str, width: int, height: int,
         'truncated': False,
     }
     return _attach_payload_fields(result, compressed, b'')
+
+
+# ============================================================================
+#  RAW5 容器：视频处理
+# ============================================================================
 
 
 def _process_video_raw(in_path: str, width: int, height: int,

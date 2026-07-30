@@ -2142,11 +2142,11 @@ function hideSendWarn(){
 
 async function userStartSend(){
   if(!selFile){toast('请选择文件','error');return;}
-  if((document.getElementById('lcdStreamStatus').textContent||'').includes('已开启')){
+  if(($('lcdStreamStatus').textContent||'').includes('已开启')){
     showSendWarn();
     return;
   }
-  const cmd=parseInt(document.getElementById('fileType').value);
+  const cmd=parseInt($('fileType').value);
   let fn=elName.value.trim();if(!fn)fn=selFile.name.replace(/\.[^.]+$/,'').slice(0,16);
   if(new TextEncoder().encode(fn).length>16){toast('文件名编码超16字节','error');return;}
   const sz=selFile.size<1024?selFile.size+'B':(selFile.size/1024).toFixed(1)+'KB';
@@ -2164,7 +2164,7 @@ async function doSend(file,cmd,fn){
   fileData=new Uint8Array(await file.arrayBuffer());
   fileOff=0;fileCmd=cmd;fileName=fn;
   sendState=ST_SENDING;
-  lcdStreamWasOn=(document.getElementById('lcdStreamStatus').textContent||'').indexOf('已开启')>=0;
+  lcdStreamWasOn=($('lcdStreamStatus').textContent||'').indexOf('已开启')>=0;
   if(lcdStreamWasOn){
     const ackPromise=new Promise(function(r){lcdAckResolve=r;});
     const ok=await writeSer(frame(C_LCD,new Uint8Array([0x00])));
@@ -2260,7 +2260,7 @@ async function retrySend(){
   const f=selFile;let fn=elName.value.trim();
   if(!f){toast('请重新选择文件','error');return;}
   if(!fn)fn=f.name.replace(/\.[^.]+$/,'').slice(0,16);
-  const cmd=parseInt(document.getElementById('fileType').value);
+  const cmd=parseInt($('fileType').value);
   sendState=ST_INIT;elBtnRetry.style.display='none';elBtnSend.style.display='block';
   await doSend(f,cmd,fn);
 }
@@ -2271,7 +2271,7 @@ function setUI(state){
   else{elBtnSend.style.display='block';elBtnCancel.style.display='none';elBtnRetry.style.display='none';elBtnSend.disabled=true;elStatus.textContent='';elFileInfo.textContent='未选择文件';}
 }
 
-function chunkSz(){const v=parseInt(document.getElementById('chunkSize').value)||0;return v>0?Math.min(v,2048):1;}
+function chunkSz(){const v=parseInt($('chunkSize').value)||0;return v>0?Math.min(v,2048):1;}
 function updateProg(pct,done,total){
   elProg.style.width=pct+'%';
   const r=Math.round(255*(1-pct/100)),g=Math.round(23*(1-pct/100)+230*(pct/100)),b=Math.round(68*(1-pct/100)+118*(pct/100));
@@ -2291,7 +2291,7 @@ function updateProg(pct,done,total){
 async function connectSerial(){
   try{
     port=await navigator.serial.requestPort();
-    const br=parseInt(document.getElementById('baudRate').value)||921600;
+    const br=parseInt($('baudRate').value)||921600;
     await port.open({baudRate:br,dataBits:8,stopBits:1,parity:'none',flowControl:'none'});
     $('statusDot').className='status-dot on';$('statusText').textContent='在线';$('portInfo').textContent='@ '+br;
     $('statusBadge').classList.add('connected');
@@ -2487,18 +2487,18 @@ function stopLcdWatch(){
 const SET_KEY='stm_ips_host_cfg';
 function saveAllSettings(){
   const s={
-    baudRate:document.getElementById('baudRate').value,
-    chunkSize:document.getElementById('chunkSize').value,
-    fileType:document.getElementById('fileType').value,
-    fileName:document.getElementById('fileNameInput').value,
+    baudRate:$('baudRate').value,
+    chunkSize:$('chunkSize').value,
+    fileType:$('fileType').value,
+    fileName:$('fileNameInput').value,
     leftW:$('leftPanel').style.width||'',
     rightW:$('rightPanel').style.width||'',
-    vpWidth:document.getElementById('vpWidth').value,
-    vpHt:document.getElementById('vpHt').value,
-    vpFps:document.getElementById('vpFps').value,
-    vpCodec:document.getElementById('vpCodec').value,
-    vpMjpegQuality:document.getElementById('vpMjpegQuality').value,
-    vpBrightness:document.getElementById('vpBrightness').value
+    vpWidth:$('vpWidth').value,
+    vpHt:$('vpHt').value,
+    vpFps:$('vpFps').value,
+    vpCodec:$('vpCodec').value,
+    vpMjpegQuality:$('vpMjpegQuality').value,
+    vpBrightness:$('vpBrightness').value
   };
   try{localStorage.setItem(SET_KEY,JSON.stringify(s));}catch(e){}
 }
@@ -2507,28 +2507,28 @@ function loadAllSettings(){
     const raw=localStorage.getItem(SET_KEY);
     if(!raw)return;
     const s=JSON.parse(raw);
-    if(s.baudRate)document.getElementById('baudRate').value=s.baudRate;
-    if(s.chunkSize)document.getElementById('chunkSize').value=s.chunkSize;
-    if(s.fileType)document.getElementById('fileType').value=s.fileType;
-    if(s.fileName)document.getElementById('fileNameInput').value=s.fileName;
+    if(s.baudRate)$('baudRate').value=s.baudRate;
+    if(s.chunkSize)$('chunkSize').value=s.chunkSize;
+    if(s.fileType)$('fileType').value=s.fileType;
+    if(s.fileName)$('fileNameInput').value=s.fileName;
     if(s.leftW){const w=Math.max(260,Math.min(520,parseInt(s.leftW)||340));$('leftPanel').style.width=w+'px';}
     if(s.rightW){const w=Math.max(260,Math.min(520,parseInt(s.rightW)||340));$('rightPanel').style.width=w+'px';}
-    if(s.vpWidth)document.getElementById('vpWidth').value=s.vpWidth;
-    if(s.vpHt)document.getElementById('vpHt').value=s.vpHt;
-    if(s.vpFps)document.getElementById('vpFps').value=s.vpFps;
-    // 兼容旧版 localStorage：bl 已移除，回落到 mjpeg
+    if(s.vpWidth)$('vpWidth').value=s.vpWidth;
+    if(s.vpHt)$('vpHt').value=s.vpHt;
+    if(s.vpFps)$('vpFps').value=s.vpFps;
+    // 恢复上次选择的编码器（旧版可能存了已废弃的编码，统一回退到 mjpeg）
     if(s.vpCodec){
       const codec = (s.vpCodec === 'raw') ? 'raw' : 'mjpeg';
-      document.getElementById('vpCodec').value=codec;
+      $('vpCodec').value=codec;
       onVpCodecChange();
     }
     if(s.vpMjpegQuality){
-      document.getElementById('vpMjpegQuality').value=s.vpMjpegQuality;
-      document.getElementById('vpMjpegQualityLabel').textContent=s.vpMjpegQuality;
+      $('vpMjpegQuality').value=s.vpMjpegQuality;
+      $('vpMjpegQualityLabel').textContent=s.vpMjpegQuality;
     }
     if(s.vpBrightness){
-      document.getElementById('vpBrightness').value=s.vpBrightness;
-      const lbl=document.getElementById('vpBrightnessLabel');
+      $('vpBrightness').value=s.vpBrightness;
+      const lbl=$('vpBrightnessLabel');
       if(lbl) lbl.textContent=s.vpBrightness+'%';
     }
     updateNBC();
@@ -2538,22 +2538,22 @@ function loadAllSettings(){
   const el=document.getElementById(id);
   if(el) el.addEventListener('change',saveAllSettings);
 });
-document.getElementById('vpBrightness').addEventListener('input',function(){
-  const lbl=document.getElementById('vpBrightnessLabel');
+$('vpBrightness').addEventListener('input',function(){
+  const lbl=$('vpBrightnessLabel');
   if(lbl) lbl.textContent=this.value+'%';
   saveAllSettings();
 });
-document.getElementById('vpMjpegQuality').addEventListener('input',function(){
-  const lbl=document.getElementById('vpMjpegQualityLabel');
+$('vpMjpegQuality').addEventListener('input',function(){
+  const lbl=$('vpMjpegQualityLabel');
   if(lbl) lbl.textContent=this.value;
   saveAllSettings();
 });
 function onVpCodecChange(){
-  const v=document.getElementById('vpCodec').value;
-  document.getElementById('vpMjpegQualityGroup').style.display=(v==='mjpeg')?'flex':'none';
+  const v=$('vpCodec').value;
+  $('vpMjpegQualityGroup').style.display=(v==='mjpeg')?'flex':'none';
   saveAllSettings();
 }
-document.getElementById('fileNameInput').addEventListener('input',function(){
+$('fileNameInput').addEventListener('input',function(){
   updateNBC();saveAllSettings();
 });
 
@@ -2624,7 +2624,7 @@ const VP = {
   result: null,
   abort: false,
   frames: [],          // 预览帧槽：完整帧数，但按需解码（未解码为 null）
-  frameIndex: [],      // 压缩流中每帧 [start,end) 偏移（MJPEG/BL 通用）
+  frameIndex: [],      // MJPEG 压缩流中每帧 [start,end) 偏移
   compressedBytes: null, // 完整烧录 payload（二进制，禁止用超大 hex）
   curFrame: 0,
   decodeGen: 0,        // 取消在途解码
@@ -2702,11 +2702,11 @@ async function startVPProcess(){
   form.append('height', h);
   form.append('fps', fps);
   form.append('swap', '1');
-  form.append('brightness', parseInt(document.getElementById('vpBrightness').value) || 100);
-  const codec = document.getElementById('vpCodec').value;
+  form.append('brightness', parseInt($('vpBrightness').value) || 100);
+  const codec = $('vpCodec').value;
   form.append('codec', codec);
   if (codec === 'mjpeg') {
-    form.append('quality', parseInt(document.getElementById('vpMjpegQuality').value) || 60);
+    form.append('quality', parseInt($('vpMjpegQuality').value) || 60);
   }
 
   const SERVER = VP_SERVER;
@@ -2938,9 +2938,9 @@ function seekVPFrame(idx, opts){
   if(nf <= 0) return;
   idx = vpClampFrame(idx, nf);
 
-  const cv = document.getElementById('vpDCanvas');
-  const slider = document.getElementById('vpDSlider');
-  const finfo = document.getElementById('vpDFrameInfo');
+  const cv = $vp('DCanvas');
+  const slider = $vp('DSlider');
+  const finfo = $vp('DFrameInfo');
   VP.curFrame = idx;
   if(slider && !opts.skipSlider){
     slider.value = String(idx);
@@ -2965,7 +2965,7 @@ function seekVPFrame(idx, opts){
 function endVPSliderDrag(){
   if(!vpSliderDrag) return;
   vpSliderDrag = false;
-  const slider = document.getElementById('vpDSlider');
+  const slider = $vp('DSlider');
   const nf = vpDetailFrameCount();
   const idx = vpClampFrame(slider ? slider.value : VP.curFrame, nf);
   VP.curFrame = idx;
@@ -2979,7 +2979,7 @@ function endVPSliderDrag(){
 function bindVPSliderOnce(){
   if(vpSliderBound) return;
   vpSliderBound = true;
-  const slider = document.getElementById('vpDSlider');
+  const slider = $vp('DSlider');
   if(!slider) return;
 
   function onSeekStart(e){
@@ -2995,7 +2995,7 @@ function bindVPSliderOnce(){
     const nf = vpDetailFrameCount();
     const idx = vpClampFrame(slider.value, nf);
     VP.curFrame = idx;
-    const finfo = document.getElementById('vpDFrameInfo');
+    const finfo = $vp('DFrameInfo');
     if(finfo) finfo.textContent = (idx + 1) + ' / ' + nf;
     // rAF 合并：拖动过程中每帧最多解码/绘制一次，跟手且不堆积
     if(vpSeekRaf) return;
@@ -3038,20 +3038,20 @@ async function openVPDetail(){
   if(!first) return;
 
   const isVid = r.type === 'video' && nf > 1;
-  const cv = document.getElementById('vpDCanvas');
+  const cv = $vp('DCanvas');
   cv.width = r.width;
   cv.height = r.height;
 
   renderRGB565toCanvas(cv, first, r.width, r.height, r.endian === 'little');
   cv.style.aspectRatio = r.width+'/'+r.height;
 
-  const ctrls = document.getElementById('vpDVideoCtrls');
-  const slider = document.getElementById('vpDSlider');
-  const finfo = document.getElementById('vpDFrameInfo');
-  const pbtn = document.getElementById('vpDPlayBtn');
+  const ctrls = $vp('DVideoCtrls');
+  const slider = $vp('DSlider');
+  const finfo = $vp('DFrameInfo');
+  const pbtn = $vp('DPlayBtn');
 
   // show compressed size info in modal
-  var compInfo = document.getElementById('vpDCompInfo');
+  var compInfo = $vp('DCompInfo');
   if (compInfo) {
     var rawBytes = r.frame_count * r.frame_size;
     var compBytes = (VP.compressedBytes && VP.compressedBytes.length)
@@ -3083,22 +3083,22 @@ async function openVPDetail(){
   const totalBytes = nf * r.frame_size;
   const totalStr = totalBytes+' B' + (totalBytes >= 1024 ? ' ('+(totalBytes/1024).toFixed(1)+' KB)' : '');
   const endianStr = r.endian ? ' | '+r.endian : '';
-  document.getElementById('vpDTitle').textContent = isVid
+  $vp('DTitle').textContent = isVid
     ? '&#128249; '+r.width+'x'+r.height+' | '+nf+' 帧 | '+totalStr + (r.fps?' | '+r.fps.toFixed(1)+' FPS':'')+endianStr
     : '&#128247; '+r.width+'x'+r.height+' | '+totalStr+endianStr;
 
   if(isVid && r.fps){
-    document.getElementById('vpDFpsInfo').textContent = r.fps.toFixed(1)+' FPS | '+totalStr;
+    $vp('DFpsInfo').textContent = r.fps.toFixed(1)+' FPS | '+totalStr;
   } else {
-    document.getElementById('vpDFpsInfo').textContent = totalStr;
+    $vp('DFpsInfo').textContent = totalStr;
   }
 
-  document.getElementById('vpDetailModal').style.display = 'flex';
+  $('vpDetailModal').style.display = 'flex';
   initVPDrag();
 }
 
 function initVPDrag(){
-  const rz = document.getElementById('vpDResizer');
+  const rz = $vp('DResizer');
   if(!rz) return;
   // 每次打开重置默认宽度（约 900 弹窗内 78%），仍可拖拽放大
   const parentW = (rz.parentElement && rz.parentElement.clientWidth) || 860;
@@ -3142,7 +3142,7 @@ function closeVPDetail(){
   vpDPlaying = false;
   vpSliderDrag = false;
   vpSeekGen++;
-  const el = document.getElementById('vpDetailModal');
+  const el = $('vpDetailModal');
   el.classList.add('closing');
   setTimeout(function(){ el.style.display = 'none'; el.classList.remove('closing'); }, 200);
 }
@@ -3150,10 +3150,10 @@ function closeVPDetail(){
 function toggleVPPlay(){
   const r = VP.result;
   if(!r) return;
-  const cv = document.getElementById('vpDCanvas');
-  const slider = document.getElementById('vpDSlider');
-  const btn = document.getElementById('vpDPlayBtn');
-  const finfo = document.getElementById('vpDFrameInfo');
+  const cv = $vp('DCanvas');
+  const slider = $vp('DSlider');
+  const btn = $vp('DPlayBtn');
+  const finfo = $vp('DFrameInfo');
   const nf = vpDetailFrameCount();
   if(nf <= 0) return;
 
@@ -3461,7 +3461,7 @@ async function sendVPToDevice(){
   try{
     // 视频/大文件默认大文件区
     if(r.type === 'video' || fakeFile.size > 6*1024){
-      document.getElementById('fileType').value = '0x11';
+      $('fileType').value = '0x11';
       if(typeof updateSmallFileTypeHint === 'function') updateSmallFileTypeHint({toast:false});
     }
   }catch(e){}
@@ -3471,11 +3471,11 @@ async function sendVPToDevice(){
   toast('已填入完整数据（'+sz+'，'+ (r.frame_count||'?') +'帧），请确认类型后发送','success');
 
   // scroll to send settings
-  const sendCard = document.getElementById('fileType').closest('.card');
+  const sendCard = $('fileType').closest('.card');
   if(sendCard){
     sendCard.scrollIntoView({behavior:'smooth',block:'center'});
     setTimeout(function(){
-      document.getElementById('fileType').focus();
+      $('fileType').focus();
     }, 500);
   }
 }
@@ -3486,8 +3486,8 @@ function toggleTheme(){
   html.classList.add('theme-animating');
   html.classList.toggle('light');
   const isLight = html.classList.contains('light');
-  document.getElementById('themeBtn').innerHTML = isLight ? '&#9788;' : '&#9790;';
-  document.getElementById('themeBtn').title = isLight ? '切换深色模式' : '切换浅色模式';
+  $('themeBtn').innerHTML = isLight ? '&#9788;' : '&#9790;';
+  $('themeBtn').title = isLight ? '切换深色模式' : '切换浅色模式';
   try{ localStorage.setItem('stm_ips_theme', isLight ? 'light' : 'dark'); }catch(e){}
   window.clearTimeout(toggleTheme._tid);
   toggleTheme._tid = window.setTimeout(function(){
@@ -3498,8 +3498,8 @@ function toggleTheme(){
   const saved = (typeof localStorage!=='undefined') ? localStorage.getItem('stm_ips_theme') : null;
   if(saved === 'light'){
     document.documentElement.classList.add('light');
-    document.getElementById('themeBtn').innerHTML = '&#9788;';
-    document.getElementById('themeBtn').title = '切换深色模式';
+    $('themeBtn').innerHTML = '&#9788;';
+    $('themeBtn').title = '切换深色模式';
   }
 })();
 
@@ -3529,8 +3529,8 @@ function handleBitmapResp(payload){
 }
 
 function showBitmapModal(data,used,free,total){
-  const canvas=document.getElementById('bitmapCanvas');
-  const info=document.getElementById('bitmapInfo');
+  const canvas=$('bitmapCanvas');
+  const info=$('bitmapInfo');
   if(!canvas)return;
   const pct2=(used/total*100).toFixed(1);
   info.innerHTML='大文件区: '+total+' 扇区 | <span style="color:#7c4dff;">已用 '+used+'</span> <span style="color:#00e676;opacity:0.7;">空闲 '+free+'</span> | 占用 '+pct2+'%';
@@ -3559,19 +3559,19 @@ function showBitmapModal(data,used,free,total){
       const sectorNum=idx2+64;  // AREA_LARGE_START_SECTOR = 64
       const byteIdx2=Math.floor(idx2/8),bitIdx2=idx2%8;
       const used3=(data[byteIdx2]&(1<<bitIdx2))!==0;
-      document.getElementById('bitmapHoverInfo').textContent='扇区 #'+sectorNum+' ('+(used3?'已用':'空闲')+')';
+      $('bitmapHoverInfo').textContent='扇区 #'+sectorNum+' ('+(used3?'已用':'空闲')+')';
     }
   };
-  document.getElementById('bitmapModal').style.display='flex';
+  $('bitmapModal').style.display='flex';
 }
 
 function closeBitmapModal(){
-  const el=document.getElementById('bitmapModal');
+  const el=$('bitmapModal');
   el.classList.add('closing');
   setTimeout(function(){el.style.display='none';el.classList.remove('closing');},200);
 }
 
-document.getElementById('vpDetailModal').addEventListener('keydown',function(e){
+$('vpDetailModal').addEventListener('keydown',function(e){
   if(e.key==='Escape')closeVPDetail();
 });
 
