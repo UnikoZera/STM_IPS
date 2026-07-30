@@ -609,6 +609,8 @@ static bool lcd_stream_was_enabled = false;
 static uint32_t current_write_addr = 0;
 static uint32_t current_file_size = 0;
 static uint32_t current_allocated_size = 0;
+/* 首包声明的完整文件大小；后续包 total_size 字段为 0，不能复用 host_total_file_size */
+static uint32_t expected_file_size = 0;
 static uint8_t current_file_type = 0;
 static char current_filename[MAX_FILENAME_LEN] = {0};
 static uint32_t current_start_sector = 0;
@@ -659,6 +661,7 @@ static void abort_download_common(void)
      * 直接回退会导致下次从同地址开始烧录，若新文件更短则残留旧数据。 */
     lcd_usb_stream_enabled = lcd_stream_was_enabled;
     is_downloading = false;
+    expected_file_size = 0;
 }
 
 static void abort_download_with_error(uint8_t error_type)
@@ -668,8 +671,30 @@ static void abort_download_with_error(uint8_t error_type)
 }
 
 /**
+ * @brief 等待 W25Q DMA 空闲（写/读状态机跑完）
+ * @return true=空闲, false=超时
+ */
+static bool flash_wait_dma_idle(uint32_t timeout_ms)
+{
+    uint32_t wait_start = HAL_GetTick();
+    while (w25q_dma_is_busy())
+    {
+        w25q_dma_task();
+        usb_controller_task(&g_usb_controller);
+        if ((uint32_t)(HAL_GetTick() - wait_start) >= timeout_ms)
+        {
+            return false;
+        }
+    }
+    return !w25q_dma_is_error();
+}
+
+/**
  * @brief 写入W25Q并回读验证，失败自动重试（最多WRITE_VERIFY_RETRY_MAX次）
- *        验证方式：写入后用 w25q_read_data 回读，与 dma_write_buf memcmp 对比
+ *
+ * 注意：DMA 路径必须等到本块编程完成再返回。
+ * 若仅“启动 DMA 就 ACK”，最后一包可能在 0x14 收尾后仍在写，
+ * 文件尾损坏 → 播放循环到末尾花屏（raw/MJPEG 都会出现）。
  */
 static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t size)
 {
@@ -678,48 +703,45 @@ static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t 
 
     for (uint32_t retry = 0U; retry < WRITE_VERIFY_RETRY_MAX; retry++)
     {
-        // --- 等待DMA空闲 ---
+        if (!flash_wait_dma_idle(DMA_WAIT_TIMEOUT_MS))
         {
-            uint32_t wait_start = HAL_GetTick();
-            while (w25q_dma_is_busy())
-            {
-                w25q_dma_task();
-                usb_controller_task(&g_usb_controller);
-                if (HAL_GetTick() - wait_start >= DMA_WAIT_TIMEOUT_MS)
-                {
-                    return false;
-                }
-            }
+            return false;
         }
 
         // --- 拷贝数据到dma_write_buf ---
         memcpy(dma_write_buf, data, size);
 
-        // --- 写入W25Q（优先DMA，TransmitReceive_DMA解决RX FIFO溢出） ---
+        // --- 写入W25Q（优先DMA） ---
         if (w25q_write_data_dma(addr, dma_write_buf, size))
         {
-            // DMA 已启动，在后台运行，不等待也不验证
-            // 下一块的函数调用会在顶部等待DMA完成，实现flash编程与USB传输重叠
-            return true;
+            // 必须等本块写完；大块多页编程可能超过默认 100ms
+            uint32_t prog_timeout = DMA_WAIT_TIMEOUT_MS + (size / 16U);
+            if (prog_timeout < 500U)
+            {
+                prog_timeout = 500U;
+            }
+            if (!flash_wait_dma_idle(prog_timeout))
+            {
+                continue; // 重试
+            }
         }
         else
         {
-            // DMA启动失败，回退同步写入+回读验证
+            // DMA启动失败，回退同步写入
             w25q_write_data(addr, dma_write_buf, size);
         }
 
-        // --- 回读验证（仅同步路径执行） ---
-        // 使用 FastRead + dummy byte + 1ms 延时，确保时序稳定
+        // --- 回读验证 ---
         HAL_Delay(1);
         w25q_fast_read_data(addr, rx_buffer, size);
         if (memcmp(rx_buffer, dma_write_buf, size) == 0)
         {
-            return true; // 验证通过
+            return true;
         }
-        // --- 不匹配 ---
+        // --- 不匹配，重试 ---
     }
 
-    return false; // 多次重试后仍失败
+    return false;
 }
 #pragma endregion
 
@@ -785,6 +807,20 @@ static void process_host_command(void)
     {
         if (!is_downloading)
             return;
+
+        /* 最后一包可能仍在 DMA 编程；必须等写完再登记 FAT，否则文件尾损坏 */
+        if (!flash_wait_dma_idle(2000U))
+        {
+            abort_download_with_error(0x0B);
+            return;
+        }
+
+        /* 校验实际接收字节数与首包声明大小一致 */
+        if (expected_file_size != 0U && current_file_size != expected_file_size)
+        {
+            abort_download_with_error(0x0B);
+            return;
+        }
 
         memcpy(current_filename, (char *)&host_payload[FRAME_HDR_SIZE],
                (actual_data_len < MAX_FILENAME_LEN) ? actual_data_len : MAX_FILENAME_LEN);
@@ -875,6 +911,7 @@ static void process_host_command(void)
         }
         lcd_usb_stream_enabled = lcd_stream_was_enabled;
         is_downloading = false;
+        expected_file_size = 0;
         send_continue();
         return;
     }
@@ -893,6 +930,7 @@ static void process_host_command(void)
             current_sector_count = 0;
             small_file_start_addr = 0;
             current_write_addr = 0;
+            expected_file_size = host_total_file_size; /* 仅首包有效 */
             memset(current_filename, 0x00, sizeof(current_filename));
 
             // 大文件与小文件均一致：根据 host_total_file_size 预分配全部空间

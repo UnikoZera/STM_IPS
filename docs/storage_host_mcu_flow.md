@@ -79,15 +79,15 @@ flash_write_and_verify(addr, data, size)
 
 含义：
 
-- **吞吐优先**：DMA 与 USB 可重叠。  
-- **风险**：DMA 路径坏数据仍可能 ACK；脏扇区未擦时 NOR 只能 1→0，易花屏。  
+- **完整性优先**：每块 Flash 写入等 DMA 完成并回读校验后再 ACK；`0x14` 结束前再等 DMA 空闲，并核对 `current_file_size == expected_file_size`。  
+- **风险**：脏扇区未擦时 NOR 只能 1→0；未通过校验会 `0x0B` 回滚。  
 - 删除大文件会擦扇区，有利于「干净分配」假设。
 
 ## 6. 读 / 播放
 
 1. `0x20` 或 `find_large_file_by_name` 得 `start_sector`、`size`。  
 2. 地址 = `start_sector * 4096`，`end = start + size`。  
-3. 读 magic：`MJPG` → MJPEG；`BL` → BL；否则 raw RGB565。  
+3. 读 magic：`MJPG` → MJPEG；`RAW5` → 自描述 raw RGB565（头内 w/h/frame_count）；否则按调用方宽高解读无头 raw。
 4. `lcd_ui_init` **仅启动绑一次**；烧完需复位或改代码重绑。
 
 ## 7. 分区回顾

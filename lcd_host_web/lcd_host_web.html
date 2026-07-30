@@ -1706,20 +1706,9 @@ button#btnLcdOn:hover:not(:disabled){
           <span style="font-size:10.5px;color:var(--text2);flex-shrink:0;">编码方式</span>
           <select id="vpCodec" style="flex:1;padding:7px 9px;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);outline:none;" onchange="onVpCodecChange()">
             <option value="mjpeg" selected>MJPEG 压缩</option>
-            <option value="bl">BL 块压缩</option>
+            <option value="raw">原图 (RGB565)</option>
           </select>
-          <span style="font-size:9px;color:var(--text3);flex-shrink:0;">算法决定体积与画质</span>
-        </div>
-        <!-- BL 压缩质量 (仅 BL 模式可见) -->
-        <div id="vpBlQualityGroup" style="margin-bottom:5px;display:none;align-items:center;gap:10px;">
-          <span style="font-size:10.5px;color:var(--text2);flex-shrink:0;">BL 画质</span>
-          <select id="vpQuality" style="flex:1;padding:7px 9px;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);outline:none;">
-            <option value="11">无损 (不压缩)</option>
-            <option value="10">极高画质 (2x2块)</option>
-            <option value="9">高画质 (4x2块)</option>
-            <option value="7" selected>中画质 (4x4块)</option>
-          </select>
-          <span style="font-size:9px;color:var(--text3);flex-shrink:0;">画质越高质量体积越大</span>
+          <span style="font-size:9px;color:var(--text3);flex-shrink:0;">原图不压缩，体积更大</span>
         </div>
         <!-- MJPEG 质量 (仅 MJPEG 模式可见；默认编码) -->
         <div id="vpMjpegQualityGroup" style="margin-bottom:5px;display:flex;align-items:center;gap:10px;">
@@ -2508,7 +2497,6 @@ function saveAllSettings(){
     vpHt:document.getElementById('vpHt').value,
     vpFps:document.getElementById('vpFps').value,
     vpCodec:document.getElementById('vpCodec').value,
-    vpQuality:document.getElementById('vpQuality').value,
     vpMjpegQuality:document.getElementById('vpMjpegQuality').value,
     vpBrightness:document.getElementById('vpBrightness').value
   };
@@ -2528,7 +2516,12 @@ function loadAllSettings(){
     if(s.vpWidth)document.getElementById('vpWidth').value=s.vpWidth;
     if(s.vpHt)document.getElementById('vpHt').value=s.vpHt;
     if(s.vpFps)document.getElementById('vpFps').value=s.vpFps;
-    if(s.vpCodec){document.getElementById('vpCodec').value=s.vpCodec;onVpCodecChange();}
+    // 兼容旧版 localStorage：bl 已移除，回落到 mjpeg
+    if(s.vpCodec){
+      const codec = (s.vpCodec === 'raw') ? 'raw' : 'mjpeg';
+      document.getElementById('vpCodec').value=codec;
+      onVpCodecChange();
+    }
     if(s.vpMjpegQuality){
       document.getElementById('vpMjpegQuality').value=s.vpMjpegQuality;
       document.getElementById('vpMjpegQualityLabel').textContent=s.vpMjpegQuality;
@@ -2538,12 +2531,10 @@ function loadAllSettings(){
       const lbl=document.getElementById('vpBrightnessLabel');
       if(lbl) lbl.textContent=s.vpBrightness+'%';
     }
-    if(s.vpQuality)document.getElementById('vpQuality').value=s.vpQuality;
-    else document.getElementById('vpQuality').value='11';
     updateNBC();
   }catch(e){}
 }
-['baudRate','chunkSize','fileType','vpWidth','vpHt','vpFps','vpCodec','vpQuality','vpMjpegQuality','vpBrightness'].forEach(function(id){
+['baudRate','chunkSize','fileType','vpWidth','vpHt','vpFps','vpCodec','vpMjpegQuality','vpBrightness'].forEach(function(id){
   const el=document.getElementById(id);
   if(el) el.addEventListener('change',saveAllSettings);
 });
@@ -2559,7 +2550,6 @@ document.getElementById('vpMjpegQuality').addEventListener('input',function(){
 });
 function onVpCodecChange(){
   const v=document.getElementById('vpCodec').value;
-  document.getElementById('vpBlQualityGroup').style.display=(v==='bl')?'flex':'none';
   document.getElementById('vpMjpegQualityGroup').style.display=(v==='mjpeg')?'flex':'none';
   saveAllSettings();
 }
@@ -2717,8 +2707,6 @@ async function startVPProcess(){
   form.append('codec', codec);
   if (codec === 'mjpeg') {
     form.append('quality', parseInt(document.getElementById('vpMjpegQuality').value) || 60);
-  } else {
-    form.append('quality', parseInt(document.getElementById('vpQuality').value) || 7);
   }
 
   const SERVER = VP_SERVER;
@@ -2876,7 +2864,7 @@ async function showVPResult(){
   if(compBytes > 0){
     const ratio = totalBytes > 0 ? (totalBytes / compBytes) : 0;
     const qs = r.quality || 'N/A';
-    const codecLabel = r.codec === 'mjpeg' ? 'MJPEG压缩' : (r.codec === 'bl'||!r.codec ? 'BL块压缩' : '不压缩');
+    const codecLabel = r.codec === 'mjpeg' ? 'MJPEG压缩' : (r.codec === 'raw' ? '原图(RGB565)' : '未知编码');
     $vp('CompressStats').innerHTML =
       '<span style="color:var(--gold);">\u21BB '+codecLabel+'</span> ' +
       '<span style="color:var(--text2);">| 质量:'+qs+' |</span> ' +
@@ -2922,14 +2910,129 @@ async function showVPResult(){
 
 /* ===== VP 详情弹窗 ===== */
 let vpDPlaying = false, vpDTimer = null, vpDragging = false, vpRafStart = 0, vpSliderDrag = false, vpFrameDurationMs = 0;
+let vpSeekGen = 0;          // 只采纳最新一次 seek 的解码结果
+let vpSeekRaf = 0;          // 拖动时 rAF 合并渲染
+let vpSliderBound = false;  // 进度条事件只绑定一次
+
+function vpDetailFrameCount(){
+  const r = VP.result;
+  if(!r) return 0;
+  return Math.max(VP.frameIndex.length || 0, r.frame_count || 0, VP.frames.length || 0);
+}
+
+function vpClampFrame(idx, nf){
+  idx = parseInt(idx, 10);
+  if(!isFinite(idx) || isNaN(idx)) idx = 0;
+  if(nf <= 0) return 0;
+  if(idx < 0) return 0;
+  if(idx >= nf) return nf - 1;
+  return idx;
+}
+
+/** 按帧号刷新预览（带世代号，避免拖动时旧解码覆盖新位置） */
+function seekVPFrame(idx, opts){
+  opts = opts || {};
+  const r = VP.result;
+  if(!r) return;
+  const nf = vpDetailFrameCount();
+  if(nf <= 0) return;
+  idx = vpClampFrame(idx, nf);
+
+  const cv = document.getElementById('vpDCanvas');
+  const slider = document.getElementById('vpDSlider');
+  const finfo = document.getElementById('vpDFrameInfo');
+  VP.curFrame = idx;
+  if(slider && !opts.skipSlider){
+    slider.value = String(idx);
+  }
+  if(finfo) finfo.textContent = (idx + 1) + ' / ' + nf;
+
+  const gen = ++vpSeekGen;
+  ensureVPFrame(idx).then(function(fr){
+    if(gen !== vpSeekGen) return;          // 过期 seek
+    if(!fr) return;
+    if(VP.curFrame !== idx) return;
+    if(cv) renderRGB565toCanvas(cv, fr, r.width, r.height, r.endian === 'little');
+  });
+
+  // 拖动时预取邻近帧，减轻跟手卡顿
+  if(opts.prefetch){
+    ensureVPFrame((idx + 1) % nf);
+    if(idx > 0) ensureVPFrame(idx - 1);
+  }
+}
+
+function endVPSliderDrag(){
+  if(!vpSliderDrag) return;
+  vpSliderDrag = false;
+  const slider = document.getElementById('vpDSlider');
+  const nf = vpDetailFrameCount();
+  const idx = vpClampFrame(slider ? slider.value : VP.curFrame, nf);
+  VP.curFrame = idx;
+  // 播放中：把时间轴锚到拖拽落点，避免松开后跳回旧位置
+  if(vpDPlaying && vpFrameDurationMs > 0){
+    vpRafStart = performance.now() - idx * vpFrameDurationMs;
+  }
+  seekVPFrame(idx, {prefetch:true});
+}
+
+function bindVPSliderOnce(){
+  if(vpSliderBound) return;
+  vpSliderBound = true;
+  const slider = document.getElementById('vpDSlider');
+  if(!slider) return;
+
+  function onSeekStart(e){
+    vpSliderDrag = true;
+    // 捕获指针，即使拖出滑块也能收到 pointerup
+    try{
+      if(e && e.pointerId != null && slider.setPointerCapture){
+        slider.setPointerCapture(e.pointerId);
+      }
+    }catch(_e){}
+  }
+  function onSeekInput(){
+    const nf = vpDetailFrameCount();
+    const idx = vpClampFrame(slider.value, nf);
+    VP.curFrame = idx;
+    const finfo = document.getElementById('vpDFrameInfo');
+    if(finfo) finfo.textContent = (idx + 1) + ' / ' + nf;
+    // rAF 合并：拖动过程中每帧最多解码/绘制一次，跟手且不堆积
+    if(vpSeekRaf) return;
+    vpSeekRaf = requestAnimationFrame(function(){
+      vpSeekRaf = 0;
+      seekVPFrame(slider.value, {skipSlider:true, prefetch:true});
+    });
+  }
+  function onSeekEnd(){
+    endVPSliderDrag();
+  }
+
+  slider.addEventListener('pointerdown', onSeekStart);
+  slider.addEventListener('mousedown', onSeekStart);
+  slider.addEventListener('touchstart', onSeekStart, {passive:true});
+  slider.addEventListener('input', onSeekInput);
+  slider.addEventListener('change', onSeekEnd);
+  slider.addEventListener('pointerup', onSeekEnd);
+  slider.addEventListener('pointercancel', onSeekEnd);
+  slider.addEventListener('mouseup', onSeekEnd);
+  slider.addEventListener('touchend', onSeekEnd);
+  // 防止在滑块外松开导致 vpSliderDrag 卡死
+  window.addEventListener('pointerup', onSeekEnd);
+  window.addEventListener('mouseup', onSeekEnd);
+  window.addEventListener('touchend', onSeekEnd);
+  window.addEventListener('blur', onSeekEnd);
+}
 
 async function openVPDetail(){
   VP.curFrame = 0;
+  vpSliderDrag = false;
+  vpSeekGen++;
   const r = VP.result;
   if(!r) return;
   // 保证索引与至少首帧就绪（完整帧数，按需解码）
   if(getVPCompressedBytes() && !VP.frameIndex.length) buildVPFrameIndex();
-  const nf = Math.max(VP.frameIndex.length || 0, r.frame_count || 0, VP.frames.length || 0);
+  const nf = vpDetailFrameCount();
   if(nf <= 0) return;
   const first = await ensureVPFrame(0);
   if(!first) return;
@@ -2968,38 +3071,7 @@ async function openVPDetail(){
     slider.max = nf - 1;
     slider.value = 0;
     finfo.textContent = '1 / '+nf;
-    slider.oninput = function(){
-      const idx = parseInt(this.value);
-      VP.curFrame = idx;
-      finfo.textContent = (idx+1)+' / '+nf;
-      ensureVPFrame(idx).then(function(fr){
-        if(fr && VP.curFrame === idx){
-          renderRGB565toCanvas(cv, fr, r.width, r.height, r.endian === 'little');
-        }
-      });
-    };
-    // 拖动进度条时不暂停播放——rAF 跳过画布/滑块更新，松开后校正时间
-    function onSliderSeekStart(){
-      vpSliderDrag = true;
-    }
-    function onSliderSeekEnd(){
-      vpSliderDrag = false;
-      if(vpDPlaying){
-        // 从拖拽位置继续播放
-        var dragIdx = parseInt(slider.value);
-        VP.curFrame = dragIdx;
-        vpRafStart = performance.now() - dragIdx * vpFrameDurationMs;
-        ensureVPFrame(dragIdx).then(function(fr){
-          if(fr) renderRGB565toCanvas(cv, fr, r.width, r.height, r.endian === 'little');
-        });
-      }
-    }
-    slider.addEventListener('pointerdown', onSliderSeekStart);
-    slider.addEventListener('mousedown', onSliderSeekStart);
-    slider.addEventListener('touchstart', onSliderSeekStart);
-    slider.addEventListener('pointerup', onSliderSeekEnd);
-    slider.addEventListener('mouseup', onSliderSeekEnd);
-    slider.addEventListener('touchend', onSliderSeekEnd);
+    bindVPSliderOnce();
     pbtn.disabled = false;
     vpDPlaying = false;
     pbtn.innerHTML = '&#9654; 播放';
@@ -3066,7 +3138,10 @@ function initVPDrag(){
 
 function closeVPDetail(){
   if(vpDTimer){ cancelAnimationFrame(vpDTimer); vpDTimer = null; }
+  if(vpSeekRaf){ cancelAnimationFrame(vpSeekRaf); vpSeekRaf = 0; }
   vpDPlaying = false;
+  vpSliderDrag = false;
+  vpSeekGen++;
   const el = document.getElementById('vpDetailModal');
   el.classList.add('closing');
   setTimeout(function(){ el.style.display = 'none'; el.classList.remove('closing'); }, 200);
@@ -3074,18 +3149,27 @@ function closeVPDetail(){
 
 function toggleVPPlay(){
   const r = VP.result;
+  if(!r) return;
   const cv = document.getElementById('vpDCanvas');
   const slider = document.getElementById('vpDSlider');
   const btn = document.getElementById('vpDPlayBtn');
   const finfo = document.getElementById('vpDFrameInfo');
-  const nf = Math.max(VP.frameIndex.length || 0, r.frame_count || 0, VP.frames.length || 0);
+  const nf = vpDetailFrameCount();
   if(nf <= 0) return;
+
+  // 播放/暂停前先结束可能卡住的拖拽态
+  if(vpSliderDrag) endVPSliderDrag();
 
   if(vpDPlaying){
     if(vpDTimer){ cancelAnimationFrame(vpDTimer); vpDTimer = null; }
     vpDPlaying = false;
     btn.innerHTML = '&#9654; 播放';
     return;
+  }
+
+  // 确保帧索引可用（跳转后偶发未建索引）
+  if(getVPCompressedBytes() && !VP.frameIndex.length){
+    buildVPFrameIndex();
   }
 
   vpDPlaying = true;
@@ -3100,9 +3184,12 @@ function toggleVPPlay(){
   }
   var frameDuration = vpFrameDurationMs;
   // 从当前位置帧开始播放，不归零
-  var startFrame = (VP.curFrame !== undefined ? VP.curFrame : 0) % nf;
+  var startFrame = vpClampFrame(VP.curFrame, nf);
+  VP.curFrame = startFrame;
+  if(slider) slider.value = String(startFrame);
+  if(finfo) finfo.textContent = (startFrame + 1) + ' / ' + nf;
   vpRafStart = performance.now() - startFrame * frameDuration;
-  var lastFrame = startFrame - 1;
+  var lastFrame = -1;
   // 立即渲染当前帧（按需解码）
   ensureVPFrame(startFrame).then(function(fr){
     if(fr && vpDPlaying) renderRGB565toCanvas(cv, fr, r.width, r.height, r.endian === 'little');
@@ -3110,24 +3197,28 @@ function toggleVPPlay(){
 
   function playLoop(now){
     if(!vpDPlaying){ return; }
+    // 拖动中：完全交给滑块逻辑，禁止时间轴改写 curFrame
+    if(vpSliderDrag){
+      vpDTimer = requestAnimationFrame(playLoop);
+      return;
+    }
     var elapsed = now - vpRafStart;
+    if(elapsed < 0) elapsed = 0;
     var frameIndex = Math.floor(elapsed / frameDuration) % nf;
+    if(frameIndex < 0) frameIndex = 0;
     if(frameIndex !== lastFrame){
-      VP.curFrame = frameIndex;
       lastFrame = frameIndex;
-      // 用户拖动滑块时不覆盖画布/滑块显示（oninput 处理渲染）
-      if(!vpSliderDrag){
-        slider.value = frameIndex;
-        finfo.textContent = (frameIndex+1)+' / '+nf;
-        ensureVPFrame(frameIndex).then(function(fr){
-          if(fr && vpDPlaying && VP.curFrame === frameIndex && !vpSliderDrag){
-            renderRGB565toCanvas(cv, fr, r.width, r.height, r.endian === 'little');
-          }
-        });
-        // 轻量预取后续几帧，减少卡顿；不预取全部，避免 OOM
-        for(var p=1;p<=3;p++){
-          ensureVPFrame((frameIndex+p)%nf);
+      VP.curFrame = frameIndex;
+      if(slider) slider.value = String(frameIndex);
+      if(finfo) finfo.textContent = (frameIndex+1)+' / '+nf;
+      ensureVPFrame(frameIndex).then(function(fr){
+        if(fr && vpDPlaying && VP.curFrame === frameIndex && !vpSliderDrag){
+          renderRGB565toCanvas(cv, fr, r.width, r.height, r.endian === 'little');
         }
+      });
+      // 轻量预取后续几帧，减少卡顿；不预取全部，避免 OOM
+      for(var p=1;p<=3;p++){
+        ensureVPFrame((frameIndex+p)%nf);
       }
     }
     vpDTimer = requestAnimationFrame(playLoop);
@@ -3151,60 +3242,6 @@ function renderRGB565toCanvas(canvas, data, w, h, littleEndian){
     d[i*4+3] = 255;
   }
   ctx.putImageData(img, 0, 0);
-}
-
-/**
- * JavaScript BL decompressor: decompress BL compressed data for preview
- * @param {string} hex - compressed hex string
- * @param {number} w, h - image dimensions
- * @param {number} lvl - block level (1=2x2, 2=4x4, 3=8x4)
- * @returns {Uint8Array} raw RGB565 bytes
- */
-function blDecompress(hex, w, h, lvl) {
-  const raw = hexToBytes(hex);
-  if (raw[0] !== 0x42 || raw[1] !== 0x4C) return hexToBytes(hex); // not BL
-  if (lvl === 0) return raw.slice(6);  // raw: skip 6B header
-  var bw, bh, npix, bmBytes;
-  if (lvl === 1) { bw=2; bh=2; npix=4;  bmBytes=1; }
-  else if (lvl === 4) { bw=4; bh=2; npix=8;  bmBytes=2; }
-  else if (lvl === 3) { bw=8; bh=4; npix=32; bmBytes=8; }
-  else { bw=4; bh=4; npix=16; bmBytes=4; }
-
-  var blkBytes = 4 + bmBytes;
-  var bxc = Math.ceil(w / bw);
-  var byc = Math.ceil(h / bh);
-  var out = new Uint8Array(w * h * 2);
-  var off = 6;
-
-  for (var by = 0; by < byc; by++) {
-    for (var bx = 0; bx < bxc; bx++) {
-      var c0h = raw[off], c0l = raw[off+1];
-      var c1h = raw[off+2], c1l = raw[off+3];
-      // interpolate c2, c3
-      var c0v = (c0h << 8) | c0l, c1v = (c1h << 8) | c1l;
-      var c0r = (c0v>>11)&0x1F, c0g = (c0v>>5)&0x3F, c0b = c0v&0x1F;
-      var c1r = (c1v>>11)&0x1F, c1g = (c1v>>5)&0x3F, c1b = c1v&0x1F;
-      var c2v = (((c0r*2+c1r)/3)<<11)|(((c0g*2+c1g)/3)<<5)|((c0b*2+c1b)/3);
-      var c3v = (((c0r+c1r*2)/3)<<11)|(((c0g+c1g*2)/3)<<5)|((c0b+c1b*2)/3);
-      var palH = [c0h, c1h, (c2v>>8)&0xFF, (c3v>>8)&0xFF];
-      var palL = [c0l, c1l, c2v&0xFF, c3v&0xFF];
-
-      var idxs = 0;
-      for (var b = 0; b < bmBytes; b++)
-        idxs = (idxs << 8) | raw[off + 4 + b];
-      off += blkBytes;
-
-      for (var pi = 0; pi < npix; pi++) {
-        var px = bx * bw + (pi % bw);
-        var py = by * bh + Math.floor(pi / bw);
-        if (px >= w || py >= h) continue;
-        var ci = (idxs >> (2 * (npix - 1 - pi))) & 3;
-        var idx = (py * w + px) * 2;
-        out[idx] = palH[ci]; out[idx+1] = palL[ci];
-      }
-    }
-  }
-  return out;
 }
 
 function getVPCompressedBytes(){
@@ -3241,28 +3278,36 @@ function buildVPFrameIndex(){
       pos += frameSize;
     }
   } else {
-    // BL 连续帧：每帧 6B 头 + payload
-    var expectB = r.frame_count || 0x7fffffff;
-    for(var j=0; j<expectB && pos+6 <= raw.length; j++){
-      if(raw[pos] !== 0x42 || raw[pos+1] !== 0x4C) break;
-      var fLvl = raw[pos + 4];
-      var frameB;
-      if (fLvl === 0) {
-        frameB = 6 + w * h * 2;
-      } else {
-        var bw = fLvl == 1 ? 2 : (fLvl == 4 ? 4 : (fLvl == 3 ? 8 : 4));
-        var bh = (fLvl == 1 || fLvl == 4) ? 2 : 4;
-        var npix = bw * bh;
-        var bmB = Math.ceil(npix / 4);
-        var blkB = 4 + bmB;
-        var bxc = Math.ceil(w / bw);
-        var byc = Math.ceil(h / bh);
-        frameB = 6 + bxc * byc * blkB;
+    // RAW5 容器：14B 头 + 固定 width*height*2 的 BE RGB565 帧
+    // 兼容旧无头 raw：无 magic 时从 offset 0 起按固定帧大小切
+    var hasRawHdr = (raw.length >= 14 &&
+      raw[0] === 0x52 && raw[1] === 0x41 && raw[2] === 0x57 && raw[3] === 0x35);
+    if(hasRawHdr){
+      var hdrCountR = raw[4] | (raw[5]<<8);
+      var hdrW = raw[6] | (raw[7]<<8);
+      var hdrH = raw[8] | (raw[9]<<8);
+      if(hdrW > 0) w = hdrW;
+      if(hdrH > 0) h = hdrH;
+      r.width = w;
+      r.height = h;
+      pos = 14;
+      var expectR = r.frame_count || hdrCountR || 0;
+      var frameBR = w * h * 2;
+      if(frameBR <= 0) return 0;
+      for(var j=0; j<expectR && pos + frameBR <= raw.length; j++){
+        VP.frameIndex.push([pos, pos + frameBR]);
+        VP.frames.push(null);
+        pos += frameBR;
       }
-      if(pos + frameB > raw.length) break;
-      VP.frameIndex.push([pos, pos + frameB]);
-      VP.frames.push(null);
-      pos += frameB;
+    } else {
+      var frameB = w * h * 2;
+      if(frameB <= 0) return 0;
+      var expectB = r.frame_count || Math.floor(raw.length / frameB);
+      for(var k=0; k<expectB && pos + frameB <= raw.length; k++){
+        VP.frameIndex.push([pos, pos + frameB]);
+        VP.frames.push(null);
+        pos += frameB;
+      }
     }
   }
   // 同步真实帧数（完整，不截断）
@@ -3274,53 +3319,6 @@ function buildVPFrameIndex(){
     r.original_duration = (r.frame_count || 0) / fpsEst;
   }
   return VP.frameIndex.length;
-}
-
-function blDecompressBytes(rawFrame, w, h, lvl){
-  // rawFrame 为单帧 BL 二进制
-  if (!rawFrame || rawFrame.length < 6) return null;
-  if (rawFrame[0] !== 0x42 || rawFrame[1] !== 0x4C) return null;
-  if (lvl === 0) return rawFrame.slice(6);
-  var bw, bh, npix, bmBytes;
-  if (lvl === 1) { bw=2; bh=2; npix=4;  bmBytes=1; }
-  else if (lvl === 4) { bw=4; bh=2; npix=8;  bmBytes=2; }
-  else if (lvl === 3) { bw=8; bh=4; npix=32; bmBytes=8; }
-  else { bw=4; bh=4; npix=16; bmBytes=4; }
-
-  var blkBytes = 4 + bmBytes;
-  var bxc = Math.ceil(w / bw);
-  var byc = Math.ceil(h / bh);
-  var out = new Uint8Array(w * h * 2);
-  var off = 6;
-
-  for (var by = 0; by < byc; by++) {
-    for (var bx = 0; bx < bxc; bx++) {
-      var c0h = rawFrame[off], c0l = rawFrame[off+1];
-      var c1h = rawFrame[off+2], c1l = rawFrame[off+3];
-      var c0v = (c0h << 8) | c0l, c1v = (c1h << 8) | c1l;
-      var c0r = (c0v>>11)&0x1F, c0g = (c0v>>5)&0x3F, c0b = c0v&0x1F;
-      var c1r = (c1v>>11)&0x1F, c1g = (c1v>>5)&0x3F, c1b = c1v&0x1F;
-      var c2v = ((((c0r*2+c1r)/3)|0)<<11)|((((c0g*2+c1g)/3)|0)<<5)|(((c0b*2+c1b)/3)|0);
-      var c3v = ((((c0r+c1r*2)/3)|0)<<11)|((((c0g+c1g*2)/3)|0)<<5)|(((c0b+c1b*2)/3)|0);
-      var palH = [c0h, c1h, (c2v>>8)&0xFF, (c3v>>8)&0xFF];
-      var palL = [c0l, c1l, c2v&0xFF, c3v&0xFF];
-
-      var idxs = 0;
-      for (var b = 0; b < bmBytes; b++)
-        idxs = (idxs << 8) | rawFrame[off + 4 + b];
-      off += blkBytes;
-
-      for (var pi = 0; pi < npix; pi++) {
-        var px = bx * bw + (pi % bw);
-        var py = by * bh + Math.floor(pi / bw);
-        if (px >= w || py >= h) continue;
-        var ci = (idxs >> (2 * (npix - 1 - pi))) & 3;
-        var idx = (py * w + px) * 2;
-        out[idx] = palH[ci]; out[idx+1] = palL[ci];
-      }
-    }
-  }
-  return out;
 }
 
 /** 按需解码第 i 帧；完整帧可访问，但内存只缓存已访问帧 */
@@ -3360,15 +3358,8 @@ async function ensureVPFrame(i){
       bitmap.close();
       VP.frames[i] = rgba;
     } else {
-      var frameBytes = raw.subarray(range[0], range[1]);
-      var fLvl = frameBytes[4];
-      var frame = blDecompressBytes(frameBytes, w, h, fLvl);
-      if(!frame) return null;
-      if (r.endian === 'little') {
-        for (var j = 0; j < frame.length; j += 2) {
-          var t = frame[j]; frame[j] = frame[j+1]; frame[j+1] = t;
-        }
-      }
+      // raw/RAW5 帧：切片后已是 big-endian RGB565（与 MCU 烧录一致）
+      var frame = raw.subarray(range[0], range[1]).slice();
       VP.frames[i] = frame;
     }
   }catch(e){

@@ -70,14 +70,16 @@ static unsigned char mjpeg_read_cb(unsigned char *pBuf, unsigned char buf_size,
     }
     else
     {
-        /* Cache miss: 读取整块 */
+        /* Cache miss: 读取整块（双读校验，失败则返回 0 字节让 picojpeg 安全结束） */
         uint32_t chunk = remaining;
         if (chunk > MJPEG_CACHE_SIZE)
             chunk = MJPEG_CACHE_SIZE;
 
-        w25q_fast_read_data(target_addr, s_flash_cache, (uint16_t)chunk);
-        while (w25q_dma_is_busy())
-            w25q_dma_task();
+        if (!w25q_fast_read_verified(target_addr, s_flash_cache, chunk))
+        {
+            *pBytesActuallyRead = 0;
+            return 0;
+        }
 
         s_cache_addr = target_addr;
         s_cache_len  = chunk;
@@ -90,6 +92,15 @@ static unsigned char mjpeg_read_cb(unsigned char *pBuf, unsigned char buf_size,
     return 0;
 }
 
+#define MJPEG_REWIND()                                           \
+    do                                                           \
+    {                                                            \
+        s_mjpeg.cur_frame_idx = 0;                               \
+        s_mjpeg.current_frame_pos = s_mjpeg.start_addr + 14;     \
+        s_cache_addr = 0xFFFFFFFFUL;                             \
+        s_cache_len = 0;                                         \
+    } while (0)
+
 #define MJPEG_ADVANCE_FRAME()                                    \
     do                                                           \
     {                                                            \
@@ -97,10 +108,10 @@ static unsigned char mjpeg_read_cb(unsigned char *pBuf, unsigned char buf_size,
         s_mjpeg.current_frame_pos =                              \
             s_mjpeg.frame_data_addr + s_mjpeg.frame_size;        \
         if (s_mjpeg.cur_frame_idx >= s_mjpeg.frame_count ||      \
-            s_mjpeg.current_frame_pos >= s_mjpeg.end_addr)       \
+            s_mjpeg.current_frame_pos >= s_mjpeg.end_addr ||     \
+            (s_mjpeg.current_frame_pos + 4U) > s_mjpeg.end_addr) \
         {                                                        \
-            s_mjpeg.cur_frame_idx = 0;                           \
-            s_mjpeg.current_frame_pos = s_mjpeg.start_addr + 14; \
+            MJPEG_REWIND();                                      \
         }                                                        \
     } while (0)
 
@@ -136,9 +147,19 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
     if (is_new)
     {
         uint8_t hdr[14];
-        w25q_fast_read_data(w25q_start_addr, hdr, 14);
-        while (w25q_dma_is_busy())
-            w25q_dma_task();
+        if (!w25q_fast_read_verified(w25q_start_addr, hdr, 14))
+        {
+            s_mjpeg.last_error = MJPEG_ERR_BAD_MAGIC;
+            return;
+        }
+
+        /* 校验 magic，避免脏读把错误容器当 MJPEG */
+        if (!(hdr[0] == 'M' && hdr[1] == 'J' && hdr[2] == 'P' && hdr[3] == 'G'))
+        {
+            s_mjpeg.last_error = MJPEG_ERR_BAD_MAGIC;
+            s_mjpeg.active = 0;
+            return;
+        }
 
         uint16_t hdr_count = (uint16_t)hdr[4] | ((uint16_t)hdr[5] << 8);
         uint16_t hdr_w     = (uint16_t)hdr[6] | ((uint16_t)hdr[7] << 8);
@@ -166,6 +187,8 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
         s_mjpeg.cur_frame_idx     = 0;
         s_mjpeg.current_frame_pos = w25q_start_addr + 14;
         s_mjpeg.last_error        = 0;
+        s_cache_addr = 0xFFFFFFFFUL;
+        s_cache_len  = 0;
     }
 
     /* 每帧更新绘制原点（动画改 x/y 时生效，不重置解码进度） */
@@ -181,33 +204,41 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
 
     /* ---- 读取当前帧的 4B 大小前缀 ---- */
     {
+        /* 不足 4B 前缀：直接回绕，避免半帧/脏 size 导致后续持续失步 */
+        if ((s_mjpeg.current_frame_pos + 4U) > s_mjpeg.end_addr)
+        {
+            s_mjpeg.last_error = MJPEG_ERR_BAD_MAGIC;
+            MJPEG_REWIND();
+            return;
+        }
+
         uint8_t sz_buf[4];
-        w25q_fast_read_data(s_mjpeg.current_frame_pos, sz_buf, 4);
-        while (w25q_dma_is_busy())
-            w25q_dma_task();
+        if (!w25q_fast_read_verified(s_mjpeg.current_frame_pos, sz_buf, 4))
+        {
+            s_mjpeg.last_error = MJPEG_ERR_BAD_MAGIC;
+            MJPEG_REWIND();
+            return;
+        }
 
         uint32_t frame_size = (uint32_t)sz_buf[0] |
                               ((uint32_t)sz_buf[1] << 8) |
                               ((uint32_t)sz_buf[2] << 16) |
                               ((uint32_t)sz_buf[3] << 24);
 
-        /* 截断保护 */
-        if (s_mjpeg.current_frame_pos + 4 + frame_size > s_mjpeg.end_addr)
+        /*
+         * 不完整帧 / 脏 size：禁止“截断后继续解码+按截断长度前进”。
+         * 截断前进会把下一帧指针落在 JPEG 中部，造成持续花屏直到偶然对齐。
+         */
+        if (frame_size == 0U ||
+            (s_mjpeg.current_frame_pos + 4U + frame_size) > s_mjpeg.end_addr)
         {
-            uint32_t avail = s_mjpeg.end_addr - s_mjpeg.current_frame_pos - 4;
-            if ((int32_t)avail < 0)
-                avail = 0;
-            frame_size = avail;
+            s_mjpeg.last_error = MJPEG_ERR_BAD_MAGIC;
+            MJPEG_REWIND();
+            return;
         }
 
         s_mjpeg.frame_size      = frame_size;
         s_mjpeg.frame_data_addr = s_mjpeg.current_frame_pos + 4;
-
-        if (frame_size == 0)
-        {
-            MJPEG_ADVANCE_FRAME();
-            return;
-        }
     }
 
     /* ---- picojpeg 解码 ---- */
@@ -221,14 +252,15 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
     if (ret != 0)
     {
         s_mjpeg.last_error = MJPEG_ERR_DECODE_INIT;
-        MJPEG_ADVANCE_FRAME();
+        /* 解码失败多半是帧边界已错；直接回绕而不是带着脏指针前进 */
+        MJPEG_REWIND();
         return;
     }
 
     if (jinfo.m_comps != 3)
     {
         s_mjpeg.last_error = MJPEG_ERR_NOT_3_COMP;
-        MJPEG_ADVANCE_FRAME();
+        MJPEG_REWIND();
         return;
     }
 
@@ -356,6 +388,10 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
     if (ret != PJPG_NO_MORE_BLOCKS)
     {
         s_mjpeg.pjpeg_ret = ret;
+        /* 中途解码失败：回绕，避免后续帧 size 读到 JPEG 中部 */
+        s_mjpeg.last_error = MJPEG_ERR_DECODE_INIT;
+        MJPEG_REWIND();
+        return;
     }
 
     /* ---- 前进到下一帧 ---- */

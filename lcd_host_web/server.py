@@ -15,7 +15,7 @@ from flask import Flask, request, send_file, jsonify, make_response, abort
 app = Flask(__name__, static_url_path='', static_folder='.')
 
 ALLOWED_EXT = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp', '.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv'}
-VIDEO_EXT = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv'}
+VIDEO_EXT = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.gif'}
 def _find_ffmpeg():
     """Try system ffmpeg first, fall back to imageio-ffmpeg bundled binary.
 
@@ -415,214 +415,6 @@ def _schedule_cleanup():
     _DL_TIMER.start()
 
 
-# ----- block compression (4x4 block, 2-color + bitmap) -----------------------
-# Format:
-#   [MAGIC "BL" 2B] [VER 1B] [QUALITY 1B] [BLOCK_SIZE(=4) 1B] [unused 1B]
-#   Block data (6B per 4x4 block):
-#     color0_hi, color0_lo (RGB565 big-endian)
-#     color1_hi, color1_lo (RGB565 big-endian)
-#     bitmap_hi, bitmap_lo   (16 bits, MSB=pixel#0)
-#   For each pixel: bitmap_bit=0 -> color0, =1 -> color1
-
-BL_MAGIC = b'BL'
-BL_VERSION = 1
-BLOCK_SIZE = 4  # 4x4 pixels per block
-
-# quality -> (lvl, bw, bh, npix, idx_bytes, rm, gm, bm)
-# 4-color block: 2 base + 2 interpolated, 2-bit index/pixel
-_BLK_CFG = {
-    10: (1, 2, 2, 4,  1, 0x1F, 0x3F, 0x1F),
-     9: (4, 4, 2, 8,  2, 0x1F, 0x3F, 0x1F),
-     8: (2, 4, 4, 16, 4, 0x1F, 0x3F, 0x1F),
-     7: (2, 4, 4, 16, 4, 0x1F, 0x3F, 0x1F),
-}
-
-_LVL_TO_PROFILE = {
-    0: (0, 0, 0, 0),     # raw passthrough
-    4: (4, 2, 8,  2),    # 8px x 2bit = 2B indices
-    1: (2, 2, 4,  1),    # 4px x 2bit = 1B indices
-    2: (4, 4, 16, 4),    # 16px x 2bit = 4B indices
-    3: (8, 4, 32, 8),    # 32px x 2bit = 8B indices
-}
-
-
-def _compress_block(rgb565: bytes, w: int, h: int, quality: int) -> bytes:
-    """Moderate speedup: preallocate, reuse buffers, fewer Python list ops."""
-    _, bw, bh, npix, idx_bytes, rm, gm, bm = _BLK_CFG[quality]
-    bxc = (w + bw - 1) // bw
-    byc = (h + bh - 1) // bh
-    blk_bytes = 4 + idx_bytes
-    out = bytearray(bxc * byc * blk_bytes)
-    oi = 0
-
-    r5s = [0] * npix
-    g6s = [0] * npix
-    b5s = [0] * npix
-    bright = [0] * npix
-    get = rgb565.__getitem__
-
-    for by in range(byc):
-        y0 = by * bh
-        for bx in range(bxc):
-            x0 = bx * bw
-            pi = 0
-            for py in range(bh):
-                iy = y0 + py
-                row_ok = iy < h
-                row_base = iy * w
-                for px in range(bw):
-                    ix = x0 + px
-                    if row_ok and ix < w:
-                        off = (row_base + ix) * 2
-                        val = (get(off) << 8) | get(off + 1)
-                        r5s[pi] = (val >> 11) & 0x1F
-                        g6s[pi] = (val >> 5) & 0x3F
-                        b5s[pi] = val & 0x1F
-                    else:
-                        r5s[pi] = 0
-                        g6s[pi] = 0
-                        b5s[pi] = 0
-                    pi += 1
-
-            rsum = gsum = bsum = 0
-            for i in range(npix):
-                r = r5s[i]; g = g6s[i]; b = b5s[i]
-                rsum += r; gsum += g; bsum += b
-                bright[i] = r * 19595 + g * 38470 + b * 7471
-            med = sorted(bright)[npix // 2]
-
-            c0n = c1n = 0
-            c0r = c0g = c0b = 0
-            c1r = c1g = c1b = 0
-            for i in range(npix):
-                if bright[i] < med:
-                    c0n += 1
-                    c0r += r5s[i]; c0g += g6s[i]; c0b += b5s[i]
-                else:
-                    c1n += 1
-                    c1r += r5s[i]; c1g += g6s[i]; c1b += b5s[i]
-
-            fbr, fbg, fbb = rsum // npix, gsum // npix, bsum // npix
-            if c0n:
-                c0r //= c0n; c0g //= c0n; c0b //= c0n
-            else:
-                c0r, c0g, c0b = fbr, fbg, fbb
-            if c1n:
-                c1r //= c1n; c1g //= c1n; c1b //= c1n
-            else:
-                c1r, c1g, c1b = fbr, fbg, fbb
-
-            c0r &= rm; c0g &= gm; c0b &= bm
-            c1r &= rm; c1g &= gm; c1b &= bm
-
-            c2r = (c0r * 2 + c1r) // 3
-            c2g = (c0g * 2 + c1g) // 3
-            c2b = (c0b * 2 + c1b) // 3
-            c3r = (c0r + c1r * 2) // 3
-            c3g = (c0g + c1g * 2) // 3
-            c3b = (c0b + c1b * 2) // 3
-
-            c0v = (c0r << 11) | (c0g << 5) | c0b
-            c1v = (c1r << 11) | (c1g << 5) | c1b
-            out[oi] = (c0v >> 8) & 0xFF
-            out[oi + 1] = c0v & 0xFF
-            out[oi + 2] = (c1v >> 8) & 0xFF
-            out[oi + 3] = c1v & 0xFF
-            oi += 4
-
-            indices = 0
-            for i in range(npix):
-                pr, pg, pb = r5s[i], g6s[i], b5s[i]
-                d0 = (pr - c0r) * (pr - c0r) + (pg - c0g) * (pg - c0g) + (pb - c0b) * (pb - c0b)
-                d1 = (pr - c1r) * (pr - c1r) + (pg - c1g) * (pg - c1g) + (pb - c1b) * (pb - c1b)
-                d2 = (pr - c2r) * (pr - c2r) + (pg - c2g) * (pg - c2g) + (pb - c2b) * (pb - c2b)
-                d3 = (pr - c3r) * (pr - c3r) + (pg - c3g) * (pg - c3g) + (pb - c3b) * (pb - c3b)
-                best_i = 0
-                best_d = d0
-                if d1 < best_d:
-                    best_d, best_i = d1, 1
-                if d2 < best_d:
-                    best_d, best_i = d2, 2
-                if d3 < best_d:
-                    best_i = 3
-                indices = (indices << 2) | best_i
-
-            shift = 8 * (idx_bytes - 1)
-            for _ in range(idx_bytes):
-                out[oi] = (indices >> shift) & 0xFF
-                oi += 1
-                shift -= 8
-    return bytes(out)
-
-
-def _decompress_block(data: bytes, w: int, h: int, lvl: int) -> bytes:
-    if lvl == 0:
-        return data  # raw passthrough
-    bw, bh, npix, idx_bytes = _LVL_TO_PROFILE[lvl]
-    blk_bytes = 4 + idx_bytes
-    bxc = (w + bw - 1) // bw
-    byc = (h + bh - 1) // bh
-    out = bytearray(w * h * 2)
-    off = 0
-    for by in range(byc):
-        for bx in range(bxc):
-            c0h, c0l = data[off], data[off+1]
-            c1h, c1l = data[off+2], data[off+3]
-            # read base colours as 16-bit
-            def _lerp(a, b, n, d): return (a*(d-n)+b*n)//d
-            c0v = (c0h << 8) | c0l; c1v = (c1h << 8) | c1l
-            c0r = (c0v>>11)&0x1F; c0g = (c0v>>5)&0x3F; c0b = c0v&0x1F
-            c1r = (c1v>>11)&0x1F; c1g = (c1v>>5)&0x3F; c1b = c1v&0x1F
-            c2v = ((_lerp(c0r,c1r,1,3)<<11)|(_lerp(c0g,c1g,1,3)<<5)|_lerp(c0b,c1b,1,3))
-            c3v = ((_lerp(c0r,c1r,2,3)<<11)|(_lerp(c0g,c1g,2,3)<<5)|_lerp(c0b,c1b,2,3))
-            c2h = (c2v>>8)&0xFF; c2l = c2v&0xFF
-            c3h = (c3v>>8)&0xFF; c3l = c3v&0xFF
-            cols = [(c0h,c0l),(c1h,c1l),(c2h,c2l),(c3h,c3l)]
-
-            indices = 0
-            for b in range(idx_bytes):
-                indices = (indices << 8) | data[off+4+b]
-            off += blk_bytes
-            for pi in range(npix):
-                px = bx * bw + (pi % bw)
-                py = by * bh + (pi // bw)
-                if px >= w or py >= h: continue
-                ci = (indices >> (2*(npix-1-pi))) & 3
-                out[(py*w+px)*2], out[(py*w+px)*2+1] = cols[ci][0], cols[ci][1]
-    return bytes(out)
-
-
-def compress_frame(rgb565_data: bytes, width: int, height: int,
-                   quality: int) -> bytes:
-    if quality >= 11:
-        header = BL_MAGIC + bytes([BL_VERSION, quality, 0, 0])
-        return header + rgb565_data
-    # 安全fallback：若 quality 不在配置中，取最接近的有效值
-    if quality not in _BLK_CFG:
-        quality = min(_BLK_CFG.keys(), key=lambda k: abs(k - quality))
-    lvl = _BLK_CFG[quality][0]
-    compressed = _compress_block(rgb565_data, width, height, quality)
-    header = BL_MAGIC + bytes([BL_VERSION, quality, lvl, 0])
-    return header + compressed
-
-
-def decompress_frame(compressed: bytes, pixel_count: int) -> bytes:
-    if compressed[:2] != BL_MAGIC:
-        raise ValueError('Not BL')
-    lvl = compressed[4]
-    block_data = compressed[6:]
-    import math
-    area = pixel_count
-    for gw, gh in [(160, 80), (80, 160), (320, 240), (240, 320),
-                   (128, 128), (64, 64), (32, 32), (16, 16)]:
-        if gw * gh == area:
-            return _decompress_block(block_data, gw, gh, lvl)
-    guess_w = int(math.isqrt(area))
-    while area % guess_w != 0:
-        guess_w -= 1
-    return _decompress_block(block_data, guess_w, area // guess_w, lvl)
-
-
 def _check_ffmpeg():
     try:
         _run_silent([FFMPEG, '-version'], capture_output=True, check=True)
@@ -643,6 +435,35 @@ def _to_be(data: bytes) -> bytes:
         out[i] = data[i + 1]
         out[i + 1] = data[i]
     return bytes(out)
+
+
+# Raw RGB565 container (self-describing, mirrors MJPEG header layout):
+#   Header (14B):
+#     [0..3]  Magic "RAW5"
+#     [4..5]  frame_count (uint16 LE)
+#     [6..7]  width       (uint16 LE)
+#     [8..9]  height      (uint16 LE)
+#     [10..13] reserved
+#   Body: concatenated big-endian RGB565 frames, each width*height*2 bytes
+RAW_MAGIC = b'RAW5'
+
+
+def _write_raw_header(fobj, frame_count: int, width: int, height: int):
+    """Write 14B raw RGB565 container header (frame_count can be patched later)."""
+    fobj.write(RAW_MAGIC)
+    fobj.write(struct.pack('<H', frame_count & 0xFFFF))
+    fobj.write(struct.pack('<H', width & 0xFFFF))
+    fobj.write(struct.pack('<H', height & 0xFFFF))
+    fobj.write(b'\x00' * 4)
+
+
+def _pack_raw_payload(frames_be: list, width: int, height: int) -> bytes:
+    """Pack one or more BE RGB565 frames into RAW5 container."""
+    buf = io.BytesIO()
+    _write_raw_header(buf, len(frames_be), width, height)
+    for frame in frames_be:
+        buf.write(frame)
+    return buf.getvalue()
 
 
 # ----- helpers ---------------------------------------------------------------
@@ -875,10 +696,12 @@ def convert():
         swap = request.form.get('swap', '0') == '1'
         brightness = max(10, min(300, float(request.form.get('brightness', 100))))
         codec = request.form.get('codec', 'mjpeg').strip().lower()
+        if codec not in ('mjpeg', 'raw'):
+            codec = 'mjpeg'
         if codec == 'mjpeg':
             quality = max(1, min(100, int(request.form.get('quality', 70))))
         else:
-            quality = max(7, min(11, int(request.form.get('quality', 7))))
+            quality = 0
     except ValueError:
         return jsonify({'error': 'Invalid parameters'}), 400
 
@@ -910,12 +733,12 @@ def convert():
             if codec == 'mjpeg':
                 result = _process_video_mjpeg(in_path, width, height, fps, quality)
             else:
-                result = _process_video(in_path, width, height, fps, endian, brightness, quality)
+                result = _process_video_raw(in_path, width, height, fps, endian, brightness)
         else:
             if codec == 'mjpeg':
                 result = _process_image_mjpeg(in_path, width, height, quality)
             else:
-                result = _process_image(in_path, width, height, endian, brightness, quality)
+                result = _process_image_raw(in_path, width, height, endian, brightness)
     except subprocess.CalledProcessError as e:
         msg = e.stderr.decode('utf-8', errors='replace')[-300:] if e.stderr else str(e)
         return jsonify({'error': f'ffmpeg error: {msg}'}), 500
@@ -930,8 +753,9 @@ def convert():
 
     result['original_name'] = file.filename
     result['hex'] = result.pop('preview_hex', '')
-    if codec != 'mjpeg':
-        result['endian'] = 'little' if swap else 'big'
+    if codec == 'raw':
+        # 烧录 payload 恒为 big-endian RGB565；preview 也统一按 big 解析
+        result['endian'] = 'big'
     result['ffmpeg_threads'] = FFMPEG_THREADS
     # 报告“实际用了什么”，不是“探测到什么”
     result['hwaccel'] = _LAST_DECODE_ACCEL or (_detect_hwaccel() or 'cpu')
@@ -939,23 +763,23 @@ def convert():
     return jsonify(result)
 
 
-def _process_image(in_path: str, width: int, height: int,
-                   endian: str = '>', brightness: float = 100.0, quality: int = 8) -> dict:
+def _process_image_raw(in_path: str, width: int, height: int,
+                       endian: str = '>', brightness: float = 100.0) -> dict:
+    """Export raw RGB565 image as RAW5 container (14B header + BE pixels)."""
     gen = _stream_frames(in_path, width, height, vframes=1)
     try:
         rgb, fw, fh = next(gen)
     except StopIteration:
         raise RuntimeError('ffmpeg produced no output')
 
-    data = _convert_to_rgb565(rgb, fw, fh, endian, brightness)
+    # MCU native flash format is big-endian RGB565
+    be_frame = _convert_to_rgb565(rgb, fw, fh, '>', brightness)
+    payload = _pack_raw_payload([be_frame], fw, fh)
+    # preview uses same BE frame (frontend renders with endian=big)
+    preview = be_frame
 
-    # compression always uses big-endian (MCU native)
-    comp_data = _to_be(data) if endian == '<' else data
-    compressed = compress_frame(comp_data, fw, fh, quality)
-
-    # 单图也落盘，方便统一 download_id 路径
     name = Path(in_path).stem
-    did = _save_temp(name, compressed, fw, fh, 1, 30)
+    did = _save_temp(name, payload, fw, fh, 1, 30)
 
     result = {
         'type': 'image',
@@ -963,12 +787,13 @@ def _process_image(in_path: str, width: int, height: int,
         'width': fw,
         'height': fh,
         'frame_count': 1,
-        'frame_size': len(data),
+        'frame_size': fw * fh * 2,
         'fps': 30,
-        'quality': quality,
-        'codec': 'bl',
+        'quality': 0,
+        'codec': 'raw',
+        'endian': 'big',
     }
-    return _attach_payload_fields(result, compressed, data)
+    return _attach_payload_fields(result, payload, preview)
 
 
 def _drain_stderr(proc, bucket: list):
@@ -1253,26 +1078,30 @@ def _process_image_mjpeg(in_path: str, width: int, height: int,
     return _attach_payload_fields(result, compressed, b'')
 
 
-def _process_video(in_path: str, width: int, height: int,
-                   output_fps: float = 30, endian: str = '>',
-                   brightness: float = 100.0, quality: int = 8) -> dict:
-    """Full BL video export: stream-compress frames to disk, no truncation."""
+def _process_video_raw(in_path: str, width: int, height: int,
+                       output_fps: float = 30, endian: str = '>',
+                       brightness: float = 100.0) -> dict:
+    """Export RAW5 container: 14B header + concatenated BE RGB565 frames."""
+    del endian  # payload/preview always big-endian for MCU/path consistency
     output_fps = max(1, min(60, output_fps))
     did = uuid.uuid4().hex
     out_path = TMP / did
     count = 0
     fs_raw = width * height * 2
-    # 仅保留首帧作为缩略图预览（完整预览由前端按需解码 compressed）
+    # 仅保留首帧作为缩略图预览（不含容器头）
     thumb = b''
 
-    # compress always big-endian; thumb follows requested endian
     with open(out_path, 'wb') as out_f:
+        # 先写占位 header，最后回填 frame_count
+        _write_raw_header(out_f, 0, width, height)
         for rgb, fw, fh in _stream_frames(in_path, width, height, fps=output_fps):
             be_frame = _convert_to_rgb565(rgb, fw, fh, '>', brightness)
-            out_f.write(compress_frame(be_frame, width, height, quality))
+            out_f.write(be_frame)
             if count == 0:
-                thumb = _to_be(be_frame) if endian == '<' else be_frame
+                thumb = be_frame
             count += 1
+            if count > 0xFFFF:
+                raise RuntimeError('RAW5 frame_count 为 uint16，最多 65535 帧；请降低 FPS 或缩短视频')
 
     if count == 0:
         try:
@@ -1281,14 +1110,18 @@ def _process_video(in_path: str, width: int, height: int,
             pass
         raise RuntimeError('No frames extracted')
 
+    # patch frame_count
+    with open(out_path, 'r+b') as out_f:
+        out_f.seek(4)
+        out_f.write(struct.pack('<H', count))
+
     compressed_size = out_path.stat().st_size
-    frame_size_approx = compressed_size // count if count else 0
     name = Path(in_path).stem
     _DL_REG[did] = {
         'path': str(out_path), 'name': name,
         'mtime': time.time(),
         'frame_count': count, 'width': width, 'height': height,
-        'frame_size': frame_size_approx, 'fps': output_fps,
+        'frame_size': fs_raw, 'fps': output_fps,
     }
     _schedule_cleanup()
 
@@ -1304,8 +1137,9 @@ def _process_video(in_path: str, width: int, height: int,
         'frame_count': count,
         'frame_size': fs_raw,
         'fps': output_fps,
-        'quality': quality,
-        'codec': 'bl',
+        'quality': 0,
+        'codec': 'raw',
+        'endian': 'big',
         'truncated': False,
     }
     return _attach_payload_fields(result, compressed, thumb, compressed_size=compressed_size)

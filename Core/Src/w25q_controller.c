@@ -1,4 +1,4 @@
-﻿/*
+/*
  * w25q_controller.c
  *
  *  Created on: 2026年3月15日
@@ -339,7 +339,7 @@ void w25q_read_data(uint32_t address, uint8_t *data, uint32_t size)
 void w25q_fast_read_data(uint32_t address, uint8_t *data, uint32_t size)
 {
     uint16_t total = (uint16_t)(5U + size);
-    if (total > FAST_READ_BUF_SIZE) return;
+    if ((data == NULL) || (size == 0U) || (total > FAST_READ_BUF_SIZE)) return;
 
     fast_read_buf[0] = W25Q_FastReadData;
     fast_read_buf[1] = (uint8_t)(address >> 16);
@@ -357,6 +357,83 @@ void w25q_fast_read_data(uint32_t address, uint8_t *data, uint32_t size)
     W25Q_CS_HIGH();
 
     memcpy(data, &fast_read_buf[5], size);
+}
+
+/* 双读校验用第二缓冲：与单次 FastRead 最大数据量一致 */
+static uint8_t s_verify_read_buf[W25Q_PAGE_SIZE * 8U];
+#define W25Q_READ_VERIFY_RETRY 4U
+
+static bool w25q_fast_read_once_ok(uint32_t address, uint8_t *data, uint32_t size)
+{
+    uint16_t total = (uint16_t)(5U + size);
+    if ((data == NULL) || (size == 0U) || (total > FAST_READ_BUF_SIZE))
+    {
+        return false;
+    }
+    if (!w25q_is_transfer_range_valid(address, size))
+    {
+        return false;
+    }
+
+    /* 等内部编程结束，避免读到半写状态 */
+    w25q_check_busy();
+
+    fast_read_buf[0] = W25Q_FastReadData;
+    fast_read_buf[1] = (uint8_t)(address >> 16);
+    fast_read_buf[2] = (uint8_t)(address >> 8);
+    fast_read_buf[3] = (uint8_t)(address);
+    fast_read_buf[4] = W25Q_DUMMY_BYTE;
+    memset(&fast_read_buf[5], 0xFF, size);
+
+    W25Q_CS_LOW();
+    if (w25q_spi_transmit_receive(fast_read_buf, fast_read_buf, total) != HAL_OK)
+    {
+        W25Q_CS_HIGH();
+        return false;
+    }
+    W25Q_CS_HIGH();
+
+    memcpy(data, &fast_read_buf[5], size);
+    return true;
+}
+
+bool w25q_fast_read_verified(uint32_t address, uint8_t *data, uint32_t size)
+{
+    if ((data == NULL) || (size == 0U) || (size > sizeof(s_verify_read_buf)))
+    {
+        return false;
+    }
+
+    /* 若有 DMA 事务在跑，先推进/等完，避免与同步 SPI 抢总线 */
+    {
+        uint32_t t0 = HAL_GetTick();
+        while (w25q_dma_is_busy())
+        {
+            w25q_dma_task();
+            if ((uint32_t)(HAL_GetTick() - t0) > 200U)
+            {
+                return false;
+            }
+        }
+    }
+
+    for (uint32_t retry = 0U; retry < W25Q_READ_VERIFY_RETRY; retry++)
+    {
+        if (!w25q_fast_read_once_ok(address, data, size))
+        {
+            continue;
+        }
+        if (!w25q_fast_read_once_ok(address, s_verify_read_buf, size))
+        {
+            continue;
+        }
+        if (memcmp(data, s_verify_read_buf, size) == 0)
+        {
+            return true;
+        }
+        /* 两次不一致：可能总线毛刺/时序问题，重试 */
+    }
+    return false;
 }
 
 #pragma endregion

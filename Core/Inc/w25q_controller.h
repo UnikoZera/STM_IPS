@@ -52,6 +52,14 @@ bool w25q_write_data_dma(uint32_t address, uint8_t *data, uint32_t size);
 bool w25q_read_data_dma(uint32_t address, uint8_t *data, uint32_t size);
 bool w25q_fast_read_data_dma(uint32_t address, uint8_t *data, uint32_t size);
 
+/**
+ * @brief 可靠 FastRead：等 Flash 空闲后读取，并二次读取比对校验；失败自动重试。
+ * @return true=data 有效；false=多次校验仍不一致或参数非法
+ *
+ * 播放路径请优先用这个，避免 DMA 启动失败后继续使用未初始化缓冲导致花屏。
+ */
+bool w25q_fast_read_verified(uint32_t address, uint8_t *data, uint32_t size);
+
 void w25q_dma_task(void);
 bool w25q_dma_is_busy(void);
 bool w25q_dma_is_done(void);

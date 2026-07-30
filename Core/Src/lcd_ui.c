@@ -16,7 +16,6 @@
 #include "w25q_controller.h"
 #include "storage_manager.h"
 
-
 #pragma region UI元素定义
 
 static lcd_label_t fps_label = {12, 14, WHITE, BLACK, 8, "FPS: 0"};
@@ -33,243 +32,243 @@ static lcd_video_t g_video = {0};
 
 void lcd_ui_init(void)
 {
-    lcd_anim_manager_init();
-    lcd_anim_manager_set_bg(BLACK);
+	lcd_anim_manager_init();
+	lcd_anim_manager_set_bg(BLACK);
 
-    #pragma region 从文件系统获取图片和视频文件的地址并初始化对应的UI元素(可以看成是动态加载资源的示例，实际使用时你可以根据需要加载不同的文件来显示不同的图片和视频)
+#pragma region 从文件系统获取图片和视频文件的地址并初始化对应的UI元素(可以看成是动态加载资源的示例，实际使用时你可以根据需要加载不同的文件来显示不同的图片和视频)
 
-    // 从文件系统获取图片文件的W25Q地址
-    {
-        int16_t idx = find_large_file_by_name("photo_t");
-        if (idx >= 0)
-        {
-            large_file_info_t info;
-            if (get_large_file_info((uint8_t)idx, &info))
-            {
-                g_picture.x = 0;
-                g_picture.y = 0;
-                g_picture.width = 160;
-                g_picture.height = 80;
-                g_picture.addr = info.start_sector * 4096;
-            }
-        }
-    }
+	// 从文件系统获取图片文件的W25Q地址
+	{
+		int16_t idx = find_large_file_by_name("photo_t");
+		if (idx >= 0)
+		{
+			large_file_info_t info;
+			if (get_large_file_info((uint8_t)idx, &info))
+			{
+				g_picture.x = 0;
+				g_picture.y = 0;
+				g_picture.width = 31;
+				g_picture.height = 41;
+				g_picture.addr = info.start_sector * 4096;
+			}
+		}
+	}
 
-    // 从文件系统获取视频文件的W25Q地址
-    {
-        int16_t idx = find_large_file_by_name("aaa");
-        if (idx >= 0)
-        {
-            large_file_info_t info;
-            if (get_large_file_info((uint8_t)idx, &info))
-            {
-                g_video.x = 0;
-                g_video.y = 0;
-                g_video.width = 160;
-                g_video.height = 80;
-                g_video.start_addr = info.start_sector * 4096;
-                g_video.end_addr = g_video.start_addr + info.size;
-            }
-        }
-    }
+	// 从文件系统获取视频文件的W25Q地址
+	{
+		int16_t idx = find_large_file_by_name("ggg");
+		if (idx >= 0)
+		{
+			large_file_info_t info;
+			if (get_large_file_info((uint8_t)idx, &info))
+			{
+				g_video.x = 0;
+				g_video.y = 0;
+				g_video.width = 82;
+				g_video.height = 62;
+				g_video.start_addr = info.start_sector * 4096;
+				g_video.end_addr = g_video.start_addr + info.size;
+			}
+		}
+	}
 
-    #pragma endregion
+#pragma endregion
 
-    #pragma region 添加元素到动画管理器
+#pragma region 添加元素到动画管理器
 
-    lcd_anim_manager_add_layer(&usage_label, lcd_draw_label_layer);
-    lcd_anim_manager_add_layer(&fps_label, lcd_draw_label_layer);
-    // lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
-    // lcd_anim_manager_add_layer(&g_circle, lcd_draw_circle_layer);
-    // lcd_anim_manager_add_layer(&g_circle2, lcd_draw_circle_layer);
-    // lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
-    // lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
-    // lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
-    lcd_anim_manager_add_layer(&g_video, lcd_draw_video_frame_layer);
-    #pragma endregion
+	lcd_anim_manager_add_layer(&usage_label, lcd_draw_label_layer);
+	lcd_anim_manager_add_layer(&fps_label, lcd_draw_label_layer);
+	// lcd_anim_manager_add_layer(&g_rect, lcd_draw_rect_layer);
+	// lcd_anim_manager_add_layer(&g_circle, lcd_draw_circle_layer);
+	// lcd_anim_manager_add_layer(&g_circle2, lcd_draw_circle_layer);
+	// lcd_anim_manager_add_layer(&g_label, lcd_draw_label_layer);
+	// lcd_anim_manager_add_layer(&g_rect2, lcd_draw_rect_layer);
+	// lcd_anim_manager_add_layer(&g_picture, lcd_draw_picture_layer);
+	lcd_anim_manager_add_layer(&g_video, lcd_draw_video_frame_layer);
+#pragma endregion
 
-    #pragma region 定义动画并启动(可选,不定义动画元素也会被正常渲染，但定义动画后元素会动起来)
+#pragma region 定义动画并启动(可选,不定义动画元素也会被正常渲染，但定义动画后元素会动起来)
 
-    lcd_anim_config_t rect_anim_x = {
-      .target = &g_rect.x,
-      .start_value = 0,
-      .end_value = LCD_W - g_rect.w,
-      .duration_ms = 1300,
-      .delay_ms = 0,
-      .repeat = true,
-      .yoyo = true,
-      .exec_cb = lcd_anim_exec_set_i16,
-      .done_cb = NULL,
-      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
-    };
-    lcd_anim_start(&rect_anim_x);
+	lcd_anim_config_t rect_anim_x = {
+		.target = &g_rect.x,
+		.start_value = 0,
+		.end_value = LCD_W - g_rect.w,
+		.duration_ms = 1300,
+		.delay_ms = 0,
+		.repeat = true,
+		.yoyo = true,
+		.exec_cb = lcd_anim_exec_set_i16,
+		.done_cb = NULL,
+		.path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
+	};
+	lcd_anim_start(&rect_anim_x);
 
-    lcd_anim_config_t circle_anim_y = {
-      .target = &g_circle.y,
-      .start_value = 20,
-      .end_value = LCD_H - 20,
-      .duration_ms = 900,
-      .delay_ms = 0,
-      .repeat = true,
-      .yoyo = true,
-      .exec_cb = lcd_anim_exec_set_i16,
-      .done_cb = NULL,
-      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_OUT_ELASTIC),
-    };
-    lcd_anim_start(&circle_anim_y);
+	lcd_anim_config_t circle_anim_y = {
+		.target = &g_circle.y,
+		.start_value = 20,
+		.end_value = LCD_H - 20,
+		.duration_ms = 900,
+		.delay_ms = 0,
+		.repeat = true,
+		.yoyo = true,
+		.exec_cb = lcd_anim_exec_set_i16,
+		.done_cb = NULL,
+		.path_cb = lcd_anim_get_path(LCD_ANIM_EASE_OUT_ELASTIC),
+	};
+	lcd_anim_start(&circle_anim_y);
 
-    lcd_anim_config_t circle2_anim_y = {
-      .target = &g_circle2.x,
-      .start_value = 0,
-      .end_value = LCD_W - 20,
-      .duration_ms = 900,
-      .delay_ms = 0,
-      .repeat = true,
-      .yoyo = true,
-      .exec_cb = lcd_anim_exec_set_i16,
-      .done_cb = NULL,
-      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_EXPO),
-    };
-    lcd_anim_start(&circle2_anim_y);
+	lcd_anim_config_t circle2_anim_y = {
+		.target = &g_circle2.x,
+		.start_value = 0,
+		.end_value = LCD_W - 20,
+		.duration_ms = 900,
+		.delay_ms = 0,
+		.repeat = true,
+		.yoyo = true,
+		.exec_cb = lcd_anim_exec_set_i16,
+		.done_cb = NULL,
+		.path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_EXPO),
+	};
+	lcd_anim_start(&circle2_anim_y);
 
-    lcd_anim_config_t rect2_anim_x = {
-      .target = &g_rect2.x,
-      .start_value = 50,
-      .end_value = LCD_W - g_rect2.w - 50,
-      .duration_ms = 1100,
-      .delay_ms = 0,
-      .repeat = true,
-      .yoyo = true,
-      .exec_cb = lcd_anim_exec_set_i16,
-      .done_cb = NULL,
-      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_BACK),
-    };
-    lcd_anim_start(&rect2_anim_x);
+	lcd_anim_config_t rect2_anim_x = {
+		.target = &g_rect2.x,
+		.start_value = 50,
+		.end_value = LCD_W - g_rect2.w - 50,
+		.duration_ms = 1100,
+		.delay_ms = 0,
+		.repeat = true,
+		.yoyo = true,
+		.exec_cb = lcd_anim_exec_set_i16,
+		.done_cb = NULL,
+		.path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_BACK),
+	};
+	lcd_anim_start(&rect2_anim_x);
 
-    lcd_anim_config_t label_anim_color = {
-      .target = &usage_label.fg_color,
-      .start_value = RED,
-      .end_value = WHITE,
-      .duration_ms = 1000,
-      .delay_ms = 0,
-      .repeat = true,
-      .yoyo = true,
-      .exec_cb = lcd_anim_exec_set_u16,
-      .done_cb = NULL,
-      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_LINEAR),
-    };
-    lcd_anim_start(&label_anim_color);
+	lcd_anim_config_t label_anim_color = {
+		.target = &usage_label.fg_color,
+		.start_value = RED,
+		.end_value = WHITE,
+		.duration_ms = 1000,
+		.delay_ms = 0,
+		.repeat = true,
+		.yoyo = true,
+		.exec_cb = lcd_anim_exec_set_u16,
+		.done_cb = NULL,
+		.path_cb = lcd_anim_get_path(LCD_ANIM_EASE_LINEAR),
+	};
+	lcd_anim_start(&label_anim_color);
 
-    lcd_anim_config_t label2_anim_color = {
-      .target = &g_label.fg_color,
-      .start_value = CYAN,
-      .end_value = MAGENTA,
-      .duration_ms = 3000,
-      .delay_ms = 0,
-      .repeat = true,
-      .yoyo = true,
-      .exec_cb = lcd_anim_exec_set_u16,
-      .done_cb = NULL,
-      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
-    };
-    lcd_anim_start(&label2_anim_color);
+	lcd_anim_config_t label2_anim_color = {
+		.target = &g_label.fg_color,
+		.start_value = CYAN,
+		.end_value = MAGENTA,
+		.duration_ms = 3000,
+		.delay_ms = 0,
+		.repeat = true,
+		.yoyo = true,
+		.exec_cb = lcd_anim_exec_set_u16,
+		.done_cb = NULL,
+		.path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
+	};
+	lcd_anim_start(&label2_anim_color);
 
-    lcd_anim_config_t label3_anim_color = {
-      .target = &fps_label.x,
-      .start_value = 0,
-      .end_value = 60,
-      .duration_ms = 3000,
-      .delay_ms = 300,
-      .repeat = true,
-      .yoyo = true,
-      .exec_cb = lcd_anim_exec_set_u16,
-      .done_cb = NULL,
-      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
-    };
-    lcd_anim_start(&label3_anim_color);
+	lcd_anim_config_t label3_anim_color = {
+		.target = &fps_label.x,
+		.start_value = 0,
+		.end_value = 60,
+		.duration_ms = 3000,
+		.delay_ms = 300,
+		.repeat = true,
+		.yoyo = true,
+		.exec_cb = lcd_anim_exec_set_u16,
+		.done_cb = NULL,
+		.path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
+	};
+	lcd_anim_start(&label3_anim_color);
 
-    lcd_anim_config_t label3_anim_color2 = {
-      .target = &fps_label.y,
-      .start_value = 14,
-      .end_value = 40,
-      .duration_ms = 1000,
-      .delay_ms = 0,
-      .repeat = true,
-      .yoyo = true,
-      .exec_cb = lcd_anim_exec_set_u16,
-      .done_cb = NULL,
-      .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_OUT_ELASTIC),
-    };
-    lcd_anim_start(&label3_anim_color2);
+	lcd_anim_config_t label3_anim_color2 = {
+		.target = &fps_label.y,
+		.start_value = 14,
+		.end_value = 40,
+		.duration_ms = 1000,
+		.delay_ms = 0,
+		.repeat = true,
+		.yoyo = true,
+		.exec_cb = lcd_anim_exec_set_u16,
+		.done_cb = NULL,
+		.path_cb = lcd_anim_get_path(LCD_ANIM_EASE_OUT_ELASTIC),
+	};
+	lcd_anim_start(&label3_anim_color2);
 
 	lcd_anim_config_t video_anim_x = {
-	  .target = &g_video.x,
-	  .start_value = 0,
-	  .end_value = 40,
-	  .duration_ms = 2000,
-	  .delay_ms = 0,
-	  .repeat = true,
-	  .yoyo = true,
-	  .exec_cb = lcd_anim_exec_set_i16,
-	  .done_cb = NULL,
-	  .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
+		.target = &g_video.x,
+		.start_value = 0,
+		.end_value = 40,
+		.duration_ms = 2000,
+		.delay_ms = 0,
+		.repeat = true,
+		.yoyo = true,
+		.exec_cb = lcd_anim_exec_set_i16,
+		.done_cb = NULL,
+		.path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
 	};
 	lcd_anim_start(&video_anim_x);
 
 	lcd_anim_config_t video_anim_y = {
-	  .target = &g_video.y,
-	  .start_value = 0,
-	  .end_value = 20,
-	  .duration_ms = 1300,
-	  .delay_ms = 0,
-	  .repeat = true,
-	  .yoyo = true,
-	  .exec_cb = lcd_anim_exec_set_i16,
-	  .done_cb = NULL,
-	  .path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
+		.target = &g_video.y,
+		.start_value = 0,
+		.end_value = 20,
+		.duration_ms = 1300,
+		.delay_ms = 0,
+		.repeat = true,
+		.yoyo = true,
+		.exec_cb = lcd_anim_exec_set_i16,
+		.done_cb = NULL,
+		.path_cb = lcd_anim_get_path(LCD_ANIM_EASE_IN_OUT_SINE),
 	};
 	lcd_anim_start(&video_anim_y);
 
-    #pragma endregion
+#pragma endregion
 
-    lcd_anim_manager_render();
+	lcd_anim_manager_render();
 }
 
 /**
  * @brief 在这个函数里面更新UI状态
- * 
+ *
  */
 void lcd_ui_change(void)
 {
-  static char str_buf[32];
-  static char fps_buf[16];
-  static char usage_buf[16];
+	static char str_buf[32];
+	static char fps_buf[16];
+	static char usage_buf[16];
 
-  snprintf(fps_buf, sizeof(fps_buf), "FPS:%u", lcd_fps);
-  snprintf(usage_buf, sizeof(usage_buf), "Usage:%u%%", cpu_usage_percent);
-  fps_label.text = fps_buf;
-  usage_label.text = usage_buf;
-  g_rect.color = BLUE;
-  g_circle.color = GREEN;
-  
-  for (uint8_t i = 0; i < sizeof(str_buf); i++)
-  {
-    str_buf[i] = 32 + (rand() % 95);
-  }
-  g_label.text = str_buf;
-  
-  lcd_calculate_usage();
-  lcd_calculate_fps();
+	snprintf(fps_buf, sizeof(fps_buf), "FPS:%u", lcd_fps);
+	snprintf(usage_buf, sizeof(usage_buf), "Usage:%u%%", cpu_usage_percent);
+	fps_label.text = fps_buf;
+	usage_label.text = usage_buf;
+	g_rect.color = BLUE;
+	g_circle.color = GREEN;
+
+	for (uint8_t i = 0; i < sizeof(str_buf); i++)
+	{
+		str_buf[i] = 32 + (rand() % 95);
+	}
+	g_label.text = str_buf;
+
+	lcd_calculate_usage();
+	lcd_calculate_fps();
 }
 
 /**
  * @brief 调用这个函数来更新UI，通常在主循环里调用。它会处理动画状态并重新渲染UI。
  * @attention 先更新tasker再render，确保动画状态被正确更新后再渲染到屏幕上。
- * 
+ *
  */
 void lcd_ui_updater(void)
 {
-    lcd_ui_change();            // 这个是更新UI状态的，你可以在这个函数里修改元素属性来改变UI显示的内容和样式
-    lcd_anim_manager_task();    // 这个是更新动画管理器的状态，计算动画进度并调用exec_cb更新元素属性的
-    lcd_anim_manager_render();  // 这个是更新屏幕ui渲染状态的
+	lcd_ui_change();		   // 这个是更新UI状态的，你可以在这个函数里修改元素属性来改变UI显示的内容和样式
+	lcd_anim_manager_task();   // 这个是更新动画管理器的状态，计算动画进度并调用exec_cb更新元素属性的
+	lcd_anim_manager_render(); // 这个是更新屏幕ui渲染状态的
 }
