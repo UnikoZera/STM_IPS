@@ -718,9 +718,10 @@ static bool raw5_is_magic(const uint8_t *m)
     return (m[0] == 'R' && m[1] == 'A' && m[2] == 'W' && m[3] == '5');
 }
 
-/* 把 flash 中的 BE RGB565 字节写入 LCD 缓冲（SPI DMA 需要 LE halfword） */
+/* 把 flash 中的 BE RGB565 字节写入 LCD 缓冲（SPI DMA 需要 LE halfword）
+ * file_base = 文件物理起点；data_raw_off = 数据区在文件内的原始偏移（无头=0，RAW5=14） */
 static void raw_blit_frame_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height,
-                                     uint32_t data_addr, uint32_t frame_bytes)
+                                     uint32_t file_base, uint32_t data_raw_off, uint32_t frame_bytes)
 {
     uint8_t chunk[LCD_PIC_CHUNK_SIZE];
     uint32_t done = 0;
@@ -730,8 +731,8 @@ static void raw_blit_frame_from_w25q(int16_t x, int16_t y, int16_t width, int16_
         if (to_read > LCD_PIC_CHUNK_SIZE)
             to_read = LCD_PIC_CHUNK_SIZE;
 
-        /* 双读校验：失败则跳过本块，避免把脏数据画到帧缓冲导致整屏花 */
-        if (!w25q_fast_read_verified(data_addr + done, chunk, to_read))
+        /* CRC-16 校验读取：失败则跳过本块，避免把脏数据画到帧缓冲导致整屏花 */
+        if (!w25q_crc_read(file_base, data_raw_off + done, chunk, to_read, 0U, true))
         {
             done += to_read;
             continue;
@@ -771,7 +772,7 @@ void lcd_draw_picture_from_w25q(int16_t x, int16_t y, int16_t width, int16_t hei
     if (lcd_dma_busy) return;
 
     uint8_t hdr[RAW5_HEADER_SIZE];
-    if (!w25q_fast_read_verified(w25q_addr, hdr, RAW5_HEADER_SIZE))
+    if (!w25q_crc_read(w25q_addr, 0, hdr, RAW5_HEADER_SIZE, 0U, true))
     {
         return;
     }
@@ -785,7 +786,7 @@ void lcd_draw_picture_from_w25q(int16_t x, int16_t y, int16_t width, int16_t hei
         for (uint16_t i = 0; i < frame_count; i++)
         {
             uint8_t sz[4];
-            if (!w25q_fast_read_verified(end_addr, sz, 4))
+            if (!w25q_crc_read(w25q_addr, end_addr - w25q_addr, sz, 4, 0U, true))
             {
                 return;
             }
@@ -798,7 +799,7 @@ void lcd_draw_picture_from_w25q(int16_t x, int16_t y, int16_t width, int16_t hei
         return;
     }
 
-    uint32_t data_addr = w25q_addr;
+    uint32_t data_raw_off = 0; /* 数据区在文件内的原始偏移（无头=0，RAW5=14） */
     int16_t draw_w = width;
     int16_t draw_h = height;
 
@@ -811,11 +812,11 @@ void lcd_draw_picture_from_w25q(int16_t x, int16_t y, int16_t width, int16_t hei
             draw_w = (int16_t)hdr_w;
             draw_h = (int16_t)hdr_h;
         }
-        data_addr = w25q_addr + RAW5_HEADER_SIZE;
+        data_raw_off = RAW5_HEADER_SIZE;
     }
 
     if (draw_w <= 0 || draw_h <= 0) return;
-    raw_blit_frame_from_w25q(x, y, draw_w, draw_h, data_addr,
+    raw_blit_frame_from_w25q(x, y, draw_w, draw_h, w25q_addr, data_raw_off,
                              (uint32_t)draw_w * (uint32_t)draw_h * 2U);
 }
 
@@ -837,7 +838,7 @@ void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t heigh
 
     /* auto-detect MJPEG / RAW5 container */
     uint8_t m[RAW5_HEADER_SIZE];
-    if (!w25q_fast_read_verified(w25q_start_addr, m, RAW5_HEADER_SIZE))
+    if (!w25q_crc_read(w25q_start_addr, 0, m, RAW5_HEADER_SIZE, 0U, true))
     {
         return;
     }
@@ -896,7 +897,9 @@ void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t heigh
 
     raw_blit_frame_from_w25q(s_video_ctx.x, s_video_ctx.y,
                              s_video_ctx.width, s_video_ctx.height,
-                             s_video_ctx.current_addr, s_video_ctx.frame_bytes);
+                             s_video_ctx.start_addr,
+                             s_video_ctx.current_addr - s_video_ctx.start_addr,
+                             s_video_ctx.frame_bytes);
 
     s_video_ctx.current_addr += s_video_ctx.frame_bytes;
     if ((s_video_ctx.current_addr + s_video_ctx.frame_bytes) > s_video_ctx.end_addr)

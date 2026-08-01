@@ -55,22 +55,22 @@ uint16_t crc16_usb_calc(const uint8_t *data, size_t len)
 /**
  * @brief 校验/追加 CRC16/USB（兼容您的原接口）
  * @param data    数据包首地址
- * @param len     数据包总长度（含 CRC 时为全长，不含时为纯数据长度）
+ * @param total_len     数据包总长度（含 CRC 时为全长，不含时为纯数据长度）
  * @param has_crc  true: 包末尾带有 CRC（小端序），需要校验；
  *                 false: 包末尾无 CRC，计算并返回 CRC 值
  * @return has_crc 为 true  时：1=校验通过，0=校验失败；
  *         has_crc 为 false 时：返回计算好的 CRC16 值
  */
-uint16_t crc16_usb_packing(const uint8_t *data, size_t len, bool has_crc)
+uint16_t crc16_usb_packing(const uint8_t *data, size_t total_len, bool has_crc)
 {
     if (has_crc) {
-        if (len < 2) return 0;
+        if (total_len < 2) return 0;
 
         /* 提取包末尾的小端 CRC */
-        uint16_t received_crc = (uint16_t)data[len - 1] << 8 | data[len - 2];
-        uint16_t calculated_crc = crc16_usb_calc(data, len - 2);
+        uint16_t received_crc = (uint16_t)data[total_len - 1] << 8 | data[total_len - 2];
+        uint16_t calculated_crc = crc16_usb_calc(data, total_len - 2);
         return (received_crc == calculated_crc) ? 1 : 0;
     } else {
-        return crc16_usb_calc(data, len);
+        return crc16_usb_calc(data, total_len);
     }
 }

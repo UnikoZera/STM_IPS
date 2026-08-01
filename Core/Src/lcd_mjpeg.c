@@ -38,11 +38,10 @@ const mjpeg_state_t *lcd_mjpeg_get_state(void)
     return &s_mjpeg;
 }
 
-/* ---- Flash 缓存 (1024B, 减少约 50% DMA 命中失败) ---- */
-#define MJPEG_CACHE_SIZE 1024
+/* ---- Flash 块缓存：缓存一个已通过 CRC-16 校验的 1022B 数据块 ---- */
+#define MJPEG_CACHE_SIZE W25Q_CRC_BLOCK_DATA_SIZE
 static uint8_t s_flash_cache[MJPEG_CACHE_SIZE];
-static uint32_t s_cache_addr = 0xFFFFFFFF;
-static uint32_t s_cache_len  = 0;
+static uint32_t s_cache_block = 0xFFFFFFFF; /* 当前缓存的原始块号 */
 
 static unsigned char mjpeg_read_cb(unsigned char *pBuf, unsigned char buf_size,
                                    unsigned char *pBytesActuallyRead,
@@ -59,36 +58,41 @@ static unsigned char mjpeg_read_cb(unsigned char *pBuf, unsigned char buf_size,
     uint32_t to_read = buf_size;
     if (to_read > remaining)
         to_read = remaining;
+    uint32_t req = to_read;
 
-    uint32_t target_addr = s_mjpeg.frame_data_addr + *pOffset;
+    /* 帧数据区在文件内的原始偏移（帧数据区起点不一定是 1024 块边界） */
+    uint32_t frame_file_off = s_mjpeg.frame_data_addr - s_mjpeg.start_addr;
 
-    /* Cache hit? */
-    if (target_addr >= s_cache_addr &&
-        (target_addr + to_read) <= (s_cache_addr + s_cache_len))
+    /* 按文件内原始偏移分块读取（每块读一次物理块 + CRC-16 校验） */
+    uint32_t off = *pOffset;
+    while (to_read > 0)
     {
-        memcpy(pBuf, &s_flash_cache[target_addr - s_cache_addr], to_read);
-    }
-    else
-    {
-        /* Cache miss: 读取整块（双读校验，失败则返回 0 字节让 picojpeg 安全结束） */
-        uint32_t chunk = remaining;
-        if (chunk > MJPEG_CACHE_SIZE)
-            chunk = MJPEG_CACHE_SIZE;
+        uint32_t file_off = frame_file_off + off;
+        uint32_t blk   = file_off / W25Q_CRC_BLOCK_DATA_SIZE;
+        uint32_t in    = file_off % W25Q_CRC_BLOCK_DATA_SIZE;
+        uint32_t avail = W25Q_CRC_BLOCK_DATA_SIZE - in;
+        uint32_t want  = (to_read > avail) ? avail : to_read;
 
-        if (!w25q_fast_read_verified(target_addr, s_flash_cache, chunk))
+        if (s_cache_block != blk)
         {
-            *pBytesActuallyRead = 0;
-            return 0;
+            if (!w25q_crc_read(s_mjpeg.start_addr,
+                                blk * W25Q_CRC_BLOCK_DATA_SIZE,
+                                s_flash_cache, W25Q_CRC_BLOCK_DATA_SIZE, 0U, true))
+            {
+                *pBytesActuallyRead = 0; /* CRC 校验失败：返回 0 让 picojpeg 安全结束 */
+                return 0;
+            }
+            s_cache_block = blk;
         }
 
-        s_cache_addr = target_addr;
-        s_cache_len  = chunk;
-
-        memcpy(pBuf, s_flash_cache, to_read);
+        memcpy(pBuf, &s_flash_cache[in], want);
+        pBuf += want;
+        off += want;
+        to_read -= want;
     }
 
-    *pOffset += to_read;
-    *pBytesActuallyRead = (unsigned char)to_read;
+    *pOffset += req;
+    *pBytesActuallyRead = (unsigned char)req;
     return 0;
 }
 
@@ -100,8 +104,7 @@ static unsigned char mjpeg_read_cb(unsigned char *pBuf, unsigned char buf_size,
     {                                                            \
         s_mjpeg.cur_frame_idx = 0;                               \
         s_mjpeg.current_frame_pos = s_mjpeg.start_addr + 14;     \
-        s_cache_addr = 0xFFFFFFFFUL;                             \
-        s_cache_len = 0;                                         \
+        s_cache_block = 0xFFFFFFFFUL;                            \
     } while (0)
 
 /**
@@ -161,7 +164,7 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
     if (is_new)
     {
         uint8_t hdr[14];
-        if (!w25q_fast_read_verified(w25q_start_addr, hdr, 14))
+        if (!w25q_crc_read(w25q_start_addr, 0, hdr, 14, 0U, true))
         {
             s_mjpeg.last_error = MJPEG_ERR_BAD_MAGIC;
             return;
@@ -201,8 +204,7 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
         s_mjpeg.cur_frame_idx     = 0;
         s_mjpeg.current_frame_pos = w25q_start_addr + 14;
         s_mjpeg.last_error        = 0;
-        s_cache_addr = 0xFFFFFFFFUL;
-        s_cache_len  = 0;
+        s_cache_block = 0xFFFFFFFFUL;
     }
 
     /* 每帧更新绘制原点（动画改 x/y 时生效，不重置解码进度） */
@@ -227,7 +229,8 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
         }
 
         uint8_t sz_buf[4];
-        if (!w25q_fast_read_verified(s_mjpeg.current_frame_pos, sz_buf, 4))
+        if (!w25q_crc_read(s_mjpeg.start_addr,
+                        s_mjpeg.current_frame_pos - s_mjpeg.start_addr, sz_buf, 4, 0U, true))
         {
             s_mjpeg.last_error = MJPEG_ERR_BAD_MAGIC;
             MJPEG_REWIND();
@@ -288,9 +291,9 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
     const int16_t lcd_x      = s_mjpeg.lcd_x;
     const int16_t lcd_y      = s_mjpeg.lcd_y;
 
-    /* LCD 映射范围 */
-    const int16_t lcd_x_end = lcd_x + img_w;
-    const int16_t lcd_y_end = lcd_y + img_h;
+    /* LCD 映射范围（int32 避免 lcd_x + img_w 溢出 int16 导致 fast_path 误判） */
+    const int32_t lcd_x_end = (int32_t)lcd_x + img_w;
+    const int32_t lcd_y_end = (int32_t)lcd_y + img_h;
 
     /* 判断图像是否完全在 LCD 可见区域内 (快速路径) */
     const bool fast_path = (lcd_x >= 0 && lcd_y >= 0 &&
@@ -308,8 +311,6 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
     if (fast_path)
     {
         /* ---- 快速路径: 无 LCD 裁剪, 仅需图像边界检查 ---- */
-        uint16_t *row_ptr_base = &lcd_write_ptr[(uint32_t)lcd_y * LCD_W];
-
         while ((ret = pjpeg_decode_mcu()) == 0)
         {
             for (int blk = 0; blk < blocks_per_mcu; blk++)
@@ -318,7 +319,8 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
                 int blk_origin_y = mcu_y + (blk / mcu_w_blocks) * 8;
                 int base_idx     = blk * 64;
 
-                uint16_t *dst_row = &lcd_write_ptr[(uint32_t)(lcd_y + blk_origin_y) * LCD_W + (uint32_t)blk_origin_x];
+                uint16_t *dst_row = &lcd_write_ptr[(uint32_t)(lcd_y + blk_origin_y) * LCD_W
+                                                   + (uint32_t)(lcd_x + blk_origin_x)];
 
                 for (int py = 0; py < 8; py++)
                 {
@@ -346,7 +348,6 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
             {
                 mcu_x = 0;
                 mcu_y += mcu_h;
-                row_ptr_base = &lcd_write_ptr[(uint32_t)(lcd_y + mcu_y) * LCD_W];
             }
         }
     }
@@ -377,14 +378,12 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
                     for (int px = 0; px < 8; px++)
                     {
                         int img_x = blk_origin_x + px;
-                        if (img_x >= img_w)
-                            continue;
-
                         int16_t sx = lcd_x + img_x;
-                        if (sx < 0 || sx >= LCD_W)
-                            continue;
-
-                        row_ptr[sx] = rgb565(mcu_r[row_idx], mcu_g[row_idx], mcu_b[row_idx]);
+                        /* row_idx 必须随 px 每像素递增，与裁剪无关（否则 MCU 缓冲游标错位） */
+                        if (img_x < img_w && sx >= 0 && sx < LCD_W)
+                        {
+                            row_ptr[sx] = rgb565(mcu_r[row_idx], mcu_g[row_idx], mcu_b[row_idx]);
+                        }
                         row_idx++;
                     }
                 }
