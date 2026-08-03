@@ -1895,7 +1895,10 @@ function frame(cmd,data,totalFileSize) {
   f[3]=tfs&0xFF;f[4]=(tfs>>>8)&0xFF;f[5]=(tfs>>>16)&0xFF;f[6]=(tfs>>>24)&0xFF;
   f[7]=pL&0xFF;f[8]=(pL>>>8)&0xFF;
   if(data&&dL)f.set(data,HS);
-  const crc=crc16(f,0,HS+dL);
+  /* CRC16 只覆盖 payload 数据（不含帧头）：
+   * 完整 1022B 数据包的 CRC 即存储块 CRC（1022 数据 + 2 CRC），MCU 验证通过后整包直接烧录。
+   * 空 payload 的 CRC 为 0x0000（crc16(空)=0xFFFF^0xFFFF），与 MCU crc16_usb_calc 一致。 */
+  const crc=(data&&dL)?crc16(data,0,dL):0x0000;
   f[HS+dL]=crc&0xFF;f[HS+dL+1]=(crc>>>8)&0xFF;
   return f;
 }

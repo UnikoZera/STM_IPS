@@ -12,7 +12,7 @@
  *    [3]~[6]:   文件总大小 uint32 LE          (4B) 非数据命令填 0，仅首包有效
  *    [7]~[8]:   本包长度 uint16 LE            (2B) = payload_len + 2(CRC16)
  *    [9]~:      Payload 数据
- *    [last-2]~[last-1]: CRC16                 (2B) 覆盖帧头 + payload（CRC 自身除外）
+ *    [last-2]~[last-1]: CRC16                 (2B) 没有帧头 + payload（CRC 自身除外）
  *
  *  命令码：
  *    0x11  下载大文件数据                     payload: data + CRC16
@@ -26,8 +26,8 @@
  *
  *  ═══════════════════════════════════════════════════════════════════════
  *  W25Q 16MB 分区:
- *    [保留区]   Sector 0    ~ 1      (2 * 4KB  = 8KB)     压缩暂存区
- *    [小文件区] Sector 2    ~ 63     (62 * 4KB = 248KB)  线性挤压分配
+ *    [保留区]   Sector 0    ~ 3      (4 * 4KB  = 16KB)    压缩暂存区
+ *    [小文件区] Sector 4    ~ 63     (60 * 4KB = 240KB)  线性挤压分配
  *    [大文件区] Sector 64   ~ 4031   (3968*4KB= 15.5MB)  位图管理
  *    [用户区]   Sector 4032 ~ 4095   (64 * 4KB = 256KB)
  *
@@ -57,14 +57,14 @@
 /* ---- W25Q 分区 ---- */
 #define W25Q_TOTAL_SECTORS 4096
 
-/* 保留区（压缩暂存用） */
+/* 保留区（压缩暂存用）：4 扇区 = 16KB，支持单文件 ≤16KB 的整文件暂存回收 */
 #define AREA_RESERVED_START_SECTOR 0
-#define AREA_RESERVED_SECTORS 2
+#define AREA_RESERVED_SECTORS 4
 #define AREA_RESERVED_START_ADDR (AREA_RESERVED_START_SECTOR * W25Q_SECTOR_SIZE)
 
 /* 小文件区：线性挤压分配 */
-#define AREA_SMALL_START_SECTOR 2
-#define AREA_SMALL_SECTORS 62
+#define AREA_SMALL_START_SECTOR 4
+#define AREA_SMALL_SECTORS 60
 #define AREA_SMALL_START_ADDR (AREA_SMALL_START_SECTOR * W25Q_SECTOR_SIZE)
 #define AREA_SMALL_END_ADDR ((AREA_SMALL_START_SECTOR + AREA_SMALL_SECTORS) * W25Q_SECTOR_SIZE)
 
@@ -78,7 +78,7 @@
 #define AREA_USER_SECTORS 64
 
 /* ---- FAT（存于 AT24C） ---- */
-#define FAT_MAGIC_NUMBER 0x0D000722 /* bitmap-based FAT 版本号 */
+#define FAT_MAGIC_NUMBER 0x0D000721 /* 分区调整（保留区 16KB）：版本号 +1 强制重新格式化 */
 #define FAT_STORAGE_ADDR 0x0000
 
 /* ---- 大文件区位图辅助 ---- */
@@ -425,7 +425,6 @@ void clear_all_files_manual(void)
 static uint8_t dma_write_buf[HOST_PAYLOAD_DATA_MAX];
 static uint8_t rx_buffer[HOST_FRAME_BUF_SIZE];
 static uint32_t small_last_erased_sector = 0xFFFFFFFF;
-static uint16_t crc_block_fill = 0; /* CRC 块累积缓冲：已填数据字节数（满 1022 提交一物理块） */
 
 static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t size);
 
@@ -547,69 +546,6 @@ static bool flash_chunked_copy(uint32_t src, uint32_t dst, uint32_t size)
     return true;
 }
 
-/**
- * @brief 下载数据累积到 CRC 块缓冲，满 1022B 提交一个物理块（1022 数据 + 2 CRC）并回读验证。
- * @param src        本次 payload 数据源
- * @param len        数据字节数
- * @param write_addr 当前写入地址（每次提交后递增 1024）
- * @return true=全部提交成功；false=写入验证失败
- */
-static bool flash_crc_accumulate(const uint8_t *src, uint16_t len, uint32_t *write_addr)
-{
-    uint16_t remain = len;
-
-    while (remain > 0)
-    {
-        uint16_t room = W25Q_CRC_BLOCK_DATA_SIZE - crc_block_fill;
-        uint16_t copy = (remain < room) ? remain : room;
-        memcpy(&dma_write_buf[crc_block_fill], src, copy);
-        crc_block_fill += copy;
-        src += copy;
-        remain -= copy;
-
-        if (crc_block_fill == W25Q_CRC_BLOCK_DATA_SIZE)
-        {
-            /* CRC-16 小端写入块尾 */
-            uint16_t crc = crc16_usb_calc(dma_write_buf, W25Q_CRC_BLOCK_DATA_SIZE);
-            dma_write_buf[W25Q_CRC_BLOCK_DATA_SIZE]      = (uint8_t)(crc & 0xFFU);
-            dma_write_buf[W25Q_CRC_BLOCK_DATA_SIZE + 1U] = (uint8_t)(crc >> 8);
-
-            if (!flash_write_and_verify(*write_addr, dma_write_buf, W25Q_CRC_BLOCK_PHYS_SIZE))
-            {
-                return false;
-            }
-            *write_addr += W25Q_CRC_BLOCK_PHYS_SIZE;
-            crc_block_fill = 0;
-        }
-    }
-    return true;
-}
-
-/**
- * @brief 冲刷下载结束时不足 1022B 的尾块：0xFF 补齐 + CRC-16（物理块恒 1024B）。
- * @return true=成功（含无尾块）；false=写入验证失败
- */
-static bool flash_crc_flush_tail(uint32_t *write_addr)
-{
-    if (crc_block_fill == 0U)
-    {
-        return true;
-    }
-
-    memset(&dma_write_buf[crc_block_fill], 0xFF,
-           W25Q_CRC_BLOCK_DATA_SIZE - crc_block_fill);
-    uint16_t crc = crc16_usb_calc(dma_write_buf, W25Q_CRC_BLOCK_DATA_SIZE);
-    dma_write_buf[W25Q_CRC_BLOCK_DATA_SIZE]      = (uint8_t)(crc & 0xFFU);
-    dma_write_buf[W25Q_CRC_BLOCK_DATA_SIZE + 1U] = (uint8_t)(crc >> 8);
-
-    if (!flash_write_and_verify(*write_addr, dma_write_buf, W25Q_CRC_BLOCK_PHYS_SIZE))
-    {
-        return false;
-    }
-    *write_addr += W25Q_CRC_BLOCK_PHYS_SIZE;
-    crc_block_fill = 0;
-    return true;
-}
 
 #pragma endregion
 
@@ -695,42 +631,86 @@ bool compact_small_files(void)
             continue;
         }
 
-        /* 2a. 构建当前批：找到与 valid_list[vi] 共享扇区的所有有效文件 */
+        /* 2a0. 单文件物理大小超保留区容量：无法搬移（保留区装不下）。
+         *       compact_dest 跳过其空间（含与它共享扇区的文件，避免擦除误伤），
+         *       这些文件留在原地不移动；其余文件照常分批紧凑，压缩不中断。 */
+        {
+            small_file_info_t *vi_file = &global_fat.small_files[valid_list[vi]];
+            uint32_t vi_phys = file_phys_size(vi_file->size);
+            if (vi_phys > reserved_capacity)
+            {
+                uint32_t skip_end = vi_file->start_address + vi_phys;
+                for (uint16_t j = vi; j < valid_count; j++)
+                {
+                    small_file_info_t *fj = &global_fat.small_files[valid_list[j]];
+                    uint32_t fj_end = fj->start_address + file_phys_size(fj->size);
+                    if (fj->start_address < skip_end && fj_end > vi_file->start_address)
+                    {
+                        if (fj_end > skip_end)
+                        {
+                            skip_end = fj_end;
+                        }
+                        moved[valid_list[j]] = true; /* 留在原地 */
+                    }
+                }
+                if (compact_dest < skip_end)
+                {
+                    compact_dest = skip_end;
+                }
+                vi++;
+                continue;
+            }
+        }
+
+        /* 2a. 拆批构建：按地址顺序（valid_list 已排序）贪心取文件，
+         *      保证批的扇区范围内无未入批文件（擦除安全），累计 ≤ 保留区容量。
+         *      与批扇区范围重叠的文件必须入批；不重叠则结束本批（剩余留待下一批）。 */
         uint16_t batch_indices[MAX_SMALL_FILES];
         uint16_t batch_count = 0;
         uint32_t batch_size = 0;
-        bool in_batch[MAX_SMALL_FILES]; /* O(1) 查重 */
+        bool in_batch[MAX_SMALL_FILES];
         memset(in_batch, 0, sizeof(in_batch));
 
-        /* 初始扇区范围由领头的文件决定 */
-        small_file_info_t *leader = &global_fat.small_files[valid_list[vi]];
-        uint32_t batch_start_sector = leader->start_address / W25Q_SECTOR_SIZE;
-        uint32_t batch_end_sector = (leader->start_address + file_phys_size(leader->size) - 1) / W25Q_SECTOR_SIZE;
+        uint32_t batch_start_sector = 0;
+        uint32_t batch_end_sector = 0;
+        bool batch_has_range = false;
 
-        /* 迭代扫描：每次加入新文件后可能扩大扇区范围，再检查新范围内有无更多文件 */
-        bool expanded;
-        do
+        for (uint16_t j = vi; j < valid_count; j++)
         {
-            expanded = false;
-            for (uint16_t j = vi; j < valid_count; j++)
+            uint16_t idx = valid_list[j];
+            if (moved[idx] || in_batch[idx])
             {
-                uint16_t idx = valid_list[j];
-                if (moved[idx] || in_batch[idx])
+                continue;
+            }
+
+            small_file_info_t *fj = &global_fat.small_files[idx];
+            uint32_t fj_phys = file_phys_size(fj->size);
+            uint32_t js = fj->start_address / W25Q_SECTOR_SIZE;
+            uint32_t je = (fj->start_address + fj_phys - 1) / W25Q_SECTOR_SIZE;
+
+            bool overlaps = batch_has_range &&
+                            (js <= batch_end_sector && je >= batch_start_sector);
+
+            if (batch_count == 0 || overlaps)
+            {
+                /* 该文件与批共享扇区：必须入批（否则擦除会误伤其数据）。
+                 * 若入批后超保留区容量 → 本批无法成立（保留区不足），压缩失败 */
+                if (batch_size + fj_phys > reserved_capacity)
                 {
-                    continue;
+                    return false;
                 }
+                batch_indices[batch_count++] = idx;
+                in_batch[idx] = true;
+                batch_size += fj_phys;
 
-                small_file_info_t *fj = &global_fat.small_files[idx];
-                uint32_t fj_phys = file_phys_size(fj->size);
-                uint32_t js = fj->start_address / W25Q_SECTOR_SIZE;
-                uint32_t je = (fj->start_address + fj_phys - 1) / W25Q_SECTOR_SIZE;
-
-                if (js <= batch_end_sector && je >= batch_start_sector)
+                if (!batch_has_range)
                 {
-                    batch_indices[batch_count++] = idx;
-                    in_batch[idx] = true;
-                    batch_size += fj_phys;
-
+                    batch_start_sector = js;
+                    batch_end_sector = je;
+                    batch_has_range = true;
+                }
+                else
+                {
                     if (js < batch_start_sector)
                     {
                         batch_start_sector = js;
@@ -739,15 +719,13 @@ bool compact_small_files(void)
                     {
                         batch_end_sector = je;
                     }
-                    expanded = true;
                 }
             }
-        } while (expanded);
-
-        /* 2b. 批大小超保留区容量 → 本次压缩失败 */
-        if (batch_size > reserved_capacity)
-        {
-            return false;
+            else
+            {
+                /* 与批扇区范围不重叠：本批结束，剩余文件留待下一批 */
+                break;
+            }
         }
 
         /* 2c. 擦除保留区 → 整批文件拷贝到保留区暂存 */
@@ -937,7 +915,6 @@ static void abort_download_common(void)
     lcd_usb_stream_enabled = lcd_stream_was_enabled;
     is_downloading = false;
     expected_file_size = 0;
-    crc_block_fill = 0; /* 丢弃未写完的 CRC 块缓冲 */
 }
 
 static void abort_download_with_error(uint8_t error_type)
@@ -983,7 +960,10 @@ static void process_host_command(void)
     {
         return;
     }
-    if (!crc16_usb_packing(host_payload, FRAME_HDR_SIZE + host_payload_len, true))
+    /* CRC16 只覆盖 payload 数据（含末尾 2B CRC）：完整 1022B 数据包的 CRC
+     * 即存储块 CRC（1022 数据 + 2 CRC），MCU 验证通过后可直接整包烧录，
+     * 无需重新计算存储块 CRC。帧头完整性由 magic + 长度范围检查保证。 */
+    if (!crc16_usb_packing(&host_payload[FRAME_HDR_SIZE], host_payload_len, true))
     {
         send_error(0x01);
         return;
@@ -1061,14 +1041,7 @@ static void process_host_command(void)
             return;
         }
 
-        /* 冲刷不足 1022B 的尾块（0xFF 补齐 + CRC） */
-        if (!flash_crc_flush_tail(&current_write_addr))
-        {
-            abort_download_with_error(0x0B);
-            return;
-        }
-
-        /* 校验实际接收字节数与首包声明大小一致 */
+        /* 校验实际接收字节数与首包声明大小一致（尾块已在数据包阶段补齐写入） */
         if (expected_file_size != 0U && current_file_size != expected_file_size)
         {
             abort_download_with_error(0x0B);
@@ -1161,7 +1134,6 @@ static void process_host_command(void)
             current_write_addr = 0;
             expected_file_size = host_total_file_size; /* 仅首包有效 */
             memset(current_filename, 0x00, sizeof(current_filename));
-            crc_block_fill = 0;
 
             /* 大/小文件统一：根据声明大小预分配全部空间 */
             uint32_t total_size = host_total_file_size;
@@ -1219,13 +1191,37 @@ static void process_host_command(void)
             /* 空间已在首包预分配，无需重复分配/擦除 */
         }
 
-        /* CRC-16 组块写入（1022B 数据 + 2B CRC = 1024B 物理块） */
+        /* 上位机按 CRC 块组包：完整包 = 1022B 数据 + 2B CRC（即存储块 CRC）；
+         * 尾包（<1022B）= 实际数据 + CRC(实际数据)，由 MCU 补齐 0xFF 并重算 CRC。 */
         if (actual_data_len > 0)
         {
-            if (!flash_crc_accumulate(&host_payload[FRAME_HDR_SIZE], actual_data_len, &current_write_addr))
+            if (actual_data_len == W25Q_CRC_BLOCK_DATA_SIZE)
             {
-                abort_download_with_error(0x0B);
-                return;
+                /* 完整块：上位机 CRC 即存储块 CRC，验证通过后整包直接烧录 */
+                if (!flash_write_and_verify(current_write_addr, &host_payload[FRAME_HDR_SIZE],
+                                            W25Q_CRC_BLOCK_PHYS_SIZE))
+                {
+                    abort_download_with_error(0x0B);
+                    return;
+                }
+                current_write_addr += W25Q_CRC_BLOCK_PHYS_SIZE;
+            }
+            else
+            {
+                /* 尾块（<1022B）：上位机 CRC 只覆盖实际数据；补齐 0xFF 后需重算存储块 CRC */
+                memcpy(dma_write_buf, &host_payload[FRAME_HDR_SIZE], actual_data_len);
+                memset(&dma_write_buf[actual_data_len], 0xFF,
+                       W25Q_CRC_BLOCK_DATA_SIZE - actual_data_len);
+                uint16_t crc = crc16_usb_calc(dma_write_buf, W25Q_CRC_BLOCK_DATA_SIZE);
+                dma_write_buf[W25Q_CRC_BLOCK_DATA_SIZE]      = (uint8_t)(crc & 0xFFU);
+                dma_write_buf[W25Q_CRC_BLOCK_DATA_SIZE + 1U] = (uint8_t)(crc >> 8);
+                if (!flash_write_and_verify(current_write_addr, dma_write_buf,
+                                            W25Q_CRC_BLOCK_PHYS_SIZE))
+                {
+                    abort_download_with_error(0x0B);
+                    return;
+                }
+                current_write_addr += W25Q_CRC_BLOCK_PHYS_SIZE;
             }
         }
         current_file_size += actual_data_len;

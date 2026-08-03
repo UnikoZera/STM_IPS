@@ -27,7 +27,7 @@
 #define MAX_LARGE_FILES                  35
 
 /* 小文件区剩余空间低于此值(字节)时触发压缩回收 */
-#define SMALL_FILE_COMPACT_THRESHOLD     (1024 * 8)  /* 8KB */
+#define SMALL_FILE_COMPACT_THRESHOLD     (1024 * 16)  /* 16KB */
 
 /* ============================================================================
  *  文件信息结构
