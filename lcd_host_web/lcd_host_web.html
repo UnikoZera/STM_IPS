@@ -2171,13 +2171,6 @@ function updateNBC(){
   const b=new TextEncoder().encode(elName.value).length;
   elNameCnt.textContent=b+' / 15';elNameCnt.style.color=b>15?'var(--red)':'var(--text2)';
 }
-function showSendWarn(){
-  const el=$('lcdSendWarn');
-  if(!el)return;
-  el.style.display='block';el.className='send-warn';
-  clearTimeout(el._timer);
-  el._timer=setTimeout(function(){el.classList.add('hide-warn');setTimeout(function(){el.style.display='none';},350);},3500);
-}
 function hideSendWarn(){
   const el=$('lcdSendWarn');
   if(!el)return;
@@ -2188,10 +2181,7 @@ function hideSendWarn(){
 
 async function userStartSend(){
   if(!selFile){toast('请选择文件','error');return;}
-  if(($('lcdStreamStatus').textContent||'').includes('已开启')){
-    showSendWarn();
-    return;
-  }
+  /* LCD 帧流开启时不再弹提示拦截：doSend 会自动接管关闭帧流（烧录完成自动恢复） */
   const cmd=parseInt($('fileType').value);
   let fn=elName.value.trim();if(!fn)fn=selFile.name.replace(/\.[^.]+$/,'').slice(0,15);
   if(new TextEncoder().encode(fn).length>15){toast('文件名编码超15字节','error');return;}

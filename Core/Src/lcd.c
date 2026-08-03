@@ -931,14 +931,4 @@ void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t heigh
         s_video_ctx.current_addr = s_video_ctx.body_start;
 }
 
-/* 文件系统内容已变更（烧录完成/删除）：重置视频播放器状态，
- * 避免用旧播放进度读新数据导致帧错位、连续解码失败、黑屏后重播 */
-void lcd_video_invalidate(void)
-{
-    s_video_ctx.active = false;
-    s_video_ctx.last_fail_tick = 0;
-    s_video_ctx.fail_count = 0;
-    lcd_mjpeg_reset();
-}
-
 #pragma endregion
