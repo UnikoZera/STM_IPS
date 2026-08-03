@@ -68,6 +68,10 @@ typedef struct
     /* 错误诊断 */
     int8_t   last_error;                 /* 最后的错误码 */
     uint8_t  pjpeg_ret;                  /* 最后的 picojpeg 返回值 */
+
+    /* 失败降频：文件损坏/被删除时记录失败时间，避免每帧全速重试解码（高 CPU） */
+    uint32_t last_fail_tick;
+    uint8_t  fail_count;                 /* 连续失败计数（≥3 才降频，单次失败不停顿） */
 } mjpeg_state_t;
 
 /* ────── API ────── */
@@ -98,6 +102,11 @@ const mjpeg_state_t *lcd_mjpeg_get_state(void);
  */
 void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
                            uint32_t w25q_start_addr, uint32_t w25q_end_addr);
+
+/**
+ * @brief 重置 MJPEG 播放器状态（文件内容变更后调用，强制下次从第一帧重新初始化）
+ */
+void lcd_mjpeg_reset(void);
 
 #ifdef __cplusplus
 }

@@ -98,6 +98,9 @@ void lcd_draw_picture_dma(int16_t x, int16_t y, int16_t width, int16_t height, c
 void lcd_draw_picture_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t w25q_addr);
 void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t w25q_start_addr, uint32_t w25q_end_addr);
 
+/* 文件系统内容已变更（烧录完成/删除）：重置视频播放器状态，下次播放从第一帧重新初始化 */
+void lcd_video_invalidate(void);
+
 
 extern volatile bool lcd_dma_busy;
 extern volatile bool lcd_usb_stream_enabled;

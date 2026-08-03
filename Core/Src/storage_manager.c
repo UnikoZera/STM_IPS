@@ -39,7 +39,6 @@
  * ============================================================================ */
 
 /* ---- Flash 基础 ---- */
-#define W25Q_SECTOR_SIZE 4096
 #define W25Q_TOTAL_SECTORS 4096
 
 /* ---- 分区: 保留区 ---- */
@@ -74,7 +73,7 @@
 #define HOST_FRAME_HEAD_0 0xBBU
 #define HOST_FRAME_HEAD_1 0x44U
 #define FRAME_HDR_SIZE 9U           /* BB 44 CMD SIZE(4) LEN(2) */
-#define HOST_PAYLOAD_DATA_MAX 2048U /* 单包 payload 最大数据字节数 */
+#define HOST_PAYLOAD_DATA_MAX 1024U /* 单包 payload 最大数据字节数 */
 #define HOST_CRC_SIZE 2U
 #define HOST_FRAME_BUF_SIZE (FRAME_HDR_SIZE + HOST_PAYLOAD_DATA_MAX + HOST_CRC_SIZE)
 #define RETRY_SEND_ERROR_CODE 0xE0U
@@ -97,7 +96,7 @@
 /* ---- 超时 / 重试 ---- */
 #define DMA_WAIT_TIMEOUT_MS 100U
 #define HOST_STATE_TIMEOUT_MS 500U
-#define WRITE_VERIFY_RETRY_MAX 20U
+#define WRITE_VERIFY_RETRY_MAX 15U
 
 #pragma region 文件系统与分配表实现
 
@@ -307,6 +306,8 @@ void clear_all_files_manual(void)
     {
         erase_sector(i);
     }
+    storage_fat_init_default();
+    storage_fat_save();
 }
 
 #pragma region 分配器核心
@@ -355,7 +356,8 @@ static bool flash_chunked_copy(uint32_t src, uint32_t dst, uint32_t size)
 {
     while (size > 0)
     {
-        uint32_t chunk = (size > sizeof(dma_write_buf)) ? sizeof(dma_write_buf) : size;
+        /* 单次 ≤1024B：w25q_fast_read_data 上限（READ_BUF_SIZE=1030） */
+        uint32_t chunk = (size > 1024U) ? 1024U : size;
         w25q_fast_read_data(src, rx_buffer, chunk);
         if (!flash_write_and_verify(dst, rx_buffer, chunk))
         {
@@ -455,7 +457,7 @@ bool compact_small_files(void)
         // 初始扇区范围由领头的文件决定
         small_file_info_t *leader = &global_fat.small_files[valid_list[vi]];
         uint32_t batch_start_sector = leader->start_address / W25Q_SECTOR_SIZE;
-        uint32_t batch_end_sector = (leader->start_address + leader->size - 1) / W25Q_SECTOR_SIZE;
+        uint32_t batch_end_sector = (leader->start_address + w25q_crc_phys_size_padded(leader->size) - 1) / W25Q_SECTOR_SIZE;
 
         // 迭代扫描：每次加入新文件后可能扩大扇区范围，再检查新范围内有无更多文件
         bool expanded;
@@ -469,8 +471,9 @@ bool compact_small_files(void)
                     continue;
 
                 small_file_info_t *fj = &global_fat.small_files[idx];
+                uint32_t fj_phys = w25q_crc_phys_size_padded(fj->size); /* 物理大小（含 CRC 块） */
                 uint32_t js = fj->start_address / W25Q_SECTOR_SIZE;
-                uint32_t je = (fj->start_address + fj->size - 1) / W25Q_SECTOR_SIZE;
+                uint32_t je = (fj->start_address + fj_phys - 1) / W25Q_SECTOR_SIZE;
 
                 // 是否与当前扇区范围重叠
                 if (js <= batch_end_sector && je >= batch_start_sector)
@@ -478,7 +481,7 @@ bool compact_small_files(void)
                     // 加入批
                     batch_indices[batch_count++] = idx;
                     in_batch[idx] = true;
-                    batch_size += fj->size;
+                    batch_size += fj_phys;
 
                     // 扩展扇区范围
                     if (js < batch_start_sector)
@@ -507,13 +510,14 @@ bool compact_small_files(void)
             for (uint16_t b = 0; b < batch_count; b++)
             {
                 small_file_info_t *fb = &global_fat.small_files[batch_indices[b]];
+                uint32_t fb_phys = w25q_crc_phys_size_padded(fb->size);
                 if (!flash_chunked_copy(fb->start_address,
                                         AREA_RESERVED_START_ADDR + reserved_off,
-                                        fb->size))
+                                        fb_phys))
                 {
                     return false;
                 }
-                reserved_off += fb->size;
+                reserved_off += fb_phys;
             }
         }
 
@@ -529,17 +533,18 @@ bool compact_small_files(void)
             for (uint16_t b = 0; b < batch_count; b++)
             {
                 small_file_info_t *fb = &global_fat.small_files[batch_indices[b]];
+                uint32_t fb_phys = w25q_crc_phys_size_padded(fb->size);
                 if (!flash_chunked_copy(AREA_RESERVED_START_ADDR + reserved_off,
                                         compact_dest,
-                                        fb->size))
+                                        fb_phys))
                 {
                     return false;
                 }
 
                 // 更新文件起始地址
                 fb->start_address = compact_dest;
-                compact_dest += fb->size;
-                reserved_off += fb->size;
+                compact_dest += fb_phys;
+                reserved_off += fb_phys;
                 moved[batch_indices[b]] = true;
             }
 
@@ -635,6 +640,7 @@ static uint32_t current_sector_count = 0;   /* 大文件占用扇区数 */
 static uint32_t small_file_start_addr = 0;  /* 小文件起始地址 */
 static uint32_t last_download_tick = 0;     /* 下载超时保护 */
 static uint8_t error_payload = 0x00;
+static uint16_t crc_block_fill = 0;         /* CRC-16 块累积缓冲：已填数据字节数（满 1022 提交一物理块） */
 
 #pragma endregion
 
@@ -662,7 +668,17 @@ static void send_error(uint8_t error_type)
 
 static void send_continue(void)
 {
-    usb_controller_send(&g_usb_controller, CONTINUE_SEND_CODE, NULL, 0);
+    /* 确认帧必须送达（删除完成/下载继续）：发送被瞬时拒绝时短暂重试。
+     * DROPPED_PREVIOUS 表示已覆盖旧 pending 并接受本帧，同样视为成功。 */
+    for (uint8_t i = 0U; i < 5U; i++)
+    {
+        usb_send_status_t st = usb_controller_send(&g_usb_controller, CONTINUE_SEND_CODE, NULL, 0U);
+        if ((st == USB_SEND_OK) || (st == USB_SEND_QUEUED) || (st == USB_SEND_DROPPED_PREVIOUS))
+        {
+            return;
+        }
+        HAL_Delay(2);
+    }
 }
 
 static void abort_download_common(void)
@@ -678,6 +694,7 @@ static void abort_download_common(void)
     lcd_usb_stream_enabled = lcd_stream_was_enabled;
     is_downloading = false;
     expected_file_size = 0;
+    crc_block_fill = 0; /* 丢弃未写完的 CRC 块缓冲 */
 }
 
 static void abort_download_with_error(uint8_t error_type)
@@ -750,12 +767,27 @@ static bool flash_write_and_verify(uint32_t addr, const uint8_t *data, uint32_t 
             w25q_write_data(addr, dma_write_buf, size);
         }
 
-        // --- 回读验证 ---
-        HAL_Delay(1);
-        w25q_fast_read_data(addr, rx_buffer, size);
-        if (memcmp(rx_buffer, dma_write_buf, size) == 0)
+        // --- 回读验证（分块 ≤1024B：w25q_fast_read_data 单次上限 READ_BUF_SIZE=1030） ---
         {
-            return true;
+            bool match = true;
+            uint32_t v_off = 0;
+            HAL_Delay(1);
+            while (v_off < size)
+            {
+                uint32_t v_chunk = size - v_off;
+                if (v_chunk > 1024U) v_chunk = 1024U;
+                w25q_fast_read_data(addr + v_off, rx_buffer, (uint16_t)v_chunk);
+                if (memcmp(rx_buffer, dma_write_buf + v_off, v_chunk) != 0)
+                {
+                    match = false;
+                    break;
+                }
+                v_off += v_chunk;
+            }
+            if (match)
+            {
+                return true;
+            }
         }
         // --- 不匹配，重试 ---
     }
@@ -778,9 +810,10 @@ static void read_file_dimensions(uint32_t data_addr, uint16_t *p_width, uint16_t
     uint8_t hdr[14];
     *p_width = 0xFFFF;
     *p_height = 0xFFFF;
+    memset(hdr, 0xFF, sizeof(hdr)); /* 读失败时保持 0xFF（magic 不匹配 → 0xFFFF） */
 
-    if (!w25q_fast_read_verified(data_addr, hdr, 14))
-        return;
+    /* 当前存储格式为原始直写（无 CRC 块），读取用无校验的同步读 */
+    w25q_fast_read_data(data_addr, hdr, 14);
 
     /* MJPEG: magic "MJPG", RAW5: magic "RAW5" */
     bool is_mjpeg = (hdr[0] == 'M' && hdr[1] == 'J' && hdr[2] == 'P' && hdr[3] == 'G');
@@ -853,7 +886,9 @@ static void process_host_command(void)
         else
         {
             send_error(0x02);
+            break;
         }
+        send_continue(); /* 删除完成确认（上位机等待 0xA1 后刷新列表） */
         break;
     }
 
@@ -872,6 +907,26 @@ static void process_host_command(void)
             return;
         }
 
+        /* 冲刷 CRC-16 块缓冲中不足 1022B 的尾块：0xFF 补齐 + CRC-16
+         * （物理块恒 1024B，4 块 = 4096B = 1 扇区，与播放端 w25q_crc_read 的
+         *  tail_pad=true 语义完全匹配） */
+        if (crc_block_fill > 0)
+        {
+            memset(&dma_write_buf[crc_block_fill], 0xFF,
+                   W25Q_CRC_BLOCK_DATA_SIZE - crc_block_fill);
+            uint16_t crc = crc16_usb_calc(dma_write_buf, W25Q_CRC_BLOCK_DATA_SIZE);
+            dma_write_buf[W25Q_CRC_BLOCK_DATA_SIZE]      = (uint8_t)(crc & 0xFFU);
+            dma_write_buf[W25Q_CRC_BLOCK_DATA_SIZE + 1U] = (uint8_t)(crc >> 8);
+            if (!flash_write_and_verify(current_write_addr, dma_write_buf,
+                                        W25Q_CRC_BLOCK_PHYS_SIZE))
+            {
+                abort_download_with_error(0x0B);
+                return;
+            }
+            current_write_addr += W25Q_CRC_BLOCK_PHYS_SIZE;
+            crc_block_fill = 0;
+        }
+
         /* 校验实际接收字节数与首包声明大小一致 */
         if (expected_file_size != 0U && current_file_size != expected_file_size)
         {
@@ -879,8 +934,15 @@ static void process_host_command(void)
             return;
         }
 
-        memcpy(current_filename, (char *)&host_payload[FRAME_HDR_SIZE],
-               (actual_data_len < MAX_FILENAME_LEN) ? actual_data_len : MAX_FILENAME_LEN);
+        /* 文件名：截断到 MAX_FILENAME_LEN-1 并强制 '\0' 终止——
+         * 原实现拷满 16 字节时若无终止符，列表 strlen 会越界读 FAT 垃圾（0xFF）导致名字乱码 */
+        {
+            uint16_t name_len = (actual_data_len < MAX_FILENAME_LEN - 1)
+                                    ? actual_data_len
+                                    : (uint16_t)(MAX_FILENAME_LEN - 1);
+            memcpy(current_filename, &host_payload[FRAME_HDR_SIZE], name_len);
+            current_filename[name_len] = '\0';
+        }
         if (current_file_type == CMD_DOWNLOAD_LARGE)
         {
             // recycle deleted slot, fallback to append
@@ -969,6 +1031,8 @@ static void process_host_command(void)
         lcd_usb_stream_enabled = lcd_stream_was_enabled;
         is_downloading = false;
         expected_file_size = 0;
+        /* 文件内容已变更：重置视频播放器，避免旧播放进度读新数据导致错位/黑屏重播 */
+        lcd_video_invalidate();
         send_continue();
         return;
     }
@@ -993,6 +1057,7 @@ static void process_host_command(void)
             current_write_addr = 0;
             expected_file_size = host_total_file_size; /* 仅首包有效 */
             memset(current_filename, 0x00, sizeof(current_filename));
+            crc_block_fill = 0; /* 新下载：CRC 块缓冲清零 */
 
             // 大文件与小文件均一致：根据 host_total_file_size 预分配全部空间
             uint32_t total_size = host_total_file_size;
@@ -1003,7 +1068,9 @@ static void process_host_command(void)
 
             if (host_cmd == CMD_DOWNLOAD_LARGE)
             {
-                uint32_t required_sectors = (total_size + W25Q_SECTOR_SIZE - 1) / W25Q_SECTOR_SIZE;
+                /* CRC 块化存储：物理大小 = ceil(raw/1022)*1024，4 块 = 4096B = 1 扇区恒对齐 */
+                uint32_t phys_size = w25q_crc_phys_size_padded(total_size);
+                uint32_t required_sectors = (phys_size + W25Q_SECTOR_SIZE - 1) / W25Q_SECTOR_SIZE;
                 uint32_t allocated_first_sector = allocate_large_sectors(required_sectors);
                 if (allocated_first_sector == 0xFFFFFFFF)
                 {
@@ -1017,7 +1084,9 @@ static void process_host_command(void)
             }
             else if (host_cmd == CMD_DOWNLOAD_SMALL)
             {
-                uint32_t required_size = total_size;
+                /* 统一 CRC 块化存储（播放端按 tail_pad=true 读取，尾块恒 0xFF 补齐），
+                 * 物理大小 = ceil(raw/1022)*1024 */
+                uint32_t required_size = w25q_crc_phys_size_padded(total_size);
                 uint32_t allocated_addr = allocate_small_space(required_size);
                 if (allocated_addr == 0xFFFFFFFF)
                 {
@@ -1052,13 +1121,35 @@ static void process_host_command(void)
 
         if (actual_data_len > 0)
         {
-            if (!flash_write_and_verify(current_write_addr, &host_payload[FRAME_HDR_SIZE], actual_data_len))
+            /* CRC-16 组块写入：数据累积到 dma_write_buf，满 1022B 提交一个
+             * 物理块（1022B 数据 + 2B CRC = 1024B）并回读验证 */
+            uint16_t remain = actual_data_len;
+            const uint8_t *src = &host_payload[FRAME_HDR_SIZE];
+            while (remain > 0)
             {
-                abort_download_with_error(0x0B);
-                return;
+                uint16_t room = W25Q_CRC_BLOCK_DATA_SIZE - crc_block_fill;
+                uint16_t copy = (remain < room) ? remain : room;
+                memcpy(&dma_write_buf[crc_block_fill], src, copy);
+                crc_block_fill += copy;
+                src += copy;
+                remain -= copy;
+
+                if (crc_block_fill == W25Q_CRC_BLOCK_DATA_SIZE)
+                {
+                    uint16_t crc = crc16_usb_calc(dma_write_buf, W25Q_CRC_BLOCK_DATA_SIZE);
+                    dma_write_buf[W25Q_CRC_BLOCK_DATA_SIZE]      = (uint8_t)(crc & 0xFFU);
+                    dma_write_buf[W25Q_CRC_BLOCK_DATA_SIZE + 1U] = (uint8_t)(crc >> 8);
+                    if (!flash_write_and_verify(current_write_addr, dma_write_buf,
+                                                W25Q_CRC_BLOCK_PHYS_SIZE))
+                    {
+                        abort_download_with_error(0x0B);
+                        return;
+                    }
+                    current_write_addr += W25Q_CRC_BLOCK_PHYS_SIZE;
+                    crc_block_fill = 0;
+                }
             }
         }
-        current_write_addr += actual_data_len;
         current_file_size += actual_data_len;
         send_continue();
         return;

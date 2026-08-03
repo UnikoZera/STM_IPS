@@ -88,12 +88,20 @@ static void usb_reset_rx_state(usb_controller_t *controller)
 
 static bool usb_load_pending_as_active(usb_controller_t *controller)
 {
-    if ((controller == NULL) || (controller->tx_pending_ptr == NULL) || (controller->tx_pending_len == 0U))
+    if (controller == NULL)
+    {
+        return false;
+    }
+    /* len=0 的无 payload 命令帧（如 0xA1 下载继续/删除完成确认）：
+     * tx_pending_ptr 为 NULL 但命令有效，只发送 5B 协议头即可。
+     * 仅完全空的 pending（cmd=0 且 len=0）才拒绝。 */
+    if ((controller->tx_pending_cmd == 0U) && (controller->tx_pending_len == 0U))
     {
         return false;
     }
 
-    if (!usb_prepare_protocol_tx(controller, controller->tx_pending_cmd, controller->tx_pending_ptr, controller->tx_pending_len))
+    if (!usb_prepare_protocol_tx(controller, controller->tx_pending_cmd,
+                                 controller->tx_pending_ptr, controller->tx_pending_len))
     {
         usb_clear_tx_pending(controller);
         return false;

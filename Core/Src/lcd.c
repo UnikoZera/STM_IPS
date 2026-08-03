@@ -719,12 +719,15 @@ static bool raw5_is_magic(const uint8_t *m)
 }
 
 /* 把 flash 中的 BE RGB565 字节写入 LCD 缓冲（SPI DMA 需要 LE halfword）
- * file_base = 文件物理起点；data_raw_off = 数据区在文件内的原始偏移（无头=0，RAW5=14） */
-static void raw_blit_frame_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height,
+ * file_base = 文件物理起点；data_raw_off = 数据区在文件内的原始偏移（无头=0，RAW5=14）
+ * @return true=全部块读取成功；false=至少一个块 CRC 校验失败（调用方据此降频重试） */
+static bool raw_blit_frame_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height,
                                      uint32_t file_base, uint32_t data_raw_off, uint32_t frame_bytes)
 {
-    uint8_t chunk[LCD_PIC_CHUNK_SIZE];
+    /* 栈仅 1KB（_Min_Stack_Size=0x400）：2048B 缓冲必须 static，否则每次调用栈溢出 */
+    static uint8_t chunk[LCD_PIC_CHUNK_SIZE];
     uint32_t done = 0;
+    bool all_ok = true;
     while (done < frame_bytes)
     {
         uint32_t to_read = frame_bytes - done;
@@ -734,6 +737,7 @@ static void raw_blit_frame_from_w25q(int16_t x, int16_t y, int16_t width, int16_
         /* CRC-16 校验读取：失败则跳过本块，避免把脏数据画到帧缓冲导致整屏花 */
         if (!w25q_crc_read(file_base, data_raw_off + done, chunk, to_read, 0U, true))
         {
+            all_ok = false;
             done += to_read;
             continue;
         }
@@ -764,6 +768,7 @@ static void raw_blit_frame_from_w25q(int16_t x, int16_t y, int16_t width, int16_
         }
         done += to_read;
     }
+    return all_ok;
 }
 
 // 分块从W25Q读取图片：MJPEG / RAW5 / 无头 raw RGB565
@@ -830,11 +835,21 @@ static struct video_ctx_t {
     uint32_t body_start;      /* first frame byte address */
     uint32_t current_addr;    /* next frame start */
     uint32_t frame_bytes;
+    uint32_t last_fail_tick;  /* 读取失败时间戳（降频重试，防文件损坏/被删时高 CPU） */
+    uint8_t  fail_count;      /* 连续失败计数（≥3 才降频，单次失败不停顿） */
 } s_video_ctx = {0};
 
 void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t height, uint32_t w25q_start_addr, uint32_t w25q_end_addr)
 {
     if (lcd_dma_busy) return;
+
+    /* 失败降频：仅连续失败 ≥3 帧才降频（单次毛刺/坏帧不停顿，保证播放完整） */
+    if (s_video_ctx.active && s_video_ctx.last_fail_tick != 0U &&
+        s_video_ctx.fail_count >= 3U &&
+        (uint32_t)(HAL_GetTick() - s_video_ctx.last_fail_tick) < 500U)
+    {
+        return;
+    }
 
     /* auto-detect MJPEG / RAW5 container */
     uint8_t m[RAW5_HEADER_SIZE];
@@ -885,6 +900,8 @@ void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t heigh
         s_video_ctx.frame_bytes = frame_bytes;
         s_video_ctx.has_header = is_raw5;
         s_video_ctx.active = true;
+        s_video_ctx.last_fail_tick = 0; /* 新文件：清除失败降频 */
+        s_video_ctx.fail_count = 0;
     }
     s_video_ctx.x = x;
     s_video_ctx.y = y;
@@ -895,15 +912,33 @@ void lcd_play_video_from_w25q(int16_t x, int16_t y, int16_t width, int16_t heigh
         s_video_ctx.current_addr = s_video_ctx.body_start;
     }
 
-    raw_blit_frame_from_w25q(s_video_ctx.x, s_video_ctx.y,
-                             s_video_ctx.width, s_video_ctx.height,
-                             s_video_ctx.start_addr,
-                             s_video_ctx.current_addr - s_video_ctx.start_addr,
-                             s_video_ctx.frame_bytes);
+    if (!raw_blit_frame_from_w25q(s_video_ctx.x, s_video_ctx.y,
+                                   s_video_ctx.width, s_video_ctx.height,
+                                   s_video_ctx.start_addr,
+                                   s_video_ctx.current_addr - s_video_ctx.start_addr,
+                                   s_video_ctx.frame_bytes))
+    {
+        s_video_ctx.fail_count++;
+        s_video_ctx.last_fail_tick = HAL_GetTick(); /* 读取失败：连续失败才降频 */
+    }
+    else
+    {
+        s_video_ctx.fail_count = 0;
+    }
 
     s_video_ctx.current_addr += s_video_ctx.frame_bytes;
     if ((s_video_ctx.current_addr + s_video_ctx.frame_bytes) > s_video_ctx.end_addr)
         s_video_ctx.current_addr = s_video_ctx.body_start;
+}
+
+/* 文件系统内容已变更（烧录完成/删除）：重置视频播放器状态，
+ * 避免用旧播放进度读新数据导致帧错位、连续解码失败、黑屏后重播 */
+void lcd_video_invalidate(void)
+{
+    s_video_ctx.active = false;
+    s_video_ctx.last_fail_tick = 0;
+    s_video_ctx.fail_count = 0;
+    lcd_mjpeg_reset();
 }
 
 #pragma endregion

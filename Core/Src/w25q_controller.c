@@ -186,7 +186,7 @@ static void w25q_check_busy_nontimeout(void)
             return; /* Flash 空闲 */
         }
         /* 轮询节流：≥5ms 才做下一次 RDSR；擦除 150ms 内从数百次降到 ~30 次 SPI 事务 */
-        while ((HAL_GetTick() - tick) < 5U) {}
+        while ((HAL_GetTick() - tick) < 10U) {}
         tick = HAL_GetTick();
     } while (1);
 }

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * lcd_mjpeg.c
  *
  *  Created on: 2026年4月5日
@@ -40,8 +40,20 @@ const mjpeg_state_t *lcd_mjpeg_get_state(void)
 
 /* ---- Flash 块缓存：缓存一个已通过 CRC-16 校验的 1022B 数据块 ---- */
 #define MJPEG_CACHE_SIZE W25Q_CRC_BLOCK_DATA_SIZE
+#define MJPEG_FAIL_RETRY_INTERVAL_MS 500U /* 解码失败后降频重试间隔，避免文件损坏时全速空转 */
 static uint8_t s_flash_cache[MJPEG_CACHE_SIZE];
 static uint32_t s_cache_block = 0xFFFFFFFF; /* 当前缓存的原始块号 */
+
+/**
+ * @brief 重置 MJPEG 播放器状态（文件内容变更后调用，强制下次从第一帧重新初始化）
+ */
+void lcd_mjpeg_reset(void)
+{
+    s_mjpeg.active = 0;
+    s_mjpeg.last_fail_tick = 0;
+    s_mjpeg.fail_count = 0;
+    s_cache_block = 0xFFFFFFFFUL; /* Flash 块缓存失效 */
+}
 
 static unsigned char mjpeg_read_cb(unsigned char *pBuf, unsigned char buf_size,
                                    unsigned char *pBytesActuallyRead,
@@ -204,7 +216,17 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
         s_mjpeg.cur_frame_idx     = 0;
         s_mjpeg.current_frame_pos = w25q_start_addr + 14;
         s_mjpeg.last_error        = 0;
+        s_mjpeg.last_fail_tick    = 0; /* 新文件：清除失败降频 */
+        s_mjpeg.fail_count        = 0;
         s_cache_block = 0xFFFFFFFFUL;
+    }
+
+    /* 失败降频：仅连续失败 ≥3 帧才降频（单次毛刺/坏帧不停顿，保证播放完整） */
+    if (s_mjpeg.active && s_mjpeg.last_fail_tick != 0U &&
+        s_mjpeg.fail_count >= 3U &&
+        (uint32_t)(HAL_GetTick() - s_mjpeg.last_fail_tick) < MJPEG_FAIL_RETRY_INTERVAL_MS)
+    {
+        return;
     }
 
     /* 每帧更新绘制原点（动画改 x/y 时生效，不重置解码进度） */
@@ -220,12 +242,19 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
 
     /* ---- 读取当前帧的 4B 大小前缀 ---- */
     {
-        /* 不足 4B 前缀：直接回绕，避免半帧/脏 size 导致后续持续失步 */
+        /* 不足 4B 前缀：文件过小 / 已播完边界 → 回绕（下一帧从第一帧） */
         if ((s_mjpeg.current_frame_pos + 4U) > s_mjpeg.end_addr)
         {
+            if (s_mjpeg.cur_frame_idx == 0)
+            {
+                s_mjpeg.last_error = MJPEG_ERR_BAD_MAGIC;
+                s_mjpeg.fail_count++;
+                s_mjpeg.last_fail_tick = HAL_GetTick();
+                return; /* 文件过小，无帧可播 */
+            }
             s_mjpeg.last_error = MJPEG_ERR_BAD_MAGIC;
             MJPEG_REWIND();
-            return;
+            return; /* 播完：下一帧从第一帧开始 */
         }
 
         uint8_t sz_buf[4];
@@ -233,7 +262,8 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
                         s_mjpeg.current_frame_pos - s_mjpeg.start_addr, sz_buf, 4, 0U, true))
         {
             s_mjpeg.last_error = MJPEG_ERR_BAD_MAGIC;
-            MJPEG_REWIND();
+            s_mjpeg.fail_count++;
+            s_mjpeg.last_fail_tick = HAL_GetTick();
             return;
         }
 
@@ -250,8 +280,14 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
             (s_mjpeg.current_frame_pos + 4U + frame_size) > s_mjpeg.end_addr)
         {
             s_mjpeg.last_error = MJPEG_ERR_BAD_MAGIC;
+            if (s_mjpeg.cur_frame_idx == 0)
+            {
+                s_mjpeg.fail_count++;
+                s_mjpeg.last_fail_tick = HAL_GetTick();
+                return; /* 第一帧 size 脏：数据损坏 */
+            }
             MJPEG_REWIND();
-            return;
+            return; /* 帧边界错乱：回绕，下一帧从第一帧重试 */
         }
 
         s_mjpeg.frame_size      = frame_size;
@@ -269,15 +305,19 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
     if (ret != 0)
     {
         s_mjpeg.last_error = MJPEG_ERR_DECODE_INIT;
-        /* 解码失败多半是帧边界已错；直接回绕而不是带着脏指针前进 */
-        MJPEG_REWIND();
+        /* 解码初始化失败：跳过本帧继续（不回绕开头，保证播放完整） */
+        s_mjpeg.fail_count++;
+        s_mjpeg.last_fail_tick = HAL_GetTick();
+        MJPEG_ADVANCE_FRAME();
         return;
     }
 
     if (jinfo.m_comps != 3)
     {
         s_mjpeg.last_error = MJPEG_ERR_NOT_3_COMP;
-        MJPEG_REWIND();
+        s_mjpeg.fail_count++;
+        s_mjpeg.last_fail_tick = HAL_GetTick();
+        MJPEG_ADVANCE_FRAME();
         return;
     }
 
@@ -401,12 +441,17 @@ void lcd_play_mjpeg_video(int16_t x, int16_t y, int16_t width, int16_t height,
     if (ret != PJPG_NO_MORE_BLOCKS)
     {
         s_mjpeg.pjpeg_ret = ret;
-        /* 中途解码失败：回绕，避免后续帧 size 读到 JPEG 中部 */
+        /* 帧数据读完（播放完成）或解码失败：本帧已画完，前进到下一帧。
+         * ADVANCE 在到达文件尾时自动回绕第一帧，保证循环完整且无黑屏。
+         * 不回绕重播第一帧——否则坏帧会导致循环卡在开头几帧（“只能播放前面几帧”）。 */
         s_mjpeg.last_error = MJPEG_ERR_DECODE_INIT;
-        MJPEG_REWIND();
+        s_mjpeg.fail_count++;
+        s_mjpeg.last_fail_tick = HAL_GetTick();
+        MJPEG_ADVANCE_FRAME();
         return;
     }
 
-    /* ---- 前进到下一帧 ---- */
+    /* ---- 前进到下一帧（成功：清除失败计数） ---- */
+    s_mjpeg.fail_count = 0;
     MJPEG_ADVANCE_FRAME();
 }

@@ -1639,14 +1639,9 @@ button#btnLcdOn:hover:not(:disabled){
           </select>
         </div>
         <div class="field-row">
-          <span class="field-label">数据块大小</span>
-          <input type="number" id="chunkSize" value="512" min="0" max="2048" step="16" style="flex:1;" onchange="this.value=Math.max(0,Math.min(2048,parseInt(this.value)||0))" oninput="this.value=Math.max(0,Math.min(2048,parseInt(this.value)||0))">
-          <span class="field-hint">字节</span>
-        </div>
-        <div class="field-row">
           <span class="field-label">文件名</span>
           <input type="text" id="fileNameInput" value="" maxlength="16" style="flex:1;">
-          <span class="field-hint" id="nameByteCount">0 / 16</span>
+          <span class="field-hint" id="nameByteCount">0 / 15</span>
         </div>
       </div>
 
@@ -1849,7 +1844,7 @@ const R_LCD=0xA0;
 const UH0=0xAA,UH1=0x55,UHS=5;
 const R_CONT=0xA1,R_ERR=0xE0;
 const ERRMSG={1:'CRC错误',2:'未知类型',3:'大文件区满',4:'小文件区满',5:'类型不匹配',6:'大文件槽满',7:'小文件槽满',8:'索引无效',9:'未知命令',10:'DMA失败',11:'Flash写入失败',12:'写入验证失败'};
-const CHUNK_MAX=2048, WRITE_TIMEOUT=8000, SEND_TIMEOUT=15000;
+const WRITE_TIMEOUT=8000, SEND_TIMEOUT=15000;
 const ST_INIT=0, ST_SENDING=1, ST_WAIT_ACK=2, ST_DONE=3, ST_ERR=4;
 
 // ============= DOM refs =============
@@ -1924,11 +1919,27 @@ function feedRx(data) {
 }
 
 function handleResp(cmd,payload){
-  if(cmd===R_CONT){if(!isTransferring)log('MCU \u2192 就绪 (0xA1)','recv');else signalCont();}
+  if(cmd===R_CONT){
+    if(delPending){ /* 删除完成确认：MCU 擦除完毕后回 0xA1 */
+      log('MCU \u2192 删除完成 (0xA1)','recv');
+      if(delTimer){clearTimeout(delTimer);delTimer=null;}
+      if(delPollTimer){clearInterval(delPollTimer);delPollTimer=null;}
+      delPending=false;delTarget=null;
+      toast('删除完成','success');
+      queryFileList();
+    }else if(!isTransferring){log('MCU \u2192 就绪 (0xA1)','recv');}
+    else{signalCont();}
+  }
   else if(cmd===R_ERR){
     const code=payload.length>0?payload[0]:0;
     log('MCU \u2192 错误 0x'+code.toString(16).toUpperCase().padStart(2,'0')+' '+ (ERRMSG[code]||'未知'),'error');
     if(sendState===ST_SENDING||sendState===ST_WAIT_ACK) doAbort(ERRMSG[code]||'0x'+code.toString(16));
+    if(delPending){ /* 删除失败：释放删除锁，避免“删除操作进行中”永久卡死 */
+      if(delTimer){clearTimeout(delTimer);delTimer=null;}
+      if(delPollTimer){clearInterval(delPollTimer);delPollTimer=null;}
+      delPending=false;delTarget=null;
+      toast('删除失败: '+(ERRMSG[code]||'0x'+code.toString(16)),'error');
+    }
   }
   else if(cmd===C_QRY){log('MCU \u2192 文件列表 ('+payload[0]+' 个文件)','recv');parseList(payload);}
   else if(cmd===C_LCD){
@@ -2023,6 +2034,17 @@ function parseList(payload){
 
   lastFileListData=files;
 
+  /* 删除确认兜底：目标文件已从列表消失 → 删除实际完成（即使 0xA1 确认帧丢失） */
+  if(delPending && delTarget){
+    const stillThere=files.some(f=>f.fType===delTarget.ft && f.fi===delTarget.fi);
+    if(!stillThere){
+      if(delTimer){clearTimeout(delTimer);delTimer=null;}
+      if(delPollTimer){clearInterval(delPollTimer);delPollTimer=null;}
+      delPending=false;delTarget=null;
+      toast('删除完成','success');
+    }
+  }
+
 
   let h='';
   files.forEach(function(f,order){
@@ -2102,21 +2124,35 @@ $('fileDetailModal').addEventListener('keydown',function(e){if(e.key==='Escape')
 
 /* ===== Delete ===== */
 let delPending=false;
+let delTimer=null; /* 删除确认超时兜底 */
+let delPollTimer=null; /* 删除确认轮询：0xA1 丢失时靠文件从列表消失兜底 */
+let delTarget=null;    /* 当前删除目标 {ft,fi} */
 async function delFIClick(ft,fi,name){
   if(!port){toast('未连接串口','error');return;}
   if(delPending){toast('删除操作进行中','warn');return;}
   const typeName=ft===C_L?'大文件':'小文件';
   if(!confirm('确认删除 '+typeName+' #'+fi+' ('+name+')？\n\n注意：删除后W25Q扇区将被擦除并回收空间。'))return;
   delPending=true;
+  delTarget={ft,fi};
   const d=new Uint8Array([ft&0xFF,fi&0xFF]);
   const ok=await writeSer(frame(C_DEL,d));
   if(ok){
     log('HOST \u2192 删除 '+typeName+' #'+fi+' ('+name+')','send');
-    toast('已删除: '+name,'success');
-    setTimeout(function(){queryFileList();delPending=false;},600);
+    toast('正在删除: '+name,'warn'); /* 等 MCU 擦除完成回 0xA1 再刷新列表 */
+    /* 超时兜底：大文件擦除可达数分钟（扇区数×150ms），超时仅解锁，不误报完成 */
+    delTimer=setTimeout(function(){
+      if(delPending){delPending=false;delTarget=null;delTimer=null;
+        if(delPollTimer){clearInterval(delPollTimer);delPollTimer=null;}
+        toast('删除超时（MCU 未确认，可能仍在擦除）','error');}
+    },600000);
+    /* 轮询确认：每 2s 查一次列表，0xA1 确认帧丢失时靠文件消失兜底解锁 */
+    delPollTimer=setInterval(function(){
+      if(!delPending){if(delPollTimer){clearInterval(delPollTimer);delPollTimer=null;}return;}
+      writeSer(frame(C_QRY,new Uint8Array(0)));
+    },2000);
   }else{
     toast('删除命令发送失败','error');
-    delPending=false;
+    delPending=false;delTarget=null;
   }
 }
 window.delFIClick=delFIClick;
@@ -2127,13 +2163,13 @@ function onFileSelected(input){
   selFile=f;
   const sz=f.size<1024?f.size+'B':f.size<1048576?(f.size/1024).toFixed(1)+'KB':(f.size/1048576).toFixed(2)+'MB';
   elFileInfo.textContent='\u2714 '+f.name+' ('+sz+')';
-  elName.value=f.name.replace(/\.[^.]+$/,'').slice(0,16);updateNBC();
+  elName.value=f.name.replace(/\.[^.]+$/,'').slice(0,15);updateNBC();
   elBtnSend.disabled=false;
 }
 elName.addEventListener('input',updateNBC);
 function updateNBC(){
   const b=new TextEncoder().encode(elName.value).length;
-  elNameCnt.textContent=b+' / 16';elNameCnt.style.color=b>16?'var(--red)':'var(--text2)';
+  elNameCnt.textContent=b+' / 15';elNameCnt.style.color=b>15?'var(--red)':'var(--text2)';
 }
 function showSendWarn(){
   const el=$('lcdSendWarn');
@@ -2157,8 +2193,8 @@ async function userStartSend(){
     return;
   }
   const cmd=parseInt($('fileType').value);
-  let fn=elName.value.trim();if(!fn)fn=selFile.name.replace(/\.[^.]+$/,'').slice(0,16);
-  if(new TextEncoder().encode(fn).length>16){toast('文件名编码超16字节','error');return;}
+  let fn=elName.value.trim();if(!fn)fn=selFile.name.replace(/\.[^.]+$/,'').slice(0,15);
+  if(new TextEncoder().encode(fn).length>15){toast('文件名编码超15字节','error');return;}
   const sz=selFile.size<1024?selFile.size+'B':(selFile.size/1024).toFixed(1)+'KB';
   const cn=cmd===C_L?'大文件':'小文件';
   if(!confirm('发送确认:\n  本地: '+selFile.name+'\n  设备名: '+fn+'\n  类型: '+cn+' ('+sz+')?'))return;
@@ -2167,6 +2203,7 @@ async function userStartSend(){
 
 async function doSend(file,cmd,fn){
   if(!port||!port.writable){toast('未连接串口','error');return;}
+  if(delPending){toast('删除进行中，请稍候','warn');return;}
   if(sendState!==ST_INIT&&sendState!==ST_DONE&&sendState!==ST_ERR){toast('正在发送中','error');return;}
   sendState=ST_INIT;
   resetCont();
@@ -2194,7 +2231,7 @@ async function doSend(file,cmd,fn){
 async function sendLoop(){
   while(sendState===ST_SENDING){
     if(fileOff>=fileData.length){await sendEndFrame();return;}
-    const cs=chunkSz(),len=Math.min(fileData.length-fileOff,cs);
+    const len=Math.min(fileData.length-fileOff,1022); /* 固定 1022B 数据 + 2B CRC16 一包（与 MCU CRC 块对齐） */
     const chunk=fileData.slice(fileOff,fileOff+len);
     const totalSize=(fileOff===0)?fileData.length:0;
     const frm=frame(fileCmd,chunk,totalSize);
@@ -2212,7 +2249,7 @@ async function sendLoop(){
 
 async function sendEndFrame(){
   const enc=new TextEncoder(),nb=enc.encode(fileName),pn=new Uint8Array(16);
-  pn.set(nb.slice(0,16));
+  pn.set(nb.slice(0,15));
   const frm=frame(C_END,pn);
   const ok=await writeSer(frm);
   if(ok){log('HOST \u2192 结束帧 文件名='+fileName,'send');}
@@ -2281,7 +2318,6 @@ function setUI(state){
   else{elBtnSend.style.display='block';elBtnCancel.style.display='none';elBtnRetry.style.display='none';elBtnSend.disabled=true;elStatus.textContent='';elFileInfo.textContent='未选择文件';}
 }
 
-function chunkSz(){const v=parseInt($('chunkSize').value)||0;return v>0?Math.min(v,2048):1;}
 function updateProg(pct,done,total){
   elProg.style.width=pct+'%';
   const r=Math.round(255*(1-pct/100)),g=Math.round(23*(1-pct/100)+230*(pct/100)),b=Math.round(68*(1-pct/100)+118*(pct/100));
@@ -2319,6 +2355,9 @@ async function connectSerial(){
 
 async function disconnectSerial(){
   sendState=ST_DONE;resetCont();
+  if(delTimer){clearTimeout(delTimer);delTimer=null;}
+  if(delPollTimer){clearInterval(delPollTimer);delPollTimer=null;}
+  delPending=false;delTarget=null; /* 删除中断开串口：释放删除锁，避免重连后锁死 */
   if(reader){try{await reader.cancel()}catch(e){}try{reader.releaseLock()}catch(e){}reader=null;}
   readLoop=false;
   if(port){try{await port.close()}catch(e){}port=null;}
@@ -2498,7 +2537,6 @@ const SET_KEY='stm_ips_host_cfg';
 function saveAllSettings(){
   const s={
     baudRate:$('baudRate').value,
-    chunkSize:$('chunkSize').value,
     fileType:$('fileType').value,
     fileName:$('fileNameInput').value,
     leftW:$('leftPanel').style.width||'',
@@ -2518,7 +2556,6 @@ function loadAllSettings(){
     if(!raw)return;
     const s=JSON.parse(raw);
     if(s.baudRate)$('baudRate').value=s.baudRate;
-    if(s.chunkSize)$('chunkSize').value=s.chunkSize;
     if(s.fileType)$('fileType').value=s.fileType;
     if(s.fileName)$('fileNameInput').value=s.fileName;
     if(s.leftW){const w=Math.max(260,Math.min(520,parseInt(s.leftW)||340));$('leftPanel').style.width=w+'px';}
@@ -2544,7 +2581,7 @@ function loadAllSettings(){
     updateNBC();
   }catch(e){}
 }
-['baudRate','chunkSize','fileType','vpWidth','vpHt','vpFps','vpCodec','vpMjpegQuality','vpBrightness'].forEach(function(id){
+['baudRate','fileType','vpWidth','vpHt','vpFps','vpCodec','vpMjpegQuality','vpBrightness'].forEach(function(id){
   const el=document.getElementById(id);
   if(el) el.addEventListener('change',saveAllSettings);
 });
