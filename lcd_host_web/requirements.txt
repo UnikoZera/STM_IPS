@@ -1,4 +1,6 @@
-﻿flask>=3.0
+﻿fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.9
 imageio-ffmpeg>=0.4.9
 # 打包可选：pip install pyinstaller
 # pyinstaller>=6.0

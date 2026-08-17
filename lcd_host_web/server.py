@@ -10,9 +10,20 @@ import zipfile
 from pathlib import Path
 from threading import Timer, Lock, Thread
 
-from flask import Flask, request, send_file, jsonify, make_response, abort
+from fastapi import FastAPI, UploadFile, File, Form, Request
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse, FileResponse, Response
+from fastapi.middleware.cors import CORSMiddleware
 
-app = Flask(__name__, static_url_path='', static_folder='.')
+app = FastAPI(title='STM IPS Host', docs_url=None, redoc_url=None, openapi_url=None)
+
+# CORS：前端 fetch 走同源，这里仅兜底保留（file:// 或跨端口调试时用得上）。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],
+    allow_methods=['GET', 'POST', 'OPTIONS'],
+    allow_headers=['*'],
+)
 
 ALLOWED_EXT = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp', '.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv'}
 VIDEO_EXT = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.gif'}
@@ -390,6 +401,12 @@ def _popen_silent(*args, **kwargs):
 
 HERE = Path(__file__).parent
 
+# 静态资源：CSS/JS 拆分为独立文件，统一挂载到 /static（frozen 时指向 _MEIPASS）。
+_STATIC_DIR = HERE / 'static'
+if _STATIC_DIR.is_dir():
+    from fastapi.staticfiles import StaticFiles
+    app.mount('/static', StaticFiles(directory=str(_STATIC_DIR)), name='static')
+
 # ============================================================================
 #  下载管理：临时文件注册、过期清理
 # ============================================================================
@@ -684,56 +701,52 @@ def _save_temp(name: str, data: bytes,
 
 # ----- endpoints -------------------------------------------------------------
 
-@app.after_request
-def add_cors(resp):
-    resp.headers['Access-Control-Allow-Origin'] = '*'
-    resp.headers['Access-Control-Allow-Headers'] = '*'
-    resp.headers['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
-    return resp
 
-
-@app.route('/convert', methods=['POST', 'OPTIONS'])
-def convert():
-    if request.method == 'OPTIONS':
-        return make_response()
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
-
-    file = request.files['file']
+@app.post('/convert')
+def convert(file: UploadFile = File(None),
+            width: str = Form('160'),
+            height: str = Form('80'),
+            fps: str = Form('30'),
+            swap: str = Form('0'),
+            brightness: str = Form('100'),
+            codec: str = Form('mjpeg'),
+            quality: str = Form('70')):
+    if not file:
+        return JSONResponse({'error': 'No file uploaded'}, status_code=400)
     if not file.filename:
-        return jsonify({'error': 'Empty filename'}), 400
+        return JSONResponse({'error': 'Empty filename'}, status_code=400)
 
     try:
-        width = int(request.form.get('width', 160))
-        height = int(request.form.get('height', 80))
-        fps = max(1, min(60, float(request.form.get('fps', 30))))
-        swap = request.form.get('swap', '0') == '1'
-        brightness = max(10, min(300, float(request.form.get('brightness', 100))))
-        codec = request.form.get('codec', 'mjpeg').strip().lower()
+        width = int(width)
+        height = int(height)
+        fps = max(1, min(60, float(fps)))
+        swap = swap == '1'
+        brightness = max(10, min(300, float(brightness)))
+        codec = codec.strip().lower()
         if codec not in ('mjpeg', 'raw'):
             codec = 'mjpeg'
         if codec == 'mjpeg':
-            quality = max(1, min(100, int(request.form.get('quality', 70))))
+            quality = max(1, min(100, int(quality)))
         else:
             quality = 0
     except ValueError:
-        return jsonify({'error': 'Invalid parameters'}), 400
+        return JSONResponse({'error': 'Invalid parameters'}, status_code=400)
 
     if not (1 <= width <= 1024) or not (1 <= height <= 1024):
-        return jsonify({'error': 'Dimensions out of range (1-1024)'}), 400
+        return JSONResponse({'error': 'Dimensions out of range (1-1024)'}, status_code=400)
     ext = Path(file.filename).suffix.lower()
     is_video = ext in VIDEO_EXT
     if ext not in ALLOWED_EXT:
-        return jsonify({'error': f'Unsupported file type: {ext}'}), 400
+        return JSONResponse({'error': f'Unsupported file type: {ext}'}, status_code=400)
 
     # 串行化重转码，避免多请求叠加把 CPU 打满
     if not _CONVERT_LOCK.acquire(blocking=False):
-        return jsonify({'error': '已有转换任务进行中，请稍后再试'}), 429
+        return JSONResponse({'error': '已有转换任务进行中，请稍后再试'}, status_code=429)
 
     global _LAST_DECODE_ACCEL
     _LAST_DECODE_ACCEL = 'cpu'
 
-    body = file.read()
+    body = file.file.read()
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as fin:
         fin.write(body)
@@ -755,9 +768,9 @@ def convert():
                 result = _process_image_raw(in_path, width, height, endian, brightness)
     except subprocess.CalledProcessError as e:
         msg = e.stderr.decode('utf-8', errors='replace')[-300:] if e.stderr else str(e)
-        return jsonify({'error': f'ffmpeg error: {msg}'}), 500
+        return JSONResponse({'error': f'ffmpeg error: {msg}'}, status_code=500)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return JSONResponse({'error': str(e)}, status_code=500)
     finally:
         _CONVERT_LOCK.release()
         try:
@@ -774,7 +787,7 @@ def convert():
     # 报告“实际用了什么”，不是“探测到什么”
     result['hwaccel'] = _LAST_DECODE_ACCEL or (_detect_hwaccel() or 'cpu')
     result['hwaccel_available'] = _detect_hwaccel() or 'cpu'
-    return jsonify(result)
+    return result
 
 
 # ============================================================================
@@ -1178,71 +1191,79 @@ def _process_video_raw(in_path: str, width: int, height: int,
     return _attach_payload_fields(result, compressed, thumb, compressed_size=compressed_size)
 
 
-@app.route('/download/<download_id>', methods=['GET', 'OPTIONS'])
-@app.route('/download', methods=['POST', 'OPTIONS'])
-def download(download_id=None):
-    if request.method == 'OPTIONS':
-        return make_response()
-
-    # POST with JSON body (legacy, for single images)
-    if request.method == 'POST' and download_id is None:
-        data = request.get_json(force=True)
-        if not data:
-            return jsonify({'error': 'No data'}), 400
-        raw = bytes.fromhex(data.get('hex', '')) if data.get('hex') else b''
-        if not raw:
-            return jsonify({'error': 'No content'}), 400
-        w = data.get('width', 160)
-        h = data.get('height', 80)
-        fcount = data.get('frame_count', 1)
-        name = data.get('name', 'output')
-        buf = io.BytesIO()
-        if fcount == 1:
-            buf.write(raw)
-            fname = f'{name}.bin'
-        else:
-            fs = w * h * 2
-            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for i in range(fcount):
-                    zf.writestr(f'frame_{i:04d}.bin', raw[i * fs:(i + 1) * fs])
-                zf.writestr('_info.txt',
-                            f'width={w}\nheight={h}\nframes={fcount}\nframe_size={fs}')
-            fname = f'{name}.zip'
-        buf.seek(0)
-        return send_file(buf, as_attachment=True, download_name=fname)
-
+@app.get('/download/{download_id}')
+def download(download_id: str):
     # GET with download_id: pure binary payload only (no trailing text!)
-    if download_id:
-        ent = _DL_REG.get(download_id)
-        if not ent:
-            abort(404, description='Download not found or expired')
-        ent['mtime'] = time.time()  # extend lifetime
-        path = Path(ent['path'])
-        if not path.is_file():
-            abort(404, description='Download file missing')
-        w, h = ent['width'], ent['height']
-        name = ent['name']
-        fname = f'{name}_{w}x{h}_qc.bin'
-        return send_file(
-            path,
-            as_attachment=True,
-            download_name=fname,
-            mimetype='application/octet-stream',
-            conditional=True,
-        )
-
-    return jsonify({'error': 'No download ID'}), 400
+    ent = _DL_REG.get(download_id)
+    if not ent:
+        raise HTTPException(404, detail='Download not found or expired')
+    ent['mtime'] = time.time()  # extend lifetime
+    path = Path(ent['path'])
+    if not path.is_file():
+        raise HTTPException(404, detail='Download file missing')
+    w, h = ent['width'], ent['height']
+    name = ent['name']
+    fname = f'{name}_{w}x{h}_qc.bin'
+    return FileResponse(
+        path,
+        filename=fname,
+        media_type='application/octet-stream',
+    )
 
 
-@app.route('/', methods=['GET', 'OPTIONS'])
+@app.post('/download')
+async def download_post(request: Request):
+    # POST with JSON body (legacy, for single images)
+    data = await request.json()
+    if not data:
+        return JSONResponse({'error': 'No data'}, status_code=400)
+    raw = bytes.fromhex(data.get('hex', '')) if data.get('hex') else b''
+    if not raw:
+        return JSONResponse({'error': 'No content'}, status_code=400)
+    w = data.get('width', 160)
+    h = data.get('height', 80)
+    fcount = data.get('frame_count', 1)
+    name = data.get('name', 'output')
+    buf = io.BytesIO()
+    if fcount == 1:
+        buf.write(raw)
+        fname = f'{name}.bin'
+    else:
+        fs = w * h * 2
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for i in range(fcount):
+                zf.writestr(f'frame_{i:04d}.bin', raw[i * fs:(i + 1) * fs])
+            zf.writestr('_info.txt',
+                        f'width={w}\nheight={h}\nframes={fcount}\nframe_size={fs}')
+        fname = f'{name}.zip'
+    buf.seek(0)
+    from urllib.parse import quote
+    cd = f"attachment; filename*=UTF-8''{quote(fname)}"
+    return Response(
+        content=buf.getvalue(),
+        media_type='application/octet-stream',
+        headers={'Content-Disposition': cd},
+    )
+
+
+@app.get('/')
 def index():
-    if request.method == 'OPTIONS':
-        return make_response()
-    return app.send_static_file('lcd_host_web.html')
+    resp = FileResponse(
+        HERE / 'index.html',
+        headers={
+            # 禁用 HTML 缓存：bat 每次启动都复用固定端口，浏览器默认
+            # 缓存会让 UI 修改无法生效；必须 no-cache。
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+        },
+    )
+    return resp
 
 
 if __name__ == '__main__':
     import argparse
+    import uvicorn
     parser = argparse.ArgumentParser(description='STM IPS Video Processor')
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=5000)
@@ -1257,4 +1278,4 @@ if __name__ == '__main__':
     except Exception as e:
         print(f'HW accel probe error: {e}')
     print(f'Server: http://{args.host}:{args.port}')
-    app.run(host=args.host, port=args.port, debug=args.debug)
+    uvicorn.run(app, host=args.host, port=args.port, log_level='debug' if args.debug else 'info')

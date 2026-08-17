@@ -20,10 +20,11 @@ a = Analysis(
     pathex=[str(here)],
     binaries=_ff_binaries,
     datas=[
-        (str(here / 'lcd_host_web.html'), '.'),
+        (str(here / 'index.html'), '.'),
+        (str(here / 'static'), 'static'),
         (str(here / 'server.py'), '.'),
     ],
-    hiddenimports=['flask', 'imageio_ffmpeg', 'imageio_ffmpeg.binaries'],
+    hiddenimports=['fastapi', 'uvicorn', 'multipart', 'imageio_ffmpeg', 'imageio_ffmpeg.binaries'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

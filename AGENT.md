@@ -19,7 +19,7 @@
 |:---|:---|
 | `Core/` | 固件：LCD、动画、存储、W25Q、USB 协议、主循环 |
 | `USB_DEVICE/` | STM32 USB CDC |
-| `lcd_host_web/` | Flask 转码 + HTML5 Web Serial 主机页 |
+| `lcd_host_web/` | FastAPI 转码 + HTML5 Web Serial 主机页 |
 | `feature_tester/` | 串口 / RGB565 辅助测试 |
 | `Debug/` | Makefile 构建产物（勿手改生成物） |
 
@@ -34,7 +34,7 @@
 5. `Core/Src/w25q_controller.c` — Flash SPI/DMA  
 6. `Core/Src/usb_controller.c` — CDC 组帧发送  
 7. `Core/Src/lcd_ui.c` — 启动资源绑定（文件名）  
-8. `lcd_host_web/lcd_host_web.html` + `server.py` — 上位机帧与转码格式  
+8. `lcd_host_web/index.html` + `static/` + `server.py` — 上位机帧与转码格式  
 
 ## 关键模块与数据流
 
@@ -195,4 +195,4 @@ python -m py_compile .\lcd_host_web\server.py
 - 首次 FAT 初始化可能需要**复位一次**。  
 - Flash/USB/DMA 时序敏感，改驱动保持「封装统一 + 主循环泵任务」。  
 - 大文件删除路径会擦扇区；若改为写前擦除或强制校验，需同步更新 README 中的设计不变量描述。  
-- 许可：项目 AGPLv3；第三方见 README。  
+- 许可：项目 MIT；第三方见 README。  

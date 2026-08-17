@@ -26,7 +26,9 @@ def main():
 
     # 1. deps for runtime + packer
     for pkg, import_name in (
-        ('flask', 'flask'),
+        ('fastapi', 'fastapi'),
+        ('uvicorn', 'uvicorn'),
+        ('python-multipart', 'multipart'),
         ('imageio-ffmpeg', 'imageio_ffmpeg'),
         ('pyinstaller', 'PyInstaller'),
     ):
@@ -64,9 +66,13 @@ def main():
         '--onefile',
         '--name', 'STM_IPS_Host',
         '--console',
-        f'--add-data=lcd_host_web.html{sep}.',
+        f'--add-data=index.html{sep}.',
+        f'--add-data=static{sep}static',
         f'--add-data=server.py{sep}.',
-        '--hidden-import=flask',
+        '--collect-submodules=uvicorn',
+        '--hidden-import=fastapi',
+        '--hidden-import=uvicorn',
+        '--hidden-import=multipart',
         '--hidden-import=imageio_ffmpeg',
         '--hidden-import=imageio_ffmpeg.binaries',
         '--collect-binaries=imageio_ffmpeg',

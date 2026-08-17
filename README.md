@@ -6,7 +6,7 @@
 ![STM32](https://img.shields.io/badge/MCU-STM32F401RCT6-03234B?logo=arm)
 ![Display](https://img.shields.io/badge/Display-160%C3%9780_IPS-00BCD4)
 ![Protocol](https://img.shields.io/badge/Protocol-USB_CDC_Custom-7C4DFF)
-![License](https://img.shields.io/badge/License-AGPLv3-blue)
+![License](https://img.shields.io/badge/License-MIT-blue)
 ![Status](https://img.shields.io/badge/Status-Active-success)
 
 - [English Version](./README_EN.md)
@@ -51,7 +51,7 @@
 |:---|:---|:---|
 | `Core/` | C (STM32 HAL) | LCD、动画、视频解码、存储管理、USB 协议 |
 | `USB_DEVICE/` | STM32 USB Device | USB CDC 虚拟串口 |
-| `lcd_host_web/` | Python Flask + HTML5 + Web Serial | 转码、串口烧录、文件管理、位图可视化 |
+| `lcd_host_web/` | Python FastAPI + HTML5 + Web Serial | 转码、串口烧录、文件管理、位图可视化 |
 | `feature_tester/` | C + Python | 串口回环 / RGB565 校验 |
 | `docs/` | Markdown | 上下位机存储协议与流程说明 |
 
@@ -243,7 +243,7 @@ CDC 上自定义帧。设备→主机：
 [0xBB][0x44][CMD][TOTAL_SIZE LE 4B][PAYLOAD_LEN LE 2B][DATA...][CRC16 LE]
 ```
 
-CRC：**CRC-16/USB**（与上位机 `lcd_host_web.html` 一致）。
+CRC：**CRC-16/USB**（与上位机 `lcd_host_web/static/js/protocol.js` 一致）。
 
 ### 🔗 SPI DMA / EEPROM / CRC
 
@@ -356,7 +356,7 @@ AT24C  @0x0000  storage_fat_t（magic / next / counts / tables / bitmap）
 
 ### 🌐 `lcd_host_web/`
 
-Flask 转码服务 + **浏览器 Web Serial** 主机页（`lcd_host_web.html`）。
+FastAPI 转码服务 + **浏览器 Web Serial** 主机页（`index.html`，前端已拆分至 `static/`）。
 
 | 能力 | 说明 |
 |:---|:---|

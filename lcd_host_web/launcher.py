@@ -1,25 +1,22 @@
 import sys
 import os
 import time
-import webbrowser
 import socket
 import threading
+import webbrowser
+
 
 def _resource_path(rel):
-    """Resolve path for PyInstaller frozen or normal dev."""
-    if getattr(sys, 'frozen', False):
-        base = os.path.dirname(sys.executable)
-        bundle = sys._MEIPASS
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-        bundle = base
-    # Data files go to _MEIPASS; user-dir files stay next to .exe
-    return os.path.join(bundle, rel)
+    """Resolve path for PyInstaller frozen or normal dev.
 
-def _exe_dir():
+    Data files (index.html / static/) go to _MEIPASS; user-dir files stay next
+    to the .exe. `server.py` resolves its own assets via ``Path(__file__).parent``,
+    so this is only used to make the ``server`` module importable when frozen.
+    """
     if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
+        return sys._MEIPASS
     return os.path.dirname(os.path.abspath(__file__))
+
 
 def _find_free_port(preferred=5000):
     """Use a fixed port so localStorage persists across sessions."""
@@ -34,6 +31,7 @@ def _find_free_port(preferred=5000):
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
 
+
 def _wait_for_server(url, timeout=15):
     import urllib.request
     deadline = time.time() + timeout
@@ -45,6 +43,7 @@ def _wait_for_server(url, timeout=15):
             time.sleep(0.15)
     return False
 
+
 def main():
     port = _find_free_port()
     url = f'http://127.0.0.1:{port}'
@@ -53,7 +52,6 @@ def main():
     sys.path.insert(0, bundle_dir)
 
     import server
-    server.app.static_folder = bundle_dir
     server.TMP.mkdir(parents=True, exist_ok=True)
 
     def _open_browser():
@@ -69,7 +67,10 @@ def main():
     except Exception as e:
         print(f'Video HW accel probe failed: {e}')
     print('Press Ctrl+C to stop.')
-    server.app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False)
+
+    import uvicorn
+    uvicorn.run(server.app, host='127.0.0.1', port=port, log_level='info')
+
 
 if __name__ == '__main__':
     main()

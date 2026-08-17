@@ -6,7 +6,7 @@
 ![STM32](https://img.shields.io/badge/MCU-STM32F401RCT6-03234B?logo=arm)
 ![Display](https://img.shields.io/badge/Display-160%C3%9780_IPS-00BCD4)
 ![Protocol](https://img.shields.io/badge/Protocol-USB_CDC_Custom-7C4DFF)
-![License](https://img.shields.io/badge/License-AGPLv3-blue)
+![License](https://img.shields.io/badge/License-MIT-blue)
 ![Status](https://img.shields.io/badge/Status-Active-success)
 
 - [Chinese Version](./README.md)
@@ -51,7 +51,7 @@
 |:---|:---|:---|
 | `Core/` | C (STM32 HAL) | LCD, animation, video decode, storage manager, USB protocol |
 | `USB_DEVICE/` | STM32 USB Device | USB CDC virtual COM |
-| `lcd_host_web/` | Python Flask + HTML5 + Web Serial | Transcode, serial burn, file manager, bitmap UI |
+| `lcd_host_web/` | Python FastAPI + HTML5 + Web Serial | Transcode, serial burn, file manager, bitmap UI |
 | `feature_tester/` | C + Python | Serial loopback / RGB565 checks |
 | `docs/` | Markdown | Host↔MCU storage protocol & flow notes |
 
@@ -243,7 +243,7 @@ Host → device (storage manager):
 [0xBB][0x44][CMD][TOTAL_SIZE LE 4B][PAYLOAD_LEN LE 2B][DATA...][CRC16 LE]
 ```
 
-CRC: **CRC-16/USB** (same as `lcd_host_web.html`).
+CRC: **CRC-16/USB** (same as `lcd_host_web/static/js/protocol.js`).
 
 ### 🔗 SPI DMA / EEPROM / CRC
 
@@ -356,7 +356,7 @@ AT24C @0x0000  storage_fat_t (magic / next / counts / tables / bitmap)
 
 ### 🌐 `lcd_host_web/`
 
-Flask transcoding service + **browser Web Serial** host page (`lcd_host_web.html`).
+FastAPI transcoding service + **browser Web Serial** host page (`index.html`, frontend split into `static/`).
 
 | Capability | Notes |
 |:---|:---|
