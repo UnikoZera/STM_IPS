@@ -2,18 +2,20 @@
 // 注意：本模块不依赖任何业务模块，仅提供地基能力。
 // 共享可变状态统一放在 `state` 对象内（ES module 的 import 绑定只读，需通过对象属性跨模块读写）。
 
+import { PROTOCOL } from './protocol_contract.js';
+
 // ============= CRC16 USB (MODBUS) =============
 const CRC16_TABLE = new Uint16Array(256);
 for (let i=0;i<256;i++) { let c=i; for (let j=0;j<8;j++) c=(c&1)?((c>>>1)^0xA001):(c>>>1); CRC16_TABLE[i]=c; }
 export function crc16(data,off,len) { let c=0xFFFF; for (let i=0;i<len;i++) c=(c>>>8)^CRC16_TABLE[(c&0xFF)^data[off+i]]; return c^0xFFFF; }
 
 // ============= Constants =============
-export const H0=0xBB,H1=0x44,HS=9;
-export const C_L=0x11,C_S=0x45,C_END=0x14,C_DEL=0x19,C_QRY=0x20,C_LCD=0x10,C_BMP=0x21,C_ABORT=0x15;
+export const H0=PROTOCOL.hostHeader[0],H1=PROTOCOL.hostHeader[1],HS=PROTOCOL.hostHeaderSize;
+export const C_L=PROTOCOL.commands.downloadLarge,C_S=PROTOCOL.commands.downloadSmall,C_END=PROTOCOL.commands.endDownload,C_DEL=PROTOCOL.commands.deleteFile,C_QRY=PROTOCOL.commands.queryFileList,C_LCD=PROTOCOL.commands.lcdStream,C_BMP=PROTOCOL.commands.sendBitmap,C_ABORT=PROTOCOL.commands.abortDownload;
 export const LCD_W=160,LCD_H=80,LCD_TAIL=4,LCD_FRAME_SZ=LCD_W*LCD_H*2;
-export const R_LCD=0xA0;
-export const UH0=0xAA,UH1=0x55,UHS=5;
-export const R_CONT=0xA1,R_ERR=0xE0;
+export const R_LCD=PROTOCOL.commands.lcdFrame;
+export const UH0=PROTOCOL.deviceHeader[0],UH1=PROTOCOL.deviceHeader[1],UHS=PROTOCOL.deviceHeaderSize;
+export const R_CONT=PROTOCOL.commands.continue,R_ERR=PROTOCOL.commands.error;
 export const ERRMSG={1:'CRC错误',2:'未知类型',3:'大文件区满',4:'小文件区满',5:'类型不匹配',6:'大文件槽满',7:'小文件槽满',8:'索引无效',9:'未知命令',10:'DMA失败',11:'Flash写入失败',12:'写入验证失败'};
 export const WRITE_TIMEOUT=8000, SEND_TIMEOUT=15000;
 export const ST_INIT=0, ST_SENDING=1, ST_WAIT_ACK=2, ST_DONE=3, ST_ERR=4;
@@ -31,7 +33,7 @@ export const elFileCnt=$('fileCountBadge');
 // ============= 共享可变状态 =============
 export const state = {
   port:null, reader:null, readLoop:false,
-  fileData:null, fileOff:0, fileCmd:0, fileName:'',
+  fileData:null, fileSource:null, fileSize:0, fileOff:0, fileCmd:0, fileName:'',
   selFile:null, sendState:ST_INIT,
   contResolve:null, contPending:0,
   writeTimer:null, sendTimer:null,

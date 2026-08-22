@@ -1,4 +1,4 @@
-﻿import subprocess
+import subprocess
 import sys
 import shutil
 import os
@@ -30,7 +30,7 @@ def main():
         ('uvicorn', 'uvicorn'),
         ('python-multipart', 'multipart'),
         ('imageio-ffmpeg', 'imageio_ffmpeg'),
-        ('pyinstaller', 'PyInstaller'),
+        ('pyinstaller==6.11.1', 'PyInstaller'),
     ):
         try:
             mod = __import__(import_name)
@@ -69,12 +69,20 @@ def main():
         f'--add-data=index.html{sep}.',
         f'--add-data=static{sep}static',
         f'--add-data=server.py{sep}.',
+        f'--add-data=job_store.py{sep}.',
+        f'--add-data=container_format.py{sep}.',
+        f'--add-data=ffmpeg_service.py{sep}.',
+        f'--add-data=api{sep}api',
         '--collect-submodules=uvicorn',
         '--hidden-import=fastapi',
         '--hidden-import=uvicorn',
         '--hidden-import=multipart',
         '--hidden-import=imageio_ffmpeg',
         '--hidden-import=imageio_ffmpeg.binaries',
+        '--hidden-import=job_store',
+        '--hidden-import=container_format',
+        '--hidden-import=ffmpeg_service',
+        '--hidden-import=api.limits',
         '--collect-binaries=imageio_ffmpeg',
         '--collect-data=imageio_ffmpeg',
         '--noconfirm',

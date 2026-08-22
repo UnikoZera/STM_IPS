@@ -1,8 +1,10 @@
 // protocol.js — BB44 帧构建、AA55 接收解析、continuation 握手
 import { H0, H1, HS, UH0, UH1, UHS, crc16, state, log } from './core.js';
+import { PROTOCOL } from './protocol_contract.js';
 
 export function frame(cmd,data,totalFileSize) {
   const dL=data?data.length:0, pL=dL+2, tfs=totalFileSize||0, total=HS+dL+2;
+  if(dL>PROTOCOL.hostMaxDataBytes) throw new RangeError('Host payload exceeds protocol limit');
   const f=new Uint8Array(total);
   f[0]=H0;f[1]=H1;f[2]=cmd;
   f[3]=tfs&0xFF;f[4]=(tfs>>>8)&0xFF;f[5]=(tfs>>>16)&0xFF;f[6]=(tfs>>>24)&0xFF;
@@ -29,7 +31,7 @@ export function feedRx(data) {
     if(hi>0)state.rxBuf=state.rxBuf.slice(hi);
     if(state.rxBuf.length<UHS)return;
     const cmd=state.rxBuf[2],pLen=state.rxBuf[3]|(state.rxBuf[4]<<8),fLen=UHS+pLen;
-    if(pLen>32768){state.rxBuf=state.rxBuf.slice(1);log('无效帧长度 '+pLen,'error');continue;}
+    if(pLen>PROTOCOL.deviceMaxPayloadBytes){state.rxBuf=state.rxBuf.slice(1);log('无效帧长度 '+pLen,'error');continue;}
     if(state.rxBuf.length<fLen)return;
     if(respHandler)respHandler(cmd,state.rxBuf.slice(UHS,fLen));
     state.rxBuf=state.rxBuf.slice(fLen);

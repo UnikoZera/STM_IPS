@@ -4,7 +4,7 @@ import {
   clearLcdCanvas, log, toast,
 } from './core.js';
 import { frame } from './protocol.js';
-import { writeSer } from './serial.js';
+import { writeSer, setDeviceActivity } from './serial.js';
 
 /* pre-init canvas context early */
 export function initLcdContext(){
@@ -71,14 +71,16 @@ export function updateLcdUI(enabled){
 export async function lcdStreamEnable(){
   if(!state.port){toast('未连接','error');return;}
   state.lcdHostIntent = 'enable';
-  await writeSer(frame(C_LCD,new Uint8Array([0x01])));
+  const ok=await writeSer(frame(C_LCD,new Uint8Array([0x01])));
+  if(ok) setDeviceActivity('Streaming');
   log('HOST \u2192 开启LCD流','send');
 }
 
 export async function lcdStreamDisable(){
   if(!state.port){toast('未连接','error');return;}
   state.lcdHostIntent = 'disable';
-  await writeSer(frame(C_LCD,new Uint8Array([0x00])));
+  const ok=await writeSer(frame(C_LCD,new Uint8Array([0x00])));
+  if(ok) setDeviceActivity('Idle');
   log('HOST \u2192 关闭LCD流','send');
 }
 

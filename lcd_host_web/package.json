@@ -1,0 +1,17 @@
+{
+  "name": "stm-ips-host-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "typescript": "5.7.2",
+    "vite": "6.0.5",
+    "vitest": "2.1.8"
+  }
+}

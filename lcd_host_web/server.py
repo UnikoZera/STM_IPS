@@ -1,12 +1,14 @@
 import io
 import os
 import json
+import re
 import time
 import uuid
 import struct
 import subprocess
 import tempfile
 import zipfile
+import threading
 from pathlib import Path
 from threading import Timer, Lock, Thread
 
@@ -14,6 +16,16 @@ from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
+try:
+    from api.limits import MAX_UPLOAD_BYTES, MAX_OUTPUT_BYTES
+    from container_format import pack_mjpeg as pack_mjpeg_container, pack_raw as pack_raw_container
+    from ffmpeg_service import popen as ffmpeg_popen
+    from job_store import ConversionContext, ConversionJobStore, DownloadStore
+except ModuleNotFoundError:  # package import used by tests and embedding tools
+    from .api.limits import MAX_UPLOAD_BYTES, MAX_OUTPUT_BYTES
+    from .container_format import pack_mjpeg as pack_mjpeg_container, pack_raw as pack_raw_container
+    from .ffmpeg_service import popen as ffmpeg_popen
+    from .job_store import ConversionContext, ConversionJobStore, DownloadStore
 
 app = FastAPI(title='STM IPS Host', docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -74,8 +86,10 @@ FFMPEG, FFPROBE = _find_ffmpeg()
 #  全局配置常量
 # ============================================================================
 
-_NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW（隐藏控制台窗口）
+_NO_WINDOW = 0x08000000  # Windows CREATE_NO_WINDOW for ffmpeg probes
 _CONVERT_LOCK = Lock()   # 同时只跑一个重转码任务（避免多任务抢 IO/显存）
+_CONVERSION_JOBS = ConversionJobStore(max_active=1)
+_JOB_LOCAL = threading.local()
 try:
     _CPU_COUNT = os.cpu_count() or 2
 except Exception:
@@ -391,12 +405,43 @@ def _run_silent(*args, **kwargs):
 
 def _popen_silent(*args, **kwargs):
     """Popen subprocess without showing a console window."""
-    si = subprocess.STARTUPINFO()
-    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    kwargs.setdefault('startupinfo', si)
-    kwargs.setdefault('creationflags', _NO_WINDOW)
-    kwargs.pop('_low_priority', None)
-    return subprocess.Popen(*args, **kwargs)
+    context = getattr(_JOB_LOCAL, 'context', None)
+    return ffmpeg_popen(*args, context=context, **kwargs)
+
+
+class ConversionCancelled(RuntimeError):
+    pass
+
+
+def _job_context() -> ConversionContext | None:
+    return getattr(_JOB_LOCAL, 'context', None)
+
+
+def _job_check_cancelled() -> None:
+    context = _job_context()
+    if context and context.cancelled:
+        raise ConversionCancelled('Conversion cancelled')
+
+
+def _job_report(progress: float, processed_frames: int | None = None,
+                phase: str | None = None, detail: str | None = None) -> None:
+    context = _job_context()
+    if context:
+        context.report(progress, processed_frames, phase, detail)
+
+
+def _job_frame_progress(frame_count: int) -> None:
+    context = _job_context()
+    if not context:
+        return
+    if context.total_frames:
+        ratio = min(0.99, frame_count / context.total_frames)
+        progress = 10.0 + ratio * 80.0
+        detail = '正在转换...'
+    else:
+        progress = min(89.0, 10.0 + frame_count * 0.25)
+        detail = '正在转换...'
+    context.report(progress, frame_count, 'converting', detail)
 
 
 HERE = Path(__file__).parent
@@ -419,31 +464,14 @@ TMP = Path(tempfile.gettempdir()) / 'stm_ips_dl'
 TMP.mkdir(parents=True, exist_ok=True)
 
 # download_id -> {path, name, mtime, frame_count, width, height, frame_size, fps}
-_DL_REG = {}
-_DL_TIMER = None
-
-
-def _dl_cleanup():
-    now = time.time()
-    dead = [k for k, v in _DL_REG.items() if now - v['mtime'] > DOWNLOAD_TTL]
-    for k in dead:
-        ent = _DL_REG.pop(k, None)
-        if ent:
-            try:
-                os.unlink(ent['path'])
-            except OSError:
-                pass
-    if _DL_REG:
-        _schedule_cleanup()
+_DOWNLOAD_STORE = DownloadStore(TMP, ttl_seconds=DOWNLOAD_TTL)
+# Compatibility view for the existing conversion pipeline. All cleanup and
+# lookups are owned by DownloadStore and protected by its lock.
+_DL_REG = _DOWNLOAD_STORE.entries
 
 
 def _schedule_cleanup():
-    global _DL_TIMER
-    if _DL_TIMER:
-        _DL_TIMER.cancel()
-    _DL_TIMER = Timer(DOWNLOAD_TTL + 10, _dl_cleanup)
-    _DL_TIMER.daemon = True
-    _DL_TIMER.start()
+    _DOWNLOAD_STORE.schedule()
 
 
 def _check_ffmpeg():
@@ -490,11 +518,7 @@ def _write_raw_header(fobj, frame_count: int, width: int, height: int):
 
 def _pack_raw_payload(frames_be: list, width: int, height: int) -> bytes:
     """Pack one or more BE RGB565 frames into RAW5 container."""
-    buf = io.BytesIO()
-    _write_raw_header(buf, len(frames_be), width, height)
-    for frame in frames_be:
-        buf.write(frame)
-    return buf.getvalue()
+    return pack_raw_container(frames_be, width, height)
 
 
 # ----- helpers ---------------------------------------------------------------
@@ -502,36 +526,69 @@ def _pack_raw_payload(frames_be: list, width: int, height: int) -> bytes:
 def _probe(path: str) -> dict:
     """可选元数据探测；无 ffprobe 时返回空默认值。"""
     if not FFPROBE:
-        return {'fps': 0, 'nb_frames': 0}
+        # imageio-ffmpeg bundles ffmpeg but normally not ffprobe. The input
+        # header still exposes duration, which is enough for useful progress.
+        try:
+            r = _run_silent(
+                [FFMPEG, '-hide_banner', '-i', path],
+                capture_output=True, text=True, check=False, timeout=15,
+            )
+            text = (r.stderr or '') + (r.stdout or '')
+            match = re.search(
+                r'Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)',
+                text,
+            )
+            duration = 0.0
+            if match:
+                hours, minutes, seconds = match.groups()
+                duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+            return {'fps': 0, 'nb_frames': 0, 'duration': duration}
+        except Exception:
+            return {'fps': 0, 'nb_frames': 0, 'duration': 0}
     cmd = [FFPROBE, '-v', 'error', '-select_streams', 'v:0',
-           '-show_entries', 'stream=nb_frames,r_frame_rate,avg_frame_rate',
+           '-show_entries', 'stream=nb_frames,duration,r_frame_rate,avg_frame_rate:format=duration',
            '-of', 'json', path]
     r = _run_silent(cmd, capture_output=True, text=True, check=True)
     data = json.loads(r.stdout)
     s = data.get('streams', [{}])[0]
 
     def _parse_fps(val: str) -> float:
+        if not val or val in ('N/A', '0', '0/0'):
+            return 0
         if '/' in val:
             n, d = val.split('/')
             return float(n) / float(d) if float(d) else 0
         return float(val)
+
+    def _parse_number(val) -> float:
+        try:
+            number = float(val)
+            return number if number >= 0 else 0
+        except (TypeError, ValueError):
+            return 0
 
     fps = _parse_fps(s.get('r_frame_rate', '0/1'))
     if fps <= 0:
         fps = _parse_fps(s.get('avg_frame_rate', '0/1'))
     fps = max(fps, 1)  # minimum 1 fps
 
-    nf = int(s.get('nb_frames', 0))
-    if nf == 0:
-        cmd2 = [FFPROBE, '-v', 'error', '-select_streams', 'v:0',
-                '-count_frames', '-show_entries', 'stream=nb_read_frames',
-                '-of', 'csv=p=0', path]
-        r2 = _run_silent(cmd2, capture_output=True, text=True)
-        try:
-            nf = int(r2.stdout.strip())
-        except ValueError:
-            nf = 0
-    return {'fps': fps, 'nb_frames': nf}
+    nf = int(_parse_number(s.get('nb_frames', 0)))
+    duration = _parse_number(s.get('duration'))
+    if not duration:
+        duration = _parse_number(data.get('format', {}).get('duration'))
+    return {'fps': fps, 'nb_frames': nf, 'duration': duration}
+
+
+def _estimate_output_frames(source_meta: dict, output_fps: float) -> int:
+    """Estimate frames after the output fps filter without a second full scan."""
+    duration = float(source_meta.get('duration') or 0)
+    source_frames = int(source_meta.get('nb_frames') or 0)
+    source_fps = float(source_meta.get('fps') or 0)
+    if duration > 0 and output_fps > 0:
+        return max(1, int(duration * output_fps + 0.999))
+    if source_frames > 0 and source_fps > 0 and output_fps > 0:
+        return max(1, int(source_frames * output_fps / source_fps + 0.999))
+    return max(0, source_frames)
 
 
 def _stream_frames(in_path: str, width: int, height: int,
@@ -738,6 +795,9 @@ def convert(file: UploadFile = File(None),
     is_video = ext in VIDEO_EXT
     if ext not in ALLOWED_EXT:
         return JSONResponse({'error': f'Unsupported file type: {ext}'}, status_code=400)
+    declared_size = getattr(file, 'size', None)
+    if declared_size is not None and declared_size > MAX_UPLOAD_BYTES:
+        return JSONResponse({'error': f'Upload exceeds {MAX_UPLOAD_BYTES} bytes'}, status_code=413)
 
     # 串行化重转码，避免多请求叠加把 CPU 打满
     if not _CONVERT_LOCK.acquire(blocking=False):
@@ -746,15 +806,40 @@ def convert(file: UploadFile = File(None),
     global _LAST_DECODE_ACCEL
     _LAST_DECODE_ACCEL = 'cpu'
 
-    body = file.file.read()
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as fin:
-        fin.write(body)
+        total_bytes = 0
+        while True:
+            chunk = file.file.read(1024 * 1024)
+            if not chunk:
+                break
+            total_bytes += len(chunk)
+            if total_bytes > MAX_UPLOAD_BYTES:
+                fin.close()
+                try:
+                    os.unlink(fin.name)
+                except OSError:
+                    pass
+                _CONVERT_LOCK.release()
+                return JSONResponse({'error': f'Upload exceeds {MAX_UPLOAD_BYTES} bytes'}, status_code=413)
+            fin.write(chunk)
         in_path = fin.name
 
     try:
-        # 确保启动后至少探测过一次
+        _job_report(2, phase='preparing', detail='正在准备输入文件...')
+        _job_check_cancelled()
+        context = _job_context()
+        if context:
+            try:
+                source_meta = _probe(in_path)
+                context.total_frames = (
+                    _estimate_output_frames(source_meta, fps) if is_video else 1
+                )
+            except Exception:
+                context.total_frames = 0
+        _job_report(6, phase='preparing', detail='正在检查解码环境...')
+        _job_check_cancelled()
         _detect_hwaccel()
+        _job_report(10, phase='converting', detail='开始转换...')
         endian = '<' if swap else '>'
         if is_video:
             if codec == 'mjpeg':
@@ -766,6 +851,10 @@ def convert(file: UploadFile = File(None),
                 result = _process_image_mjpeg(in_path, width, height, quality)
             else:
                 result = _process_image_raw(in_path, width, height, endian, brightness)
+        _job_report(92, phase='finalizing', detail='正在写入转换结果...')
+        _job_check_cancelled()
+    except ConversionCancelled:
+        return JSONResponse({'error': 'Conversion cancelled'}, status_code=499)
     except subprocess.CalledProcessError as e:
         msg = e.stderr.decode('utf-8', errors='replace')[-300:] if e.stderr else str(e)
         return JSONResponse({'error': f'ffmpeg error: {msg}'}, status_code=500)
@@ -778,6 +867,22 @@ def convert(file: UploadFile = File(None),
         except OSError:
             pass
 
+    _job_report(97, phase='finalizing', detail='正在校验转换结果...')
+    result_id = result.get('download_id')
+    result_entry = _DL_REG.get(result_id) if result_id else None
+    if result_entry:
+        try:
+            output_size = Path(result_entry['path']).stat().st_size
+        except OSError:
+            output_size = 0
+        if output_size > MAX_OUTPUT_BYTES:
+            try:
+                os.unlink(result_entry['path'])
+            except OSError:
+                pass
+            _DL_REG.pop(result_id, None)
+            return JSONResponse({'error': f'Output exceeds {MAX_OUTPUT_BYTES} bytes'}, status_code=413)
+
     result['original_name'] = file.filename
     result['hex'] = result.pop('preview_hex', '')
     if codec == 'raw':
@@ -787,7 +892,97 @@ def convert(file: UploadFile = File(None),
     # 报告“实际用了什么”，不是“探测到什么”
     result['hwaccel'] = _LAST_DECODE_ACCEL or (_detect_hwaccel() or 'cpu')
     result['hwaccel_available'] = _detect_hwaccel() or 'cpu'
+    _job_report(100, phase='completed', detail='转换完成')
     return result
+
+
+class _MemoryUpload:
+    """Minimal UploadFile-compatible object for background conversion jobs."""
+    def __init__(self, filename: str, data: bytes):
+        self.filename = filename
+        self.file = io.BytesIO(data)
+        self.size = len(data)
+
+
+class _PathUpload:
+    """UploadFile-compatible disk-backed input for queued jobs."""
+    def __init__(self, filename: str, path: str, size: int):
+        self.filename = filename
+        self.file = open(path, 'rb')
+        self.size = size
+
+
+@app.post('/convert/jobs')
+def create_conversion_job(file: UploadFile = File(None),
+                          width: str = Form('160'), height: str = Form('80'),
+                          fps: str = Form('30'), swap: str = Form('0'),
+                          brightness: str = Form('100'), codec: str = Form('mjpeg'),
+                          quality: str = Form('70')):
+    """Queue conversion and return a pollable job id."""
+    if not file or not file.filename:
+        return JSONResponse({'error': 'No file uploaded'}, status_code=400)
+    ext = Path(file.filename).suffix.lower() or '.bin'
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as staged:
+        staged_path = staged.name
+        upload_size = 0
+        while True:
+            chunk = file.file.read(1024 * 1024)
+            if not chunk:
+                break
+            upload_size += len(chunk)
+            if upload_size > MAX_UPLOAD_BYTES:
+                staged.close()
+                try:
+                    os.unlink(staged_path)
+                except OSError:
+                    pass
+                return JSONResponse({'error': f'Upload exceeds {MAX_UPLOAD_BYTES} bytes'}, status_code=413)
+            staged.write(chunk)
+
+    def worker(context: ConversionContext):
+        _JOB_LOCAL.context = context
+        upload = _PathUpload(file.filename, staged_path, upload_size)
+        try:
+            response = convert(
+                upload, width, height, fps, swap,
+                brightness, codec, quality,
+            )
+            if isinstance(response, JSONResponse):
+                detail = response.body.decode('utf-8', errors='replace')
+                raise RuntimeError(detail)
+            return response
+        finally:
+            upload.file.close()
+            try:
+                os.unlink(staged_path)
+            except OSError:
+                pass
+            _JOB_LOCAL.context = None
+
+    try:
+        job_id = _CONVERSION_JOBS.submit(worker)
+    except RuntimeError as exc:
+        try:
+            os.unlink(staged_path)
+        except OSError:
+            pass
+        return JSONResponse({'error': str(exc)}, status_code=429)
+    return JSONResponse({'job_id': job_id, 'status': 'queued'})
+
+
+@app.get('/convert/jobs/{job_id}')
+def get_conversion_job(job_id: str):
+    job = _CONVERSION_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, detail='Conversion job not found')
+    return job
+
+
+@app.post('/convert/jobs/{job_id}/cancel')
+def cancel_conversion_job(job_id: str):
+    if not _CONVERSION_JOBS.cancel(job_id):
+        raise HTTPException(409, detail='Conversion job cannot be cancelled')
+    return {'job_id': job_id, 'status': 'cancelling'}
 
 
 # ============================================================================
@@ -938,8 +1133,11 @@ def _stream_mjpeg_frames(in_path: str, width: int, height: int,
         count = 0
         try:
             for frame in _iter_mjpeg_from_proc(proc):
+                _job_check_cancelled()
                 count += 1
                 yield frame
+        except ConversionCancelled:
+            raise
         except Exception as e:
             if accel_name:
                 print(f'[hwaccel] mjpeg exception with {accel_name}: {e}')
@@ -997,12 +1195,7 @@ def _write_mjpeg_header(fobj, frame_count: int, width: int, height: int):
 
 def _pack_mjpeg(frames: list, width: int, height: int) -> bytes:
     """Pack MJPEG frames into the W25Q file format (small image path)."""
-    buf = io.BytesIO()
-    _write_mjpeg_header(buf, len(frames), width, height)
-    for frame in frames:
-        buf.write(struct.pack('<I', len(frame)))
-        buf.write(frame)
-    return buf.getvalue()
+    return pack_mjpeg_container(frames, width, height)
 
 
 # ============================================================================
@@ -1023,17 +1216,26 @@ def _process_video_mjpeg(in_path: str, width: int, height: int,
     count = 0
 
     # 流式写入：header 先占位，帧逐个 append，最后回填 frame_count
-    with open(out_path, 'wb') as out_f:
-        _write_mjpeg_header(out_f, 0, width, height)
-        for jpeg_bytes in _stream_mjpeg_frames(in_path, width, height,
-                                                fps=output_fps,
-                                                quality=ffmpeg_q):
-            out_f.write(struct.pack('<I', len(jpeg_bytes)))
-            out_f.write(jpeg_bytes)
-            count += 1
-            # MJPEG frame_count 字段是 uint16，超过 65535 需拒绝（格式限制，不是人为截断）
-            if count > 0xFFFF:
-                raise RuntimeError('MJPEG 容器 frame_count 为 uint16，最多 65535 帧；请降低 FPS 或缩短视频')
+    try:
+        with open(out_path, 'wb') as out_f:
+            _write_mjpeg_header(out_f, 0, width, height)
+            for jpeg_bytes in _stream_mjpeg_frames(in_path, width, height,
+                                                    fps=output_fps,
+                                                    quality=ffmpeg_q):
+                _job_check_cancelled()
+                out_f.write(struct.pack('<I', len(jpeg_bytes)))
+                out_f.write(jpeg_bytes)
+                count += 1
+                _job_frame_progress(count)
+                # MJPEG frame_count 字段是 uint16，超过 65535 需拒绝（格式限制，不是人为截断）
+                if count > 0xFFFF:
+                    raise RuntimeError('MJPEG 容器 frame_count 为 uint16，最多 65535 帧；请降低 FPS 或缩短视频')
+    except Exception:
+        try:
+            out_path.unlink()
+        except OSError:
+            pass
+        raise
 
     if count == 0:
         try:
@@ -1137,17 +1339,26 @@ def _process_video_raw(in_path: str, width: int, height: int,
     # 仅保留首帧作为缩略图预览（不含容器头）
     thumb = b''
 
-    with open(out_path, 'wb') as out_f:
-        # 先写占位 header，最后回填 frame_count
-        _write_raw_header(out_f, 0, width, height)
-        for rgb, fw, fh in _stream_frames(in_path, width, height, fps=output_fps):
-            be_frame = _convert_to_rgb565(rgb, fw, fh, '>', brightness)
-            out_f.write(be_frame)
-            if count == 0:
-                thumb = be_frame
-            count += 1
-            if count > 0xFFFF:
-                raise RuntimeError('RAW5 frame_count 为 uint16，最多 65535 帧；请降低 FPS 或缩短视频')
+    try:
+        with open(out_path, 'wb') as out_f:
+            # 先写占位 header，最后回填 frame_count
+            _write_raw_header(out_f, 0, width, height)
+            for rgb, fw, fh in _stream_frames(in_path, width, height, fps=output_fps):
+                _job_check_cancelled()
+                be_frame = _convert_to_rgb565(rgb, fw, fh, '>', brightness)
+                out_f.write(be_frame)
+                if count == 0:
+                    thumb = be_frame
+                count += 1
+                _job_frame_progress(count)
+                if count > 0xFFFF:
+                    raise RuntimeError('RAW5 frame_count 为 uint16，最多 65535 帧；请降低 FPS 或缩短视频')
+    except Exception:
+        try:
+            out_path.unlink()
+        except OSError:
+            pass
+        raise
 
     if count == 0:
         try:
@@ -1194,10 +1405,9 @@ def _process_video_raw(in_path: str, width: int, height: int,
 @app.get('/download/{download_id}')
 def download(download_id: str):
     # GET with download_id: pure binary payload only (no trailing text!)
-    ent = _DL_REG.get(download_id)
+    ent = _DOWNLOAD_STORE.touch(download_id)
     if not ent:
         raise HTTPException(404, detail='Download not found or expired')
-    ent['mtime'] = time.time()  # extend lifetime
     path = Path(ent['path'])
     if not path.is_file():
         raise HTTPException(404, detail='Download file missing')
@@ -1217,7 +1427,10 @@ async def download_post(request: Request):
     data = await request.json()
     if not data:
         return JSONResponse({'error': 'No data'}, status_code=400)
-    raw = bytes.fromhex(data.get('hex', '')) if data.get('hex') else b''
+    hex_data = data.get('hex', '') or ''
+    if len(hex_data) > MAX_OUTPUT_BYTES * 2:
+        return JSONResponse({'error': 'Download payload exceeds configured limit'}, status_code=413)
+    raw = bytes.fromhex(hex_data) if hex_data else b''
     if not raw:
         return JSONResponse({'error': 'No content'}, status_code=400)
     w = data.get('width', 160)

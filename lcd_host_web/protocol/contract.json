@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "transport": "usb-cdc",
+  "host_frame": {
+    "header": [187, 68],
+    "header_size": 9,
+    "layout": "magic[2], command[u8], total_size[u32le], payload_length[u16le], payload, crc16_usb[u16le]",
+    "max_data_bytes": 1024,
+    "crc_scope": "data_payload_only",
+    "empty_payload_crc": 0
+  },
+  "device_frame": {
+    "header": [170, 85],
+    "header_size": 5,
+    "layout": "magic[2], command[u8], payload_length[u16le], payload",
+    "max_payload_bytes": 32768
+  },
+  "commands": {
+    "download_large": 17,
+    "download_small": 69,
+    "end_download": 20,
+    "delete_file": 25,
+    "query_file_list": 32,
+    "lcd_stream": 16,
+    "send_bitmap": 33,
+    "abort_download": 21,
+    "continue": 161,
+    "error": 224,
+    "lcd_frame": 160
+  },
+  "lcd_stream_subcommands": {
+    "stop": 0,
+    "start": 1
+  },
+  "errors": {
+    "crc": 1,
+    "unknown_type": 2,
+    "large_area_full": 3,
+    "small_area_full": 4,
+    "type_mismatch": 5,
+    "large_slots_full": 6,
+    "small_slots_full": 7,
+    "invalid_index": 8,
+    "unknown_command": 9,
+    "dma_failure": 10,
+    "flash_write_failure": 11,
+    "write_verify_failure": 12
+  }
+}

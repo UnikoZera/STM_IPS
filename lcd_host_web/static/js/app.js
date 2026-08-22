@@ -6,7 +6,7 @@ import {
   clearLcdCanvas, clearLog, log, toast,
 } from './core.js';
 import { setRespHandler, signalCont, resetCont } from './protocol.js';
-import { startRead } from './serial.js';
+import { startRead, deviceSession } from './serial.js';
 import {
   initLcdContext, updateLcdUI, renderLcdFrame,
   lcdStreamEnable, lcdStreamDisable, lcdWatchCheck, stopLcdWatch,
@@ -29,9 +29,8 @@ import {
 /* ===== Serial (编排) ===== */
 async function connectSerial(){
   try{
-    state.port=await navigator.serial.requestPort();
     const br=parseInt($('baudRate').value)||921600;
-    await state.port.open({baudRate:br,dataBits:8,stopBits:1,parity:'none',flowControl:'none'});
+    state.port=await deviceSession.connect({baudRate:br});
     $('statusDot').className='status-dot on';$('statusText').textContent='在线';$('portInfo').textContent='@ '+br;
     $('statusBadge').classList.add('connected');
     $('btnConnect').style.display='none';$('btnDisconnect').style.display='block';
@@ -51,9 +50,9 @@ async function disconnectSerial(){
   if(state.delTimer){clearTimeout(state.delTimer);state.delTimer=null;}
   if(state.delPollTimer){clearInterval(state.delPollTimer);state.delPollTimer=null;}
   state.delPending=false;state.delTarget=null; /* 删除中断开串口：释放删除锁，避免重连后锁死 */
-  if(state.reader){try{await state.reader.cancel()}catch(e){}try{state.reader.releaseLock()}catch(e){}state.reader=null;}
   state.readLoop=false;
-  if(state.port){try{await state.port.close()}catch(e){}state.port=null;}
+  await deviceSession.disconnect();
+  state.port=null;
   $('statusDot').className='status-dot off';$('statusText').textContent='脱机';$('portInfo').textContent='';
   $('statusBadge').classList.remove('connected');
   $('btnConnect').style.display='block';$('btnDisconnect').style.display='none';
@@ -71,6 +70,7 @@ function handleResp(cmd,payload){
       if(state.delTimer){clearTimeout(state.delTimer);state.delTimer=null;}
       if(state.delPollTimer){clearInterval(state.delPollTimer);state.delPollTimer=null;}
       state.delPending=false;state.delTarget=null;
+      deviceSession.transition('Idle');
       toast('删除完成','success');
       queryFileList();
     }else if(!state.isTransferring){log('MCU \u2192 就绪 (0xA1)','recv');}
@@ -84,6 +84,7 @@ function handleResp(cmd,payload){
       if(state.delTimer){clearTimeout(state.delTimer);state.delTimer=null;}
       if(state.delPollTimer){clearInterval(state.delPollTimer);state.delPollTimer=null;}
       state.delPending=false;state.delTarget=null;
+      deviceSession.transition('Idle');
       toast('删除失败: '+(ERRMSG[code]||'0x'+code.toString(16)),'error');
     }
   }
@@ -168,7 +169,7 @@ function initEvents(){
 
   window.addEventListener('beforeunload',function(){
     state.sendState=ST_DONE;resetCont();state.readLoop=false;
-    if(state.port){try{state.port.close()}catch(e){}}
+    if(deviceSession.port){try{deviceSession.disconnect()}catch(e){}}
   });
 
   if(!('serial' in navigator)){

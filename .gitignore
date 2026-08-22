@@ -3,3 +3,7 @@
 .reasonix/
 reasonix.toml
 Debug/
+**/__pycache__/
+**/.pytest_cache/
+**/node_modules/
+lcd_host_web/dist-ui/

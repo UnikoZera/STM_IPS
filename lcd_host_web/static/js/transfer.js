@@ -7,7 +7,7 @@ import {
   escHtml, escAttr, log, toast,
 } from './core.js';
 import { frame, signalCont, waitCont, resetCont } from './protocol.js';
-import { writeSer } from './serial.js';
+import { writeSer, setDeviceActivity } from './serial.js';
 import { lcdStreamQuery } from './lcd.js';
 
 /* ===== File List ===== */
@@ -154,6 +154,7 @@ export async function delFIClick(ft,fi,name){
   const typeName=ft===C_L?'大文件':'小文件';
   if(!confirm('确认删除 '+typeName+' #'+fi+' ('+name+')？\n\n注意：删除后W25Q扇区将被擦除并回收空间。'))return;
   state.delPending=true;
+  setDeviceActivity('Deleting');
   state.delTarget={ft,fi};
   const d=new Uint8Array([ft&0xFF,fi&0xFF]);
   const ok=await writeSer(frame(C_DEL,d));
@@ -162,7 +163,7 @@ export async function delFIClick(ft,fi,name){
     toast('正在删除: '+name,'warn'); /* 等 MCU 擦除完成回 0xA1 再刷新列表 */
     /* 超时兜底：大文件擦除可达数分钟（扇区数×150ms），超时仅解锁，不误报完成 */
     state.delTimer=setTimeout(function(){
-      if(state.delPending){state.delPending=false;state.delTarget=null;state.delTimer=null;
+      if(state.delPending){state.delPending=false;state.delTarget=null;state.delTimer=null;setDeviceActivity('Idle');
         if(state.delPollTimer){clearInterval(state.delPollTimer);state.delPollTimer=null;}
         toast('删除超时（MCU 未确认，可能仍在擦除）','error');}
     },600000);
@@ -174,6 +175,7 @@ export async function delFIClick(ft,fi,name){
   }else{
     toast('删除命令发送失败','error');
     state.delPending=false;state.delTarget=null;
+    setDeviceActivity('Idle');
   }
 }
 
@@ -210,9 +212,10 @@ export async function doSend(file,cmd,fn){
   state.sendState=ST_INIT;
   resetCont();
   if(state.lcdQueryTid){clearTimeout(state.lcdQueryTid);state.lcdQueryTid=null;}
-  state.fileData=new Uint8Array(await file.arrayBuffer());
-  state.fileOff=0;state.fileCmd=cmd;state.fileName=fn;
+  state.fileData=null;
+  state.fileSource=file;state.fileSize=file.size;state.fileOff=0;state.fileCmd=cmd;state.fileName=fn;
   state.sendState=ST_SENDING;
+  setDeviceActivity('Uploading');
   state.lcdStreamWasOn=($('lcdStreamStatus').textContent||'').indexOf('已开启')>=0;
   if(state.lcdStreamWasOn){
     const ackPromise=new Promise(function(r){state.lcdAckResolve=r;});
@@ -223,23 +226,23 @@ export async function doSend(file,cmd,fn){
     state.rxBuf=new Uint8Array(0);
   }
   state.isTransferring=true;state.contPending=0;
-  const totalStr=state.fileData.length<1024?state.fileData.length+' B':(state.fileData.length/1024).toFixed(1)+' KB';
+  const totalStr=state.fileSize<1024?state.fileSize+' B':(state.fileSize/1024).toFixed(1)+' KB';
   log('\u2500\u2500 开始发送: '+fn+' ('+totalStr+') \u2500\u2500','info');
-  setUI('sending');updateProg(0,0,state.fileData.length);
+  setUI('sending');updateProg(0,0,state.fileSize);
   try{await sendLoop();}
   catch(e){log('发送异常: '+e.message,'error');await doFinish(false);}
 }
 
 async function sendLoop(){
   while(state.sendState===ST_SENDING){
-    if(state.fileOff>=state.fileData.length){await sendEndFrame();return;}
-    const len=Math.min(state.fileData.length-state.fileOff,1022); /* 固定 1022B 数据 + 2B CRC16 一包（与 MCU CRC 块对齐） */
-    const chunk=state.fileData.slice(state.fileOff,state.fileOff+len);
-    const totalSize=(state.fileOff===0)?state.fileData.length:0;
+    if(state.fileOff>=state.fileSize){await sendEndFrame();return;}
+    const len=Math.min(state.fileSize-state.fileOff,1022); /* 固定 1022B 数据 + 2B CRC16 一包（与 MCU CRC 块对齐） */
+    const chunk=new Uint8Array(await state.fileSource.slice(state.fileOff,state.fileOff+len).arrayBuffer());
+    const totalSize=(state.fileOff===0)?state.fileSize:0;
     const frm=frame(state.fileCmd,chunk,totalSize);
     const ok=await writeSer(frm);
     if(!ok){doAbort('写入失败');return;}
-    state.fileOff+=len;updateProg(state.fileOff/state.fileData.length*100,state.fileOff,state.fileData.length);
+    state.fileOff+=len;updateProg(state.fileOff/state.fileSize*100,state.fileOff,state.fileSize);
     state.sendState=ST_WAIT_ACK;elStatus.innerHTML='<span class="spinner"></span> 等待MCU就绪...';
     state.sendTimer=setTimeout(function(){if(state.sendState===ST_WAIT_ACK)doAbort('等待MCU回应超时');},SEND_TIMEOUT);
     await waitCont();
@@ -268,9 +271,9 @@ export async function doFinish(ok){
   state.sendState=ST_DONE;
   state.isTransferring=false;
   if(ok){
-    const totalStr=state.fileData?state.fileData.length+' B':'';
+    const totalStr=state.fileSize?state.fileSize+' B':'';
     log('\u2500\u2500 发送完成: '+state.fileName+' ('+totalStr+') \u2500\u2500','info');
-    updateProg(100,state.fileData?state.fileData.length:0,state.fileData?state.fileData.length:1);
+    updateProg(100,state.fileSize,state.fileSize||1);
     toast('发送完成: '+state.fileName,'success');
     setTimeout(function(){updateProg(0,0,0);},1200);
   }else{
@@ -279,12 +282,14 @@ export async function doFinish(ok){
   }
   if(state.lcdStreamWasOn){
     await writeSer(frame(C_LCD,new Uint8Array([0x01])));
+    setDeviceActivity('Streaming');
     log('HOST \u2192 恢复LCD流','send');
   }
-  state.fileData=null;state.fileOff=0;state.fileName='';
+  if(!state.lcdStreamWasOn && ok) setDeviceActivity('Idle');
+  state.fileData=null;state.fileSource=null;state.fileSize=0;state.fileOff=0;state.fileName='';
   resetCont();setUI('idle');
   if(ok){state.lcdQueryTid=setTimeout(function(){lcdStreamQuery();state.lcdQueryTid=null;},400);setTimeout(function(){queryFileList();},800);}
-  else{setUI('error');}
+  else{setUI('error');setDeviceActivity('Error');}
 }
 
 export function doAbort(reason){
@@ -294,9 +299,10 @@ export function doAbort(reason){
   writeSer(frame(C_ABORT,new Uint8Array(0)));
   if(state.lcdStreamWasOn){
     writeSer(frame(C_LCD,new Uint8Array([0x01])));
+    setDeviceActivity('Streaming');
   }
   resetCont();state.sendState=ST_ERR;
-  state.fileData=null;state.fileOff=0;state.fileName='';
+  state.fileData=null;state.fileSource=null;state.fileSize=0;state.fileOff=0;state.fileName='';
   updateProg(0,0,0);setUI('error');
 }
 

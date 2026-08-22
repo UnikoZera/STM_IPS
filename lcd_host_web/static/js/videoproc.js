@@ -16,6 +16,7 @@ const VP = {
   file: null,
   fileBytes: null,
   result: null,
+  jobId: null,
   abort: false,
   frames: [],          // 预览帧槽：完整帧数，但按需解码（未解码为 null）
   frameIndex: [],      // MJPEG 压缩流中每帧 [start,end) 偏移
@@ -24,12 +25,15 @@ const VP = {
   decodeGen: 0,        // 取消在途解码
 };
 const $vp = id => document.getElementById('vp'+id);
+const isVPVideoName = name => /\.(mp4|webm|mkv|avi|mov|flv|wmv|gif)$/i.test(name);
 
 export function onVPFileSelected(input){
   const f = input.files[0];
   if(!f) return;
   VP.file = f;
   VP.result = null;
+  VP.jobId = null;
+  VP._thumb = null;
   VP.frames = [];
   VP.frameIndex = [];
   VP.compressedBytes = null;
@@ -42,7 +46,7 @@ export function onVPFileSelected(input){
   $vp('ProgPct').textContent = '';
   $vp('ProgInfo').textContent = '';
 
-  const isVideo = /\.(mp4|webm|mkv|avi|mov|flv|wmv)$/i.test(f.name);
+  const isVideo = isVPVideoName(f.name);
   const fpsRow = $vp('FpsRow');
   if(fpsRow) fpsRow.style.display = isVideo ? 'flex' : 'none';
   const sz = f.size < 1024 ? f.size+'B' : f.size < 1048576 ? (f.size/1024).toFixed(1)+'KB' : (f.size/1048576).toFixed(2)+'MB';
@@ -55,6 +59,7 @@ export function onVPFileSelected(input){
 }
 
 let vpAbortController = null;
+let vpLastProgress = 0;
 
 export async function startVPProcess(){
   if(!VP.file){ toast('请选择文件','error'); return; }
@@ -63,7 +68,7 @@ export async function startVPProcess(){
   const w = parseInt($vp('Width').value) || 160;
   const h = parseInt($vp('Ht').value) || 80;
   const fps = Math.max(1, Math.min(60, parseFloat($vp('Fps').value) || 30));
-  const isVideo = /\.(mp4|webm|mkv|avi|mov|flv|wmv)$/i.test(VP.file.name);
+  const isVideo = isVPVideoName(VP.file.name);
 
   if(w < 1 || w > 1024 || h < 1 || h > 1024){
     toast('尺寸范围: 1-1024','error'); return;
@@ -84,8 +89,8 @@ export async function startVPProcess(){
   $vp('Status').innerHTML = '<span class="spinner"></span> 正在转换...';
   $vp('ProgWrap').style.display = 'block';
   $vp('Result').style.display = 'none';
-
-  startVpProgSim();
+  vpLastProgress = 0;
+  updateVPProg(0);
 
   const form = new FormData();
   form.append('file', VP.file);
@@ -105,7 +110,7 @@ export async function startVPProcess(){
   vpAbortController = new AbortController();
 
   try{
-    const resp = await fetch(SERVER+'/convert', {
+    const resp = await fetch(SERVER+'/convert/jobs', {
       method: 'POST',
       body: form,
       signal: vpAbortController.signal,
@@ -113,15 +118,29 @@ export async function startVPProcess(){
     if(!resp.ok){
       const err = await resp.json().catch(()=>({error:'HTTP '+resp.status}));
       if(resp.status === 429){
-        throw new Error(err.error || '转换忙，请稍后再试');
+        throw new Error(err.error || err.detail || '转换忙，请稍后再试');
       }
-      throw new Error(err.error || 'Server error');
+      throw new Error(err.error || err.detail || 'Server error');
     }
 
-    stopVpProgSim();
-    updateVPProg(90);
-
-    VP.result = await resp.json();
+    const queued = await resp.json();
+    VP.jobId = queued.job_id;
+    let job;
+    do {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      const statusResp = await fetch(SERVER+'/convert/jobs/'+VP.jobId, { signal: vpAbortController.signal });
+      if(!statusResp.ok) throw new Error('Job status HTTP '+statusResp.status);
+      job = await statusResp.json();
+      updateVPProg(job.progress || 0);
+      const frameInfo = job.processed_frames
+        ? (job.total_frames
+          ? `（${job.processed_frames}/${job.total_frames} 帧）`
+          : `（已处理 ${job.processed_frames} 帧）`)
+        : '';
+      $vp('ProgInfo').textContent = (job.detail || (job.status === 'running' ? '正在转码...' : job.status)) + frameInfo;
+    } while(job.status === 'queued' || job.status === 'running' || job.status === 'cancelling');
+    if(job.status !== 'completed') throw new Error(job.error || 'Conversion '+job.status);
+    VP.result = job.result;
     VP.frames = [];
     VP.frameIndex = [];
     VP.curFrame = 0;
@@ -137,6 +156,7 @@ export async function startVPProcess(){
       });
       if(!binResp.ok) throw new Error('下载转换结果失败 HTTP '+binResp.status);
       VP.compressedBytes = new Uint8Array(await binResp.arrayBuffer());
+      updateVPProg(98);
     } else if(VP.result.compressed_hex){
       VP.compressedBytes = hexToBytes(VP.result.compressed_hex);
     }
@@ -155,6 +175,7 @@ export async function startVPProcess(){
 
     $vp('Status').innerHTML = '<span class="spinner"></span> 正在建立帧索引...';
     $vp('ProgInfo').textContent = '(完整预览按需解码)';
+    updateVPProg(99);
 
     await showVPResult();
 
@@ -182,6 +203,9 @@ function updateVPProg(pct){
   const bar = $vp('ProgBar');
   const lbl = $vp('ProgPct');
   if(!bar) return;
+  pct = Number.isFinite(Number(pct)) ? Math.max(0, Math.min(100, Number(pct))) : 0;
+  vpLastProgress = Math.max(vpLastProgress, pct);
+  pct = vpLastProgress;
   bar.style.width = pct+'%';
   if(lbl) lbl.textContent = pct.toFixed(1)+'%';
   // color: 0% red → 50% gold → 100% green
@@ -211,6 +235,9 @@ function stopVpProgSim(){
 }
 
 export function cancelVPProcess(){
+  if(VP.jobId){
+    fetch(VP_SERVER+'/convert/jobs/'+VP.jobId+'/cancel', {method:'POST'}).catch(()=>{});
+  }
   if(vpAbortController){
     vpAbortController.abort();
     vpAbortController = null;
